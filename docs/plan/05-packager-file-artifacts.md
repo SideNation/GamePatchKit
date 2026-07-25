@@ -17,17 +17,33 @@ pipeline은 bundle 생성 단계를 끼울 수 있는 구조로 만든다.
 
 ### source 탐색·선별
 
-- [ ] `include` allowlist와 `exclude` glob 적용
-- [ ] 숨김 파일, editor metadata, 임시 파일은 명시하지 않는 한 제외
-- [ ] 02의 경로 정규화·거부 규칙 적용 (symlink, 대소문자 중복, 정규화 후 중복 등)
-- [ ] group 결정: 둘 이상 일치는 오류, 미일치는 예약 group `default`
-- [ ] 정규화 상대 경로의 ordinal byte 순서로 파일 목록 고정
+- [ ] `inputRoot` 자체와 하위 entry를 symlink·junction·reparse point를 따르지 않고
+      열거한다. 발견한 link·reparse point와 일반 파일·디렉터리가 아닌 entry는 실패다.
+- [ ] native 경로의 segment를 Core canonical 상대 경로(`/`, NFC)로 변환하고, Core의
+      문자열 경로 검증·대소문자/NFC 중복 검사를 적용한다.
+- [ ] 02의 자체 glob matcher로 전역 `include` OR → `exclude` OR(항상 우선) →
+      group `include` OR 순서로 선별한다. editor metadata·임시 파일에는 암묵 규칙을
+      두지 않고 설정의 명시적 `exclude`만 적용한다.
+- [ ] `*`·`**`가 숨김 segment를 암묵적으로 소비하지 않게 하고 대응 pattern
+      segment가 literal `.`으로 시작한 경우에만 숨김 경로를 포함한다.
+- [ ] group 둘 이상 일치는 오류, 미일치는 예약 group `default`로 처리한다.
+- [ ] Core가 반환한 정규화 UTF-8 byte ordinal 순서로 파일 목록을 고정한다.
 
 ### 입력 무결성
 
-- [ ] 각 파일의 원본 byte 크기와 `fileHash`(SHA-256) 계산
-- [ ] package 실행 중 입력 파일 변경을 감지하면 일관되지 않은 입력으로 실패
-      (감지 방식: 시작·종료 시점 크기·수정 시각 비교 등에서 결정)
+- [ ] 최초 열거 결과의 정규화 상대 경로·entry 종류·stable file identity·크기·수정
+      시각을 source snapshot으로 보관한다.
+- [ ] stable file identity는 Windows volume ID·file ID 또는 Unix 계열 device·inode
+      조합으로 읽고 manifest identity에는 넣지 않는다. 지원하지 않는 filesystem에서는
+      검증을 생략하지 않고 실패한다.
+- [ ] 파일은 link를 follow하지 않는 방식으로 열고 열린 handle의 identity가 snapshot과
+      같은지 확인한 뒤 원본 byte 크기와 `fileHash`(SHA-256)를 stream으로 계산한다.
+- [ ] 각 stream hash 전·후의 identity·크기·수정 시각을 snapshot과 비교하고 하나라도
+      다르면 입력 경합으로 실패한다.
+- [ ] manifest 확정 전에 동일한 no-follow 열거와 Core 선별을 다시 수행해 선택된
+      정규화 경로·entry 종류·identity 집합을 최초 snapshot과 비교한다.
+- [ ] 파일 추가·삭제·교체·변경이나 entry 종류 변경이 감지되면 manifest를 생성하지
+      않고 staging만 폐기하며 완성된 기존 결과를 유지한다.
 
 ### file artifact 생성
 
@@ -69,6 +85,8 @@ pipeline은 bundle 생성 단계를 끼울 수 있는 구조로 만든다.
 ### manifest·build report
 
 - [ ] canonical JSON manifest와 선택적 `.json.zst` 전송본 생성
+- [ ] manifest 출력 전에 02의 JSON Schema와 filesystem 비의존 `ManifestValidator`를
+      실행하고 실제 file artifact stream의 크기·hash·part 결합 결과를 검증
 - [ ] canonical manifest 원본 byte의 SHA-256을 `manifestHash`로 사용하고
       `manifests/<manifestHash>/manifest.json`에 배치
 - [ ] `dataVersion`·`compactVersion`·`manifestHash`와 추가·변경·삭제 목록, 생성 시각,
@@ -98,5 +116,12 @@ pipeline은 bundle 생성 단계를 끼울 수 있는 구조로 만든다.
 - 모든 file artifact·part가 `maxArtifactBytes` 이하다(검증 기준 12, file 범위).
 - 서로 다른 package의 경로·hash·artifact 위치가 manifest에 섞이지 않는다
   (검증 기준 13).
-- PRD 오류 처리 목록의 입력 오류(중복 group 일치, symlink, 실행 중 변경, hash 경로
-  충돌)가 모두 실패로 끝나고 기존 결과를 변경하지 않는다(검증 기준 18).
+- single·parts file manifest가 공용 golden vector와 일치하고 잘못된 참조·part
+  순서·중복·미참조 artifact를 거부한다(검증 기준 25, file 범위).
+- glob fixture가 `**` 0·1·여러 segment, case, NFC, exclude 우선순위, 숨김 명시
+  포함, group 중복과 임의 열거 순서에서 02 Core와 정확히 같은 결과를 만든다
+  (검증 기준 26).
+- symlink·junction·reparse point와 source 추가·삭제·교체·변경을 주입한 테스트가
+  manifest 생성 전에 실패하고 기존 결과를 변경하지 않는다(검증 기준 18, 26).
+- hash 경로 충돌을 포함한 나머지 PRD 입력 오류도 실패하고 기존 결과를 변경하지
+  않는다(검증 기준 18).

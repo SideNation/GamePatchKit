@@ -31,7 +31,9 @@ content-addressed cache → group별 staging → required group 확인 → `Pack
 - [ ] 신뢰하는 channel 또는 서버 응답에서 `packageId`·`dataVersion`·`manifestHash`
       수신
 - [ ] 목표 canonical manifest 원본 byte의 SHA-256이 `manifestHash`와 같은지 확인하고
-      schema·참조 무결성 검증 (signature 검증 연결은 11 단계)
+      02의 schema·Core 의미·참조 무결성 검증 (signature 검증 연결은 11 단계)
+- [ ] 공용 golden vector의 모든 manifest union branch와 invalid ref·order fixture가
+      Packager와 같은 결과를 내는지 검증
 
 ### `PackageState` 모델·검증
 
@@ -116,6 +118,8 @@ content-addressed cache → group별 staging → required group 확인 → `Pack
 - staging 또는 활성화 실패 시 이전 `PackageState`와 installation을 유지한다
   (검증 기준 16, 23).
 - 손상된 part·bundle·manifest를 거부한다(검증 기준 11, Runtime 범위).
+- malformed union·참조·정렬·중복·미참조 manifest를 staging 전에 거부한다
+  (검증 기준 25).
 - 지원하지 않거나 주입되지 않은 codec을 manifest가 요구하면 활성화 전에 실패한다
   (검증 기준 20).
 - 같은 group에 무압축·zstd artifact가 함께 있는 fixture를 올바르게 staging한다.

@@ -31,7 +31,9 @@ contract.
 ### `compactVersion` 규칙
 
 - [ ] 최초 package는 `0`, incremental package는 이전 값을 상속한다
-- [ ] compact는 source manifest의 `compactVersion + 1`을 사용한다
+- [ ] candidate manifest를 source `compactVersion`으로 canonicalize한 byte가 source와
+      같으면 compact no-op으로 판정하고 기존 `compactVersion`·`manifestHash`를 반환한다
+- [ ] candidate의 물리 배치가 source와 다를 때만 `compactVersion + 1`을 사용한다
 - [ ] `compactVersion`은 물리 packaging 세대이며 `dataVersion` 계산에서 제외한다
 
 ### `manifestHash` 계산
@@ -42,6 +44,8 @@ contract.
       모든 필드는 hash 입력에 포함된다
 - [ ] 선택적 `manifest.json.zst` 전송본과 `manifest.sig`는 hash 입력에서 제외한다
 - [ ] manifest 원본 byte와 기대 `manifestHash`를 비교하는 검증 API를 제공한다
+- [ ] 02의 `single-file`·`multipart-file`·`bundle-entry` golden vector에서 canonical
+      identity·manifest byte, `dataVersion`과 `manifestHash`를 정확히 재현한다
 
 ### release diff
 
@@ -71,14 +75,16 @@ contract.
 ## 완료 기준
 
 - 파일 내용 또는 group 의미가 바뀌면 `dataVersion`·`manifestHash`가 모두 바뀐다.
-- 같은 논리 상태에서 물리 배치만 바꾸면(compact 상황 모사) `dataVersion`은 유지되고
-  `compactVersion`과 `manifestHash`만 바뀐다(검증 기준 9의 단위 수준).
+- 같은 논리 상태에서 물리 배치가 바뀌면 `dataVersion`은 유지되고
+  `compactVersion`과 `manifestHash`만 바뀐다. candidate byte가 source와 같으면
+  no-op으로 세 값을 모두 재사용한다(검증 기준 9의 단위 수준).
 - 같은 데이터를 다른 압축으로 표현해도 `dataVersion`이 같다.
 - compression 설정만 달라지고 artifact 참조가 모두 같으면 두 manifest의 논리·물리
   diff가 없다.
 - manifest의 `schemaVersion`만 바꾸면 `dataVersion`은 유지되고 `manifestHash`는
   바뀐다.
-- canonical manifest golden fixture의 원본 byte와 예상 `manifestHash`가 일치한다.
+- 공용 golden vector의 canonical identity·manifest byte, `dataVersion`과
+  `manifestHash`가 모두 예상값과 정확히 일치한다(검증 기준 25).
 - diff가 추가·변경·삭제·group 이동을 정확히 분류한다(table-driven).
 - download plan이 재사용·bundle 전체 포함·누락 part 규칙을 만족하고 예상 수치를
   계산한다.

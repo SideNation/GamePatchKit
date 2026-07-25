@@ -131,6 +131,7 @@ game-patch-kit/
 ├── schemas/
 │   ├── package-config.schema.json
 │   ├── release-manifest.schema.json
+│   ├── manifest-signature.schema.json
 │   └── channel.schema.json
 ├── src/
 │   ├── GamePatchKit.Core/
@@ -167,11 +168,14 @@ target framework:
 - canonical JSON
 - SHA-256과 signature 검증
 - `dataVersion`, `compactVersion` 규칙과 `manifestHash`
+- 정규화 상대 경로와 platform 독립 glob parsing·matching
+- deterministic 파일 선택 우선순위와 경로 정렬
 - release diff와 download plan
 - zstd codec 식별자와 `ICompressionCodec` contract
 - platform 독립 오류 모델
 
-Core는 filesystem, HTTP, `UnityEngine`과 특정 Storage SDK를 참조하지 않는다.
+Core는 경로와 glob을 문자열로만 처리하며 filesystem, HTTP, `UnityEngine`과 특정
+Storage SDK를 참조하지 않는다.
 
 #### `GamePatchKit.Compression.NativeCompressions`
 
@@ -190,12 +194,14 @@ smoke test로 검증한다. 이 package가 preview인 동안은 API 변경 가�
 #### `GamePatchKit.Packager`
 
 - source 탐색과 입력 검증
+- symlink·reparse point를 따르지 않는 filesystem 열거와 source snapshot 검증
 - file artifact와 part
 - deterministic bundle
 - 최초·incremental package
 - compact
 - artifact와 manifest verify
 - manifest sign
+- CLI와 독립된 streaming verify·sign API와 typed result
 - publish 가능한 로컬 output tree
 
 Packager는 `GamePatchKit.Compression.NativeCompressions`를 기본 zstd 구현으로 사용한다.
@@ -340,6 +346,38 @@ group 필드:
 - compression 설정을 바꿔도 재사용 artifact가 요구하는 codec 지원은 사라지지 않으며,
   Runtime은 목표 manifest가 참조하는 모든 codec을 지원해야 한다.
 
+### glob 문법과 선택 규칙
+
+v1은 OS와 glob library에 따라 의미가 달라지지 않도록 다음의 작은 자체 glob dialect를
+사용한다.
+
+- pattern은 `inputRoot` 기준 상대 경로이며 `/`만 구분자로 사용하고 NFC로 정규화한다.
+- 일반 문자는 그대로 일치하고 `*`는 한 path segment 안의 0개 이상 문자와 일치한다.
+- `**`는 완전한 path segment로만 사용할 수 있고 0개 이상의 path segment와 일치한다.
+  따라서 `**/*.json`은 root의 JSON 파일과 하위 디렉터리의 JSON 파일을 모두 일치시킨다.
+- `foo**bar` 같은 부분 `**`, 절대 경로, 빈 segment, `.`·`..`, 역슬래시, NUL,
+  `?`, character class(`[]`), brace expansion(`{}`), extglob과 negation은 거부한다.
+- 모든 OS에서 ordinal case-sensitive로 일치시키며 filesystem과 locale의 대소문자
+  규칙을 사용하지 않는다.
+- 숨김 경로는 segment가 `.`으로 시작하는 경로다. `*`와 `**`는 숨김 segment를
+  암묵적으로 일치시키지 않으며, 해당 pattern segment가 literal `.`으로 시작해야 한다.
+  Windows Hidden attribute는 선택 의미에 사용하지 않는다.
+- editor metadata와 임시 파일을 이름으로 추정해 자동 제외하지 않는다. 필요하면
+  `exclude`에 명시한다.
+
+파일 선택은 다음 순서로 수행한다.
+
+1. Packager가 filesystem entry를 열거하고 Core의 정규화 상대 경로로 변환한다.
+2. `include[]` 중 하나에도 일치하지 않는 경로를 제외한다.
+3. `exclude[]` 중 하나에 일치하는 경로를 제외한다. `exclude`는 항상 우선하며
+   negation이나 re-include는 없다.
+4. 남은 파일에 모든 group `include[]`를 적용한다. 둘 이상의 group에 일치하면
+   실패하고, 일치하는 group이 없으면 예약 group `default`에 넣는다.
+5. 정규화 상대 경로의 UTF-8 byte ordinal 오름차순으로 최종 목록을 고정한다.
+
+각 `include[]`, `exclude[]`와 group `include[]` 내부의 pattern은 OR로 결합한다.
+group matching은 전역 `include`·`exclude`를 통과한 파일에만 적용한다.
+
 ### group 설계 규칙
 
 - 파일 확장자가 아니라 소비자, 다운로드 시점과 변경 주기를 기준으로 나눈다.
@@ -355,13 +393,24 @@ group 필드:
 ### 배포 대상 파일 규칙
 
 - `include`는 비어 있을 수 없고 명시적 allowlist로 동작한다.
-- 상대 경로 구분자는 `/`로 정규화하고 Unicode 정규화 규칙을 고정한다.
-- 절대 경로, 빈 segment, `.`·`..`, 역슬래시, NUL과 symlink를 허용하지 않는다.
-- 숨김 파일, editor metadata와 임시 파일은 명시하지 않는 한 포함하지 않는다.
-- 대소문자만 다른 경로, 정규화 후 중복 경로와 group 중복 일치는 오류다.
-- 파일 순서는 정규화 상대 경로의 ordinal byte 순서로 고정한다.
+- Core의 문자열 경로 정규화는 `/`와 NFC를 사용하고 절대 경로, 빈 segment,
+  `.`·`..`, 역슬래시와 NUL을 거부한다.
+- NFC 정규화 후 UTF-8 byte가 같거나 `OrdinalIgnoreCase` 비교에서만 같아지는 둘 이상의
+  경로는 OS와 관계없이 중복 오류다.
+- Core는 filesystem 객체의 종류를 판정하지 않는다.
+- Packager는 `inputRoot` 자체와 탐색 중 발견한 symlink, junction을 포함한 모든
+  reparse point를 따르지 않고 오류로 처리한다.
+- Packager는 최초 열거에서 상대 경로·entry 종류·stable file identity·크기·수정 시각
+  snapshot을 만들고, 파일을 열기 전과 stream hash 완료 후 같은 값을 재검증한다.
+- stable file identity는 Windows의 volume ID·file ID 또는 Unix 계열의 device·inode
+  조합이며 manifest identity에는 포함하지 않는다. 지원할 수 없는 filesystem에서는
+  검증을 생략하지 않고 package를 실패시킨다.
+- Packager는 manifest 확정 전에 같은 규칙으로 다시 열거·선별한 최종 경로 집합을 최초
+  선택 결과와 비교한다. 파일 추가·삭제·교체·변경이나 entry 종류 변경이 감지되면
+  일관되지 않은 source로 실패하고 manifest를 생성하지 않는다.
 - 각 파일의 원본 byte 크기와 SHA-256을 계산한다.
-- package 실행 중 입력 파일이 바뀌면 일관되지 않은 입력으로 실패한다.
+- 재현 가능한 package를 위해 호출자는 실행 중 source를 변경하지 않아야 하며,
+  Packager는 위 snapshot 검증으로 관찰 가능한 경합을 거부한다.
 
 ### file artifact
 
@@ -429,6 +478,23 @@ release manifest 최소 필드:
 | `artifacts[]` | type, 경로, 크기, hash, 압축과 part |
 | `files[]` | 최종 경로, group, 원본 크기, `fileHash`, artifact 참조 |
 
+`release-manifest.schema.json`은 모든 object에서 알 수 없는 필드를 거부하고 다음
+discriminated union을 `oneOf`와 `const` discriminator로 정의한다.
+
+- `artifacts[].kind: file`
+  - `payload.kind: single`: 단일 payload의 경로·크기·`artifactHash`
+  - `payload.kind: parts`: 전체 payload의 `artifactHash`와 순서 있는 `parts[]`의
+    index·경로·크기·`partHash`
+- `artifacts[].kind: bundle`
+  - 단일 bundle payload의 경로·크기·`artifactHash`·실제 compression metadata와
+    순서 있는 `entries[]`
+- `files[].source.kind: file`
+  - 존재하는 file artifact의 `artifactHash` 참조
+- `files[].source.kind: bundleEntry`
+  - 존재하는 bundle artifact의 `artifactHash`와 entry 경로 참조
+- compression metadata는 `kind: none` 또는 `kind: zstd`로 구분하고 실제 payload
+  형식에 필요한 필드만 허용한다.
+
 manifest 규칙:
 
 - `files[]`는 최종 상태의 모든 파일을 정확히 한 번 포함한다.
@@ -444,6 +510,49 @@ manifest 규칙:
   release와 group 안에서도 artifact마다 다를 수 있다.
 - `dataVersion`은 아래에 정의한 canonical identity byte를 기준으로 계산한다.
 - `manifestHash`와 signature는 같은 canonical manifest 원본 byte를 기준으로 계산한다.
+
+manifest 검증은 다음 세 계층으로 나눈다.
+
+1. JSON·Schema 검증: I-JSON 파싱, 필수 필드·type·enum·discriminator·encoding과
+   알 수 없는 필드 거부
+2. Core 의미 검증: 배열 정렬, 중복, group·artifact·bundle entry 참조 무결성과
+   path·hash 기반 불변 조건
+3. payload 검증: Packager·Runtime `verify`가 실제 artifact stream의 크기·hash,
+   part 결합과 압축 해제 결과를 검증
+
+Core 의미 검증 규칙:
+
+- group 이름, 정규화 file 경로, artifact 경로와 `artifactHash`는 각 namespace에서
+  유일해야 한다.
+- 모든 `files[].group`은 선언된 group을 참조한다.
+- `source.kind: file`은 file artifact만, `source.kind: bundleEntry`는 bundle과 그 안의
+  entry만 참조한다.
+- bundle은 같은 group의 file만 포함하고 각 bundle entry는 정확히 하나의 file과
+  대응해야 한다. 하나의 file artifact는 같은 byte를 가진 여러 file이 공유할 수 있다.
+- part index는 `0`부터 연속되고 part 경로는 유일하며, 선언한 part 크기의 합은 전체
+  payload 크기와 일치해야 한다.
+- manifest의 모든 artifact와 bundle entry는 최소 한 번 참조되어야 하며 중복·미참조
+  항목은 오류다.
+- 공유 저장소에 있지만 해당 manifest가 참조하지 않는 과거 release artifact 파일은
+  허용하고 검증 대상에서 제외한다.
+- content-addressed artifact 경로는 artifact kind·group·hash에서 계산한 예상 경로와
+  일치해야 한다.
+
+canonical 배열 순서:
+
+- `groups[]`: group 이름
+- `files[]`: 정규화 상대 경로
+- `artifacts[]`: content-addressed artifact 경로
+- file `parts[]`: part index
+- bundle `entries[]`: 정규화 entry 경로
+
+문자열 배열 정렬은 정규화한 UTF-8 byte의 ordinal 오름차순을 사용하고 locale과
+filesystem 순서에 의존하지 않는다.
+
+canonical JSON은 RFC 8785 JCS와 I-JSON을 기준으로 한다. object property는 JCS의 UTF-16
+code unit 순서로 재귀 정렬하고 array 순서는 위의 domain 규칙을 유지한다. 숫자는
+`-(2^53-1)`부터 `2^53-1`까지의 JSON integer만 허용하며 각 필드의 schema가 음수 허용
+여부를 제한한다. 출력은 UTF-8, BOM·공백·trailing newline 없음으로 고정한다.
 
 ### `dataVersion`, `compactVersion`과 `manifestHash`
 
@@ -465,7 +574,9 @@ manifest 규칙:
 
 - 최초 package는 `0`이다.
 - incremental package는 이전 manifest의 값을 그대로 상속한다.
-- compact는 source manifest의 값보다 1 증가시킨다.
+- compact 결과의 물리 배치가 실제로 바뀌면 source manifest의 값보다 1 증가시킨다.
+- candidate manifest를 source `compactVersion`으로 canonicalize한 byte가 source
+  manifest와 같으면 no-op이며 기존 `compactVersion`과 `manifestHash`를 재사용한다.
 - 같은 `compactVersion`이 같은 manifest를 의미하지 않으며, manifest 식별에는 사용하지
   않는다.
 
@@ -480,8 +591,10 @@ manifest 규칙:
 결과:
 
 - 파일 내용이나 group 의미가 바뀌면 `dataVersion`과 `manifestHash`가 바뀐다.
-- 같은 데이터를 compact하면 `dataVersion`은 유지되고 `compactVersion`은 1 증가하며
-  `manifestHash`가 바뀐다.
+- 같은 데이터를 compact해 artifact 배치가 바뀌면 `dataVersion`은 유지되고
+  `compactVersion`은 1 증가하며 `manifestHash`가 바뀐다.
+- compact candidate의 물리 배치가 source와 같으면 성공 no-op으로 기존
+  `dataVersion`·`compactVersion`·`manifestHash`를 그대로 반환한다.
 - 같은 데이터를 실제로 다른 압축 artifact 배치로 패키징하면 `dataVersion`은 같고
   `manifestHash`는 다르다.
 - compression 설정만 바뀌고 기존 artifact 참조를 모두 재사용하면 `dataVersion`과
@@ -543,13 +656,29 @@ incremental package는 기존 bundle을 수정하거나 동일 경로에 다시 
 5. bundle group의 file override를 새 bundle에 포함한다.
 6. 삭제 파일과 미참조 byte는 새 bundle에 포함하지 않는다.
 7. compact 전후 경로·크기·group·`fileHash`가 같은지 검증한다.
-8. `dataVersion`은 유지하고 `compactVersion`은 source 값보다 1 증가시킨다.
-9. 새 canonical manifest의 `manifestHash`를 계산하고 새 bundle과 manifest를 불변
-   경로에 생성한다.
-10. channel 변경과 이전 artifact 삭제는 수행하지 않는다.
+8. candidate manifest에 source `compactVersion`을 적용해 canonicalize하고 source
+   manifest byte와 비교한다.
+9. 같으면 staging을 폐기하고 `changed: false`와 기존 `dataVersion`·
+   `compactVersion`·`manifestHash`를 반환하며 새 artifact와 manifest를 만들지 않는다.
+10. 다르면 `dataVersion`은 유지하고 `compactVersion`을 1 증가시킨 뒤 새
+    `manifestHash`를 계산해 새 bundle과 manifest를 불변 경로에 생성한다.
+11. channel 변경과 이전 artifact 삭제는 수행하지 않는다.
 
 기존 설치는 경로와 `fileHash`가 같으면 artifact 위치가 달라도 새 bundle을 다운로드하지
 않는다.
+
+### Packager public API
+
+- Packager는 CLI와 독립적으로 호출 가능한 asynchronous streaming verify API를
+  제공하고 schema → Core 의미·참조 무결성 → 실제 payload byte 순서로 검증한다.
+- verify API는 manifest byte, artifact stream provider와 선택적인 signature·신뢰 키를
+  입력받고 typed report와 공통 오류를 반환한다.
+- Packager는 canonical manifest와 `manifestHash`를 검증한 뒤 주입된 signing key
+  handle 또는 signer로 `manifest.sig` 모델·canonical byte를 생성하는 sign API를
+  제공한다.
+- Packager API는 console, 환경 변수와 CLI option을 읽지 않는다. 키 파일·환경 변수
+  로드, exit code와 출력 형식 변환은 CLI 책임이다.
+- CLI와 다른 host가 같은 Packager API를 사용하며 verify·sign 규칙을 복제하지 않는다.
 
 ### CLI 기능
 
@@ -564,6 +693,8 @@ incremental package는 기존 bundle을 수정하거나 동일 경로에 다시 
 
 - 성공은 `0`, 입력·무결성·실행 실패는 구분된 non-zero exit code를 반환한다.
 - CI용 machine-readable JSON 결과를 지원한다.
+- compact 결과는 `changed`를 포함하고 no-op이면 기존 `dataVersion`·
+  `compactVersion`·`manifestHash`를 출력한다.
 - 의미 있는 명령은 파일을 만들지 않는 dry-run을 지원한다.
 - secret과 개인키 내용을 로그와 결과에 기록하지 않는다.
 
@@ -812,10 +943,30 @@ Storage credential, 원격 원자적 교체와 승인 정책은 publisher 책임
 - SHA-256은 손상 검출이며 manifest 출처를 단독으로 보장하지 않는다.
 - public 배포는 Ed25519 canonical manifest 서명을 기본 운영 조건으로 한다.
 - 개인키는 설정, Git, manifest, build report와 로그에 저장하지 않는다.
-- `manifest.sig`에는 알고리즘, key ID와 signature만 기록한다.
+- `manifest.sig`는 `manifest-signature.schema.json`을 따르는 canonical JSON이며
+  `schemaVersion`, `algorithm`, `keyId`, `signature`만 기록한다.
+- v1 `schemaVersion`은 `1`, `algorithm`은 `Ed25519`다. signature는 64-byte Ed25519
+  값을 padding 없는 base64url로 기록한다.
+- public key는 32-byte 값을 padding 없는 base64url로 표현하고, 모든 SHA-256 값은
+  lowercase hexadecimal 64자로 표현한다.
+- `keyId`는 `ed25519-`와 raw 32-byte public key의 SHA-256 lowercase hexadecimal
+  64자를 결합한 `ed25519-<64 hex>` 형식이며 임의 alias를 manifest에 기록하지 않는다.
+- `manifests/<manifestHash>/manifest.sig`는 최초 생성 후 불변이다. 같은 manifest와
+  같은 key의 재실행은 기존 byte를 검증해 재사용하고, 다른 key ID나 signature byte로
+  교체하려 하면 실패한다.
+- v1 key rotation은 기존 release를 재서명하지 않고 새 `manifestHash`의 release부터
+  새 key를 사용한다. 서명만 바꾸기 위해 no-op compact나 새 release를 만들지 않는다.
 - Runtime은 신뢰하는 public key 목록과 key ID로 manifest를 검증한다.
-- key rotation 동안 둘 이상의 public key를 신뢰할 수 있다.
+- key rotation은 구·신 public key 동시 신뢰 → 신 key로 새 release 서명·channel
+  전환 → 구 key release가 active·rollback 대상과 지원 client에서 사라진 뒤 구 key
+  제거 순서로 수행한다.
+- 유출 key로 서명된 기존 release를 즉시 새 key로 다시 서명해야 한다면 단일
+  `manifest.sig` v1 계약으로는 지원하지 않으며 다중 immutable signature 계약이
+  필요하다.
 - 서명 필수 모드에서는 누락·알 수 없는 key ID·검증 실패를 허용하지 않는다.
+- Ed25519 구현은 [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032.html) Section 7.1의
+  모든 Ed25519 known-answer vector와 GamePatchKit signed golden vector를 통과해야
+  한다.
 
 ### 재현성과 멱등성
 
@@ -834,14 +985,20 @@ Storage credential, 원격 원자적 교체와 승인 정책은 publisher 책임
 - `gamepatchkit.yml`의 빈 document·다중 document·mapping이 아닌 root
 - YAML anchor·alias·merge key·custom tag·중복 mapping key 사용
 - config schema 오류
+- manifest·signature schema 또는 JCS·I-JSON 규칙 위반
+- 정렬되지 않거나 중복된 group·file·artifact·part·bundle entry
+- 존재하지 않거나 kind·group이 다른 artifact·bundle entry 참조
+- manifest 내부의 미참조 artifact·bundle entry와 content-addressed 경로 불일치
 - packageId·group 이름 규칙 위반
-- 경로 정규화 실패, symlink와 중복 경로
+- 지원하지 않는 glob 문법과 경로 정규화·대소문자·NFC 중복
+- symlink·junction·reparse point 또는 일반 파일·디렉터리가 아닌 source entry
 - 둘 이상의 group에 일치하는 파일
-- 실행 중 source 파일 변경
+- 실행 중 source 파일 추가·삭제·교체·내용·metadata·entry 종류 변경
 - hash 경로의 기존 byte 불일치
 - 최대 크기를 넘는 bundle
 - 누락 artifact와 존재하지 않는 bundle entry
 - `dataVersion`·`manifestHash` 재계산 불일치 또는 잘못된 `compactVersion`
+- raw public key와 `keyId` fingerprint 불일치 또는 immutable `manifest.sig` 교체 시도
 - signature 검증 실패
 - compact 전후 논리 상태 불일치
 - staging 검증 또는 원자적 활성화 실패
@@ -855,6 +1012,16 @@ Storage credential, 원격 원자적 교체와 승인 정책은 publisher 책임
 
 - 기준 fixture는 최소 1만 파일, 원본 합계 1GiB다.
 - 전체 입력을 메모리에 올리지 않고 streaming hash·compression·download를 사용한다.
+- blocking 기준 환경은 Ubuntu 24.04 x64, repository에 고정된 .NET 10, Release build,
+  Workstation GC, 4 vCPU, 8GiB RAM, local SSD와 병렬도 4다.
+- 각 시나리오는 debugger·profiler 없이 별도 process로 3회 실행하고 GNU
+  `/usr/bin/time -v`의 `Maximum resident set size`를 MiB로 변환해 3회 최대값을
+  peak RSS로 사용한다.
+- 1만 파일·1GiB fixture의 package·compact·verify·download 각 process peak RSS는
+  512MiB 이하여야 한다.
+- 같은 1만 파일·seed·group 분포의 256MiB fixture와 1GiB fixture 사이에서 각
+  streaming 시나리오의 peak RSS 증가는 64MiB 이하여야 한다.
+- 다른 OS 측정은 참고값으로 기록하고 Linux 기준 환경만 blocking gate로 사용한다.
 - 1만 파일 수준에서는 단일 canonical JSON manifest를 우선 사용한다.
 - 병렬 처리가 파일 순서, bundle 경계와 manifest byte를 바꾸지 않아야 한다.
 - bundle group은 작은 파일의 객체·요청 수를 줄이는 용도로 사용한다.
@@ -870,6 +1037,7 @@ package·diff·Runtime 결과는 최소한 다음 값을 제공한다.
 - 임시 저장공간
 - compact 전후 신규 설치 byte 차이
 - cache hit byte
+- 시나리오별 peak RSS와 입력 크기 증가에 따른 peak RSS 차이
 - 단계별 실행 시간
 - 취소·재시도·검증 실패 결과
 
@@ -880,7 +1048,8 @@ package·diff·Runtime 결과는 최소한 다음 값을 제공한다.
 - NuGet `GamePatchKit.Compression.NativeCompressions`
 - NuGet `GamePatchKit.DotNet`
 - .NET tool 또는 실행 파일 `gpk`
-- versioned JSON Schema 3종(`package-config`, `release-manifest`, `channel`)
+- versioned JSON Schema 4종(`package-config`, `release-manifest`,
+  `manifest-signature`, `channel`)
 - package별 manifest와 artifact
 - Runtime adapter conformance fixture와 test suite
 
@@ -889,8 +1058,8 @@ schema와 manifest 호환 버전은 같은 repository release에서 함께 관�
 ### 구현 순서
 
 1. solution, 프로젝트 의존 방향과 target framework를 구성한다.
-2. config YAML 입력 계약, config·manifest JSON Schema와 canonicalization 규칙을
-   고정한다.
+2. config YAML 입력 계약, 경로·glob 선택 규칙, config·manifest·signature JSON
+   Schema, manifest 참조 무결성과 canonicalization 규칙을 고정한다.
 3. Core의 hash, identity, manifest hash, diff, download plan과 `ICompressionCodec`을
    구현한다.
 4. `NativeCompressions.Zstandard` 기반 기본 codec adapter와 round-trip test를 구현한다.
@@ -918,8 +1087,9 @@ schema와 manifest 호환 버전은 같은 repository release에서 함께 관�
    artifact와 bundle을 다시 만들지 않는다.
 7. 삭제 파일은 새 artifact 없이 최종 `files[]`와 `dataVersion`에 반영된다.
 8. compact는 bundle override를 통합하고 file group artifact를 재사용한다.
-9. compact 전후 논리 상태가 같으면 `dataVersion`은 같고 `compactVersion`은 1
-   증가하며 `manifestHash`는 달라진다.
+9. compact로 물리 배치가 바뀌면 `dataVersion`은 같고 `compactVersion`은 1 증가하며
+   `manifestHash`는 달라진다. 물리 배치가 같으면 성공 no-op으로 새 artifact·manifest를
+   만들지 않고 기존 세 값을 모두 재사용한다.
 10. compact로 artifact 위치만 바뀐 동일 파일을 Runtime이 다시 다운로드하지 않는다.
 11. 손상된 part, bundle, manifest와 signature를 모두 거부한다.
 12. 모든 artifact는 `maxArtifactBytes` 이하다.
@@ -928,7 +1098,9 @@ schema와 manifest 호환 버전은 같은 repository release에서 함께 관�
     활성화 결과를 만든다.
 15. 다운로드 취소 후 재개해 검증된 cache를 재사용한다.
 16. staging 또는 활성화 실패 시 이전 release를 유지한다.
-17. 1만 파일·1GiB fixture를 전체 메모리 적재 없이 package·verify·download한다.
+17. 기준 Linux 환경에서 1만 파일·1GiB fixture의 package·compact·verify·download
+    peak RSS가 각각 512MiB 이하이고, 256MiB 대비 1GiB fixture의 peak RSS 증가는
+    64MiB 이하이다.
 18. 실패한 package와 compact가 기존 artifact와 manifest를 변경하지 않는다.
 19. NativeCompressions adapter는 고정 option으로 같은 입력에 같은 zstd byte를 만들고
     streaming round-trip 후 원본 hash를 복원한다.
@@ -946,6 +1118,15 @@ schema와 manifest 호환 버전은 같은 repository release에서 함께 관�
 24. `gamepatchkit.yml`은 단일 non-empty document와 mapping root만 허용한다. 유효한
     설정은 `package-config.schema.json`과 모델 검증을 통과하고, 다중 document,
     anchor·alias·merge key·custom tag와 중복 key는 package 실행 전에 거부된다.
+25. file single·file parts·bundle의 모든 manifest union branch가 schema와 Core 의미
+    검증을 통과하고, 잘못된 kind·참조·순서·중복·미참조 항목은 거부된다. 공용 golden
+    vector에서 canonical identity·manifest byte, `dataVersion`, `manifestHash`와
+    Ed25519 signature가 모든 구현에서 정확히 일치하며, `keyId` fingerprint와
+    RFC 8032 Section 7.1 Ed25519 known-answer vector도 정확히 재현된다.
+26. 같은 fixture tree를 다른 filesystem 열거 순서와 지원 OS에서 package해도 glob
+    선택·group 배정·최종 정렬 결과가 정확히 같다. 지원하지 않는 pattern,
+    암묵적으로 일치한 숨김 경로, 대소문자·NFC 중복, symlink·reparse point와
+    source snapshot 경합은 manifest 생성 전에 거부된다.
 
 ### 제약 / 비고
 

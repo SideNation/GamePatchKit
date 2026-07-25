@@ -36,6 +36,8 @@ incremental override가 누적된 bundle group을 새 baseline으로 통합할 �
 ### 최초 package 통합
 
 - [ ] 05 pipeline에 bundle group baseline 생성 단계를 연결한다
+- [ ] bundle artifact·entry가 02의 schema와 `ManifestValidator` 참조 무결성 검증을
+      통과한 뒤 manifest를 출력한다
 
 ### compact
 
@@ -46,9 +48,12 @@ incremental override가 누적된 bundle group을 새 baseline으로 통합할 �
 - [ ] 선택한 bundle group만 현재 최종 파일로 다시 묶고, file override를 새 bundle에
       포함하며, 삭제 파일과 미참조 byte는 제외한다
 - [ ] compact 전후 경로·크기·group·`fileHash`가 같은지 검증한다
-- [ ] `dataVersion`은 유지하고 `compactVersion`은 source 값보다 1 증가시킨다
-- [ ] 새 canonical manifest의 `manifestHash`를 계산하고 새 bundle과 manifest를 불변
-      경로에 생성한다
+- [ ] candidate manifest에 source `compactVersion`을 적용해 canonicalize하고 source
+      manifest byte와 비교한다
+- [ ] 같으면 staging을 폐기하고 `changed: false`와 기존 `dataVersion`·
+      `compactVersion`·`manifestHash`를 반환하며 artifact·manifest를 만들지 않는다
+- [ ] 다르면 `dataVersion`은 유지하고 `compactVersion`을 1 증가시켜 새 canonical
+      manifest의 `manifestHash`를 계산하고 새 bundle·manifest를 불변 경로에 생성한다
 - [ ] channel 변경과 이전 artifact 삭제는 수행하지 않는다
 
 ## 산출물
@@ -67,6 +72,11 @@ incremental override가 누적된 bundle group을 새 baseline으로 통합할 �
 - compact가 bundle override를 통합하고 file group artifact를 재사용한다(검증 기준 8).
 - compression 설정 변경 후 compact하면 선택한 group의 새 bundle에만 현재 설정을
   적용하고 다른 group의 기존 artifact는 재사용한다.
-- compact 전후 `dataVersion`은 같고 `compactVersion`은 1 증가하며
-  `manifestHash`는 달라진다(검증 기준 9).
+- compact로 물리 배치가 바뀌면 `dataVersion`은 같고 `compactVersion`은 1 증가하며
+  `manifestHash`는 달라진다. override·compression·bundle 경계 변화가 없어 candidate가
+  source와 같으면 성공 no-op으로 기존 세 값을 재사용한다(검증 기준 9).
+- no-op compact는 새 artifact·manifest를 만들지 않고 machine-readable 결과에
+  `changed: false`를 기록한다.
+- bundle manifest가 공용 golden vector와 일치하고 잘못된 entry 참조·순서·중복·
+  미참조 bundle을 거부한다(검증 기준 25, bundle 범위).
 - 실패한 compact가 기존 artifact·manifest를 변경하지 않는다(검증 기준 18).

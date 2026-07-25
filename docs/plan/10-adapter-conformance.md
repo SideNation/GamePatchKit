@@ -13,8 +13,8 @@
 
 ## 작업 항목
 
-- [ ] 고정 conformance fixture 제작: file·bundle·part·압축·서명 조합과 손상 케이스를
-      포함한 대표 manifest·artifact 세트
+- [ ] 고정 conformance fixture 제작: file·bundle·part·압축 조합, 잘못된
+      discriminator·참조·정렬과 손상 artifact를 포함한 unsigned manifest·artifact 세트
 - [ ] adapter 구현을 주입받아 실행하는 공용 test suite (abstract 테스트 베이스 또는
       fixture runner 형태)
 - [ ] 검증 항목: download plan 동일성, 검증·활성화 결과 동일성, 취소·재개 동작,
@@ -26,6 +26,8 @@
       충돌을 주입하고 부분 `ready` state가 노출되지 않는지 검증
 - [ ] in-memory fake adapter와 DotNet adapter를 같은 suite로 실행해 결과를 비교
 - [ ] 외부 host가 소비할 배포 형태 결정 (NuGet test package 또는 소스 fixture)
+- [ ] signed fixture와 signature 검증 case는 11단계에서 같은 suite의 extension으로
+      추가
 
 ## 산출물
 
@@ -41,3 +43,5 @@
   (검증 기준 22, 23).
 - 여러 group batch를 단일 state revision으로 commit하는 계약을 모든 adapter가
   만족한다(검증 기준 23).
+- 모든 adapter가 공용 unsigned manifest golden·negative vector에서 같은 검증 결과를
+  만든다(검증 기준 25, unsigned 범위).

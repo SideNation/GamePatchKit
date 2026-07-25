@@ -2,7 +2,7 @@
 
 [PRD](../prd/game-patch-kit-prd.md)의 구현 순서를 기준으로 v1 개발을 13단계로 나눈다.
 각 단계는 개별 파일로 관리하고, 진행은 각 파일의 체크박스로 추적한다. 완료 기준은
-PRD 검증 기준 번호(1~24)로 연결한다.
+PRD 검증 기준 번호(1~26)로 연결한다.
 
 ## 단계 목록
 
@@ -18,8 +18,8 @@ PRD 검증 기준 번호(1~24)로 연결한다.
 | 08 | [Runtime 상태 머신](08-runtime.md) | 03 |
 | 09 | [DotNet adapter·통합 테스트](09-dotnet-adapter.md) | 04, 08 |
 | 10 | [adapter conformance](10-adapter-conformance.md) | 08, 09 |
-| 11 | [서명·key rotation](11-signing-key-rotation.md) | 07, 08 |
-| 12 | [성능·메모리 검증](12-performance-validation.md) | 05~09 |
+| 11 | [서명·key rotation](11-signing-key-rotation.md) | 07, 08, 10 |
+| 12 | [성능·메모리 검증](12-performance-validation.md) | 05~11 |
 | 13 | [문서화·배포 산출물](13-documentation.md) | 01~12 |
 
 ## 트랙과 병렬 진행
@@ -30,7 +30,8 @@ Packager와 Runtime은 Core 계약(03)으로만 연결되므로 03 이후 두 �
 - 공통 기반: 01 → 02 → 03 → 04
 - Packager 트랙: 05 → 06 → 07 (04 이후)
 - Runtime 트랙: 08 (03 이후 시작 가능) → 09 (04·08 이후) → 10
-- 마무리: 11 (07·08 이후) → 12 → 13
+- 서명 통합: 11 (07·08·10 이후)
+- 마무리: 12 (05~11 이후) → 13
 
 ## 공통 규칙
 
@@ -50,7 +51,7 @@ Packager와 Runtime은 Core 계약(03)으로만 연결되므로 03 이후 두 �
 | 6 | incremental의 기존 artifact 재사용·compression 변경 시 재생성 안 함 | 05, 06 |
 | 7 | 삭제 파일 반영 | 05 |
 | 8 | compact의 override 통합·file 재사용 | 06 |
-| 9 | compact 시 `dataVersion` 유지·`compactVersion` 증가·`manifestHash` 변경 | 03, 06 |
+| 9 | compact 물리 변경 시 version 증가, 동일 배치는 no-op 재사용 | 03, 06, 07 |
 | 10 | compact 후 재다운로드 없음 | 08, 09 |
 | 11 | 손상 part·bundle·manifest·signature 거부 | 05, 06, 08, 09, 11 |
 | 12 | 모든 artifact ≤ `maxArtifactBytes` | 05, 06 |
@@ -58,7 +59,7 @@ Packager와 Runtime은 Core 계약(03)으로만 연결되므로 03 이후 두 �
 | 14 | DotNet·fake adapter 동일 결과 | 10 |
 | 15 | 취소 후 재개·cache 재사용 | 08, 09 |
 | 16 | 활성화 실패 시 이전 release 유지 | 08, 09 |
-| 17 | 1만 파일·1GiB streaming 처리 | 12 |
+| 17 | 1만 파일·1GiB streaming·peak RSS 512MiB·scaling delta 64MiB | 12 |
 | 18 | 실패한 실행이 기존 결과 불변 | 05, 06 |
 | 19 | zstd deterministic round-trip | 04 |
 | 20 | 미지원 codec 요구 시 활성화 전 실패 | 08 |
@@ -66,6 +67,8 @@ Packager와 Runtime은 Core 계약(03)으로만 연결되므로 03 이후 두 �
 | 22 | required-only 설치·optional group 상태 전환 | 03, 08, 09, 10 |
 | 23 | `PackageState` 원자적 교체·multi-group batch·손상 복구 | 08, 09, 10 |
 | 24 | 단일-document YAML 설정·금지 기능·schema 검증 | 02, 07, 13 |
+| 25 | manifest union·참조 무결성·canonical/signature·key ID·RFC 8032 vector | 02, 03, 05, 06, 07, 08, 10, 11 |
+| 26 | deterministic glob 선택·filesystem snapshot·경합 거부 | 02, 05, 13 |
 
 ## 진행 상태
 
