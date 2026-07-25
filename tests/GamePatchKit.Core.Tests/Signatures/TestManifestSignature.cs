@@ -90,4 +90,17 @@ public class TestManifestSignature
         Assert.False(ok);
         Assert.Contains(errors, e => e.Code == ManifestSignatureErrorCodes.InvalidAlgorithm);
     }
+
+    [Fact]
+    public void RejectsUnknownProperty()
+    {
+        var json = (JObject)JToken.Parse(ValidJson());
+        json["unexpectedField"] = true;
+
+        bool ok = ManifestSignature.TryParse(json, out ManifestSignature? signature, out IReadOnlyList<GamePatchKitError> errors);
+
+        Assert.False(ok);
+        Assert.Null(signature);
+        Assert.Contains(errors, e => e.Code == ManifestSignatureErrorCodes.UnknownProperty);
+    }
 }

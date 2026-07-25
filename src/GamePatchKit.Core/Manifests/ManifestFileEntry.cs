@@ -85,7 +85,7 @@ namespace GamePatchKit.Core.Manifests
                 return false;
             }
 
-            if (!hasPath || !hasGroup || !hasSize || !hasFileHash)
+            if (!hasPath || !hasGroup || !hasSize || !hasFileHash || errorList.Count > 0)
             {
                 entry = null;
                 errors = errorList;

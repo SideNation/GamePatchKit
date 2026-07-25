@@ -55,4 +55,17 @@ public class TestChannel
         Assert.False(ok);
         Assert.Contains(errors, e => e.Code == ChannelErrorCodes.InvalidManifestHash);
     }
+
+    [Fact]
+    public void RejectsUnknownProperty()
+    {
+        var json = (JObject)JToken.Parse(ValidJson());
+        json["unexpectedField"] = true;
+
+        bool ok = Channel.TryParse(json, out Channel? channel, out IReadOnlyList<GamePatchKitError> errors);
+
+        Assert.False(ok);
+        Assert.Null(channel);
+        Assert.Contains(errors, e => e.Code == ChannelErrorCodes.UnknownProperty);
+    }
 }

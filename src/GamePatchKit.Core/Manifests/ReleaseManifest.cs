@@ -94,7 +94,7 @@ namespace GamePatchKit.Core.Manifests
             bool hasArtifacts = TryParseArray(obj, "artifacts", errorList, ManifestArtifact.TryParse, out List<ManifestArtifact> artifacts);
             bool hasFiles = TryParseArray(obj, "files", errorList, ManifestFileEntry.TryParse, out List<ManifestFileEntry> files);
 
-            if (!hasSchemaVersion || !hasPackageId || !hasDataVersion || !hasCompactVersion || !hasGroups || !hasArtifacts || !hasFiles)
+            if (!hasSchemaVersion || !hasPackageId || !hasDataVersion || !hasCompactVersion || !hasGroups || !hasArtifacts || !hasFiles || errorList.Count > 0)
             {
                 manifest = null;
                 errors = errorList;

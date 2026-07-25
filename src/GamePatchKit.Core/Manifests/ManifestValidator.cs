@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using GamePatchKit.Core.Errors;
+using GamePatchKit.Core.Json;
 using GamePatchKit.Core.Paths;
 
 namespace GamePatchKit.Core.Manifests
@@ -83,6 +85,27 @@ namespace GamePatchKit.Core.Manifests
                     errors.Add(new GamePatchKitError(Stage, ManifestErrorCodes.UnknownFileGroup, $"File references undeclared group '{file.Group}'.", packageId: manifest.PackageId, relativePath: file.Path, group: file.Group));
                 }
             }
+
+            var allPaths = new List<string>(manifest.Files.Count);
+            foreach (ManifestFileEntry file in manifest.Files)
+            {
+                allPaths.Add(file.Path);
+            }
+
+            foreach (IReadOnlyList<string> duplicateGroup in RelativePathNormalizer.FindCaseInsensitiveDuplicateGroups(allPaths))
+            {
+                if (duplicateGroup.Distinct(StringComparer.Ordinal).Count() < 2)
+                {
+                    continue;
+                }
+
+                string joined = string.Join(", ", duplicateGroup);
+                errors.Add(new GamePatchKitError(
+                    Stage,
+                    ManifestErrorCodes.CaseInsensitiveDuplicateFilePath,
+                    $"File paths collide under OS-independent case-insensitive comparison: {joined}",
+                    packageId: manifest.PackageId));
+            }
         }
 
         private static void ValidateArtifacts(
@@ -143,12 +166,24 @@ namespace GamePatchKit.Core.Manifests
 
             var parts = (FilePayload.Parts)artifact.Payload;
             long sizeSum = 0;
+            bool sizeSumOverflowed = false;
             var seenPartPaths = new HashSet<string>(StringComparer.Ordinal);
 
             for (int i = 0; i < parts.PartList.Count; i++)
             {
                 FilePart part = parts.PartList[i];
-                sizeSum += part.Size;
+
+                // Every part.Size is already bounded to [0, MaxSafeInteger] by FilePart.TryParse, so this
+                // guard (rather than checked/unchecked long addition) cannot itself under/overflow; without
+                // it, thousands of near-MaxSafeInteger parts could silently wrap sizeSum past long.MaxValue.
+                if (!sizeSumOverflowed && part.Size > JsonNumbers.MaxSafeInteger - sizeSum)
+                {
+                    sizeSumOverflowed = true;
+                }
+                else if (!sizeSumOverflowed)
+                {
+                    sizeSum += part.Size;
+                }
 
                 if (part.Index != i)
                 {
@@ -167,9 +202,9 @@ namespace GamePatchKit.Core.Manifests
                 }
             }
 
-            if (sizeSum != parts.Size)
+            if (sizeSumOverflowed || sizeSum != parts.Size)
             {
-                errors.Add(new GamePatchKitError(Stage, ManifestErrorCodes.PartSizeSumMismatch, $"Sum of part sizes ({sizeSum}) does not equal payload size ({parts.Size}).", packageId: manifest.PackageId));
+                errors.Add(new GamePatchKitError(Stage, ManifestErrorCodes.PartSizeSumMismatch, $"Sum of part sizes does not equal payload size ({parts.Size}).", packageId: manifest.PackageId));
             }
         }
 
@@ -182,12 +217,18 @@ namespace GamePatchKit.Core.Manifests
             }
 
             string? previousEntryPath = null;
+            var seenEntryPaths = new HashSet<string>(StringComparer.Ordinal);
 
             foreach (BundleEntry entry in artifact.Entries)
             {
                 if (!RelativePathNormalizer.TryNormalize(entry.Path, out string normalized, out string pathErrorCode) || normalized != entry.Path)
                 {
                     errors.Add(new GamePatchKitError(Stage, ManifestErrorCodes.NonCanonicalPath, "Bundle entry path is not already in normalized canonical form.", packageId: manifest.PackageId, relativePath: entry.Path, group: artifact.Group));
+                }
+
+                if (!seenEntryPaths.Add(entry.Path))
+                {
+                    errors.Add(new GamePatchKitError(Stage, ManifestErrorCodes.DuplicateBundleEntryPath, $"Bundle entry path '{entry.Path}' is declared more than once in this bundle.", packageId: manifest.PackageId, relativePath: entry.Path, group: artifact.Group));
                 }
 
                 if (previousEntryPath != null && Utf8OrdinalStringComparer.Instance.Compare(previousEntryPath, entry.Path) > 0)
@@ -207,6 +248,7 @@ namespace GamePatchKit.Core.Manifests
         {
             var fileArtifactReferenceCounts = new Dictionary<string, int>(StringComparer.Ordinal);
             var bundleEntryReferenceCounts = new Dictionary<(string Group, string Hash, string EntryPath), int>();
+            var fileArtifactContentByHash = new Dictionary<string, (long Size, string FileHash)>(StringComparer.Ordinal);
 
             foreach (ManifestFileEntry file in manifest.Files)
             {
@@ -216,6 +258,25 @@ namespace GamePatchKit.Core.Manifests
                     {
                         fileArtifactReferenceCounts.TryGetValue(fileReference.ArtifactHash, out int count);
                         fileArtifactReferenceCounts[fileReference.ArtifactHash] = count + 1;
+
+                        // "One file artifact may be shared by several files with the same bytes" implies
+                        // every file sharing it must actually agree on those bytes (size + fileHash).
+                        if (fileArtifactContentByHash.TryGetValue(fileReference.ArtifactHash, out (long Size, string FileHash) firstContent))
+                        {
+                            if (firstContent.Size != file.Size || firstContent.FileHash != file.FileHash)
+                            {
+                                errors.Add(new GamePatchKitError(
+                                    Stage,
+                                    ManifestErrorCodes.InconsistentFileArtifactContent,
+                                    $"File artifact hash '{fileReference.ArtifactHash}' is referenced with differing size/fileHash across files.",
+                                    packageId: manifest.PackageId,
+                                    relativePath: file.Path));
+                            }
+                        }
+                        else
+                        {
+                            fileArtifactContentByHash[fileReference.ArtifactHash] = (file.Size, file.FileHash);
+                        }
                     }
                     else
                     {
@@ -253,6 +314,17 @@ namespace GamePatchKit.Core.Manifests
                 {
                     errors.Add(new GamePatchKitError(Stage, ManifestErrorCodes.UnknownBundleEntryReference, $"Bundle has no entry at path '{bundleEntryReference.EntryPath}'.", packageId: manifest.PackageId, relativePath: file.Path));
                     continue;
+                }
+
+                // Bundle entries are stored at the file's own full relative path, not a bundle-local alias.
+                if (file.Path != bundleEntryReference.EntryPath)
+                {
+                    errors.Add(new GamePatchKitError(
+                        Stage,
+                        ManifestErrorCodes.BundleEntryPathMismatch,
+                        $"File path '{file.Path}' does not match its bundle entry path '{bundleEntryReference.EntryPath}'.",
+                        packageId: manifest.PackageId,
+                        relativePath: file.Path));
                 }
 
                 var entryKey = (referencedBundle.Group, referencedBundle.ArtifactHash, bundleEntryReference.EntryPath);

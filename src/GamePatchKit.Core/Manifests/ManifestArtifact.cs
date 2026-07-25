@@ -82,7 +82,7 @@ namespace GamePatchKit.Core.Manifests
                 return false;
             }
 
-            if (!hasCompression)
+            if (!hasCompression || errorList.Count > 0)
             {
                 artifact = null;
                 errors = errorList;
@@ -159,7 +159,7 @@ namespace GamePatchKit.Core.Manifests
                 entries.Add(entry!);
             }
 
-            if (!hasGroup || !hasPath || !hasSize || !hasHash || !hasCompression || !entriesOk)
+            if (!hasGroup || !hasPath || !hasSize || !hasHash || !hasCompression || !entriesOk || errorList.Count > 0)
             {
                 artifact = null;
                 errors = errorList;

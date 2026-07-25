@@ -15,6 +15,12 @@ namespace GamePatchKit.Core.Json
     // before building the JToken tree (see docs/plan/02-schema-canonicalization.md canonical array order).
     public static class CanonicalJsonWriter
     {
+        // Encoding.UTF8 (default fallback behavior) silently replaces an unpaired surrogate with U+FFFD,
+        // so a string containing one and a string containing a literal U+FFFD would canonicalize to
+        // identical bytes - breaking the distinct-content-to-distinct-bytes property hashing depends on.
+        // A throwing encoding turns that into a clear failure instead of a silent hash collision.
+        private static readonly UTF8Encoding _strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
         public static byte[] Write(JToken value)
         {
             using (var stream = new MemoryStream())
@@ -178,7 +184,17 @@ namespace GamePatchKit.Core.Json
 
         private static void WriteUtf8(Stream destination, string text)
         {
-            byte[] bytes = Encoding.UTF8.GetBytes(text);
+            byte[] bytes;
+
+            try
+            {
+                bytes = _strictUtf8.GetBytes(text);
+            }
+            catch (EncoderFallbackException ex)
+            {
+                throw new FormatException("Canonical JSON strings must not contain unpaired UTF-16 surrogates.", ex);
+            }
+
             destination.Write(bytes, 0, bytes.Length);
         }
     }

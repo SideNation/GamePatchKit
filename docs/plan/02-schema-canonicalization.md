@@ -193,6 +193,13 @@ fixture만 고정한다.
 - 경로·glob table-driven fixture가 지원 OS와 후보 입력 순서에 관계없이 같은 선택·
   group·정렬 결과를 만들고 무효 pattern과 숨김 암묵 일치를 거부한다(검증 기준 26).
 
-모든 완료 기준은 `dotnet test`(`GamePatchKit.Core.Tests`, 107개 테스트)로
+모든 완료 기준은 `dotnet test`(`GamePatchKit.Core.Tests`, 124개 테스트)로
 검증했으며, golden vector는 Python으로 독립 구현한 RFC 8785 인코더 및 `shasum`과
-교차 검증했다(과정은 worklog 참고).
+교차 검증했다(생성·검증 스크립트는 `tests/fixtures/golden-vectors/tools/`에 커밋).
+
+구현 직후 Codex adversarial review에서 8건을 지적받아 모두 수정했다(unknown
+property가 TryParse를 실패시키지 않던 전 모델 공통 버그, `ManifestValidator`의
+case-insensitive 파일 경로·공유 file artifact 내용 일관성·bundle entry 중복
+경로·entryPath 불일치·multipart 크기 합 overflow 미검증, `GlobPattern`의 NFC
+미정규화, `CanonicalJsonWriter`의 unpaired surrogate 무음 치환). 상세 내역과
+회귀 테스트는 worklog 참고.

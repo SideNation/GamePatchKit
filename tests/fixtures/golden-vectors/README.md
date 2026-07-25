@@ -29,3 +29,17 @@ tree, add:
   key paired to `public-key.bin`).
 
 None of the existing 02 files change shape or meaning when these are added.
+
+## Independent cross-check (`tools/`)
+
+`tools/generate_golden_vectors.py` re-implements RFC 8785 canonicalization from scratch
+in Python (`tools/jcs.py`) and either (re)writes these fixtures or, with `--check`,
+verifies the committed files still match it byte-for-byte without writing anything. This
+is deliberately independent of `GamePatchKit.Core.Json.CanonicalJsonWriter` so the
+fixtures are not solely self-validated by the C# implementation they exist to test. It is
+not run by `dotnet test` or CI - re-run it by hand after changing a vector's input model:
+
+```bash
+python3 tests/fixtures/golden-vectors/tools/generate_golden_vectors.py           # regenerate
+python3 tests/fixtures/golden-vectors/tools/generate_golden_vectors.py --check   # verify only
+```

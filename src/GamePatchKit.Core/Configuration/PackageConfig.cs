@@ -124,7 +124,7 @@ namespace GamePatchKit.Core.Configuration
             bool hasValidGroups = TryParseGroups(obj, errorList, out List<PackageConfigGroup> groups);
             ok &= hasValidGroups;
 
-            if (!ok)
+            if (!ok || errorList.Count > 0)
             {
                 config = null;
                 errors = errorList;
@@ -257,7 +257,7 @@ namespace GamePatchKit.Core.Configuration
         {
             groups = new List<PackageConfigGroup>();
 
-            if (!JsonReadHelpers.TryGetOptionalArray(obj, "groups", out JArray array, out bool wasPresent))
+            if (!JsonReadHelpers.TryGetRequiredArray(obj, "groups", out JArray array))
             {
                 errorList.Add(new GamePatchKitError(Stage, PackageConfigErrorCodes.InvalidGroup, "'groups' must be an array."));
                 return false;

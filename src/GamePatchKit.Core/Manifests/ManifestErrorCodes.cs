@@ -47,5 +47,13 @@ namespace GamePatchKit.Core.Manifests
         public const string UnsortedArtifacts = "manifest.unsorted-artifacts";
 
         public const string UnsortedBundleEntries = "manifest.unsorted-bundle-entries";
+
+        public const string CaseInsensitiveDuplicateFilePath = "manifest.case-insensitive-duplicate-file-path";
+
+        public const string InconsistentFileArtifactContent = "manifest.inconsistent-file-artifact-content";
+
+        public const string DuplicateBundleEntryPath = "manifest.duplicate-bundle-entry-path";
+
+        public const string BundleEntryPathMismatch = "manifest.bundle-entry-path-mismatch";
     }
 }

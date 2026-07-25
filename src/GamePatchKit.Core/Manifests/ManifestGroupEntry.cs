@@ -48,7 +48,7 @@ namespace GamePatchKit.Core.Manifests
                 errorList.Add(new GamePatchKitError(Stage, ManifestErrorCodes.InvalidField, "Group 'required' must be a boolean."));
             }
 
-            if (!hasName || !hasRequired)
+            if (!hasName || !hasRequired || errorList.Count > 0)
             {
                 entry = null;
                 errors = errorList;

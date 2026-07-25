@@ -33,9 +33,14 @@ namespace GamePatchKit.Core.Manifests
                 errorList.Add(new GamePatchKitError(Stage, ManifestErrorCodes.UnknownProperty, $"Unknown bundle entry property '{unknown}'."));
             }
 
-            if (!JsonReadHelpers.TryGetRequiredString(obj, "path", out string path))
+            bool hasPath = JsonReadHelpers.TryGetRequiredString(obj, "path", out string path);
+            if (!hasPath)
             {
                 errorList.Add(new GamePatchKitError(Stage, ManifestErrorCodes.InvalidField, "Bundle entry 'path' must be a string."));
+            }
+
+            if (!hasPath || errorList.Count > 0)
+            {
                 entry = null;
                 errors = errorList;
                 return false;

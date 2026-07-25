@@ -70,4 +70,18 @@ public class TestGlobPattern
         Assert.Null(glob);
         Assert.Equal(expectedErrorCode, errorCode);
     }
+
+    [Fact]
+    public void NfcNormalizesPatternSoItMatchesAnNfcCandidateEvenWhenWrittenAsNfd()
+    {
+        // "e" + combining acute accent (NFD) in the pattern; precomposed U+00E9 (NFC) in the
+        // candidate - both spelled with explicit escapes so the two forms are unambiguous.
+        string nfdPattern = "café/*.json";
+        string nfcCandidatePath = "café/a.json";
+
+        bool parsed = GlobPattern.TryParse(nfdPattern, out GlobPattern? pattern, out string errorCode);
+        Assert.True(parsed, errorCode);
+
+        Assert.True(pattern!.IsMatch(nfcCandidatePath));
+    }
 }

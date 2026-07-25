@@ -55,9 +55,14 @@ namespace GamePatchKit.Core.Manifests
                 errorList.Add(new GamePatchKitError(Stage, ManifestErrorCodes.UnknownProperty, $"Unknown file-source property '{unknown}'."));
             }
 
-            if (!JsonReadHelpers.TryGetRequiredString(obj, "artifactHash", out string artifactHash) || !Hex64.IsValid(artifactHash))
+            bool hasHash = JsonReadHelpers.TryGetRequiredString(obj, "artifactHash", out string artifactHash) && Hex64.IsValid(artifactHash);
+            if (!hasHash)
             {
                 errorList.Add(new GamePatchKitError(Stage, ManifestErrorCodes.InvalidField, "File-source 'artifactHash' must be lowercase hex64."));
+            }
+
+            if (!hasHash || errorList.Count > 0)
+            {
                 source = null;
                 errors = errorList;
                 return false;
@@ -89,7 +94,7 @@ namespace GamePatchKit.Core.Manifests
                 errorList.Add(new GamePatchKitError(Stage, ManifestErrorCodes.InvalidField, "Bundle-entry-source 'entryPath' must be a string."));
             }
 
-            if (!hasHash || !hasEntryPath)
+            if (!hasHash || !hasEntryPath || errorList.Count > 0)
             {
                 source = null;
                 errors = errorList;

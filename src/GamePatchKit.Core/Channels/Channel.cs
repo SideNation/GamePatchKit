@@ -73,7 +73,7 @@ namespace GamePatchKit.Core.Channels
                 errorList.Add(new GamePatchKitError(Stage, ChannelErrorCodes.InvalidDataVersion, "'dataVersion' must match 'v1-' + lowercase hex64."));
             }
 
-            if (!hasSchemaVersion || !hasPackageId || !hasManifestHash || !hasDataVersion)
+            if (!hasSchemaVersion || !hasPackageId || !hasManifestHash || !hasDataVersion || errorList.Count > 0)
             {
                 channel = null;
                 errors = errorList;

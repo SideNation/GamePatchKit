@@ -1,4 +1,5 @@
 using GamePatchKit.Core.Errors;
+using GamePatchKit.Core.Json;
 using GamePatchKit.Core.Manifests;
 using Newtonsoft.Json.Linq;
 
@@ -52,6 +53,32 @@ public class TestReleaseManifest
 
         ValidationResult result = ManifestValidator.Validate(manifest!);
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    [Fact]
+    public void RejectsUnknownTopLevelProperty()
+    {
+        var json = (JObject)JToken.Parse(SingleFileManifestJson());
+        json["unexpectedField"] = true;
+
+        bool parsed = ReleaseManifest.TryParse(json, out ReleaseManifest? manifest, out IReadOnlyList<GamePatchKitError> errors);
+
+        Assert.False(parsed);
+        Assert.Null(manifest);
+        Assert.Contains(errors, e => e.Code == ManifestErrorCodes.UnknownProperty);
+    }
+
+    [Fact]
+    public void RejectsUnknownNestedFileSourceProperty()
+    {
+        var json = (JObject)JToken.Parse(SingleFileManifestJson());
+        ((JObject)((JArray)json["files"]!)[0]!["source"]!)["unexpectedField"] = true;
+
+        bool parsed = ReleaseManifest.TryParse(json, out ReleaseManifest? manifest, out IReadOnlyList<GamePatchKitError> errors);
+
+        Assert.False(parsed);
+        Assert.Null(manifest);
+        Assert.Contains(errors, e => e.Code == ManifestErrorCodes.UnknownProperty);
     }
 
     [Fact]
@@ -123,6 +150,166 @@ public class TestReleaseManifest
         ValidationResult result = ManifestValidator.Validate(manifest!);
 
         Assert.True(result.IsValid, string.Join("; ", result.Errors));
+    }
+
+    [Fact]
+    public void RejectsFileArtifactSharedWithInconsistentSizeOrFileHash()
+    {
+        var json = (JObject)JToken.Parse(SingleFileManifestJson());
+        var secondFile = JObject.Parse(@"{
+            ""path"": ""data/config2.json"",
+            ""group"": ""core"",
+            ""size"": 15,
+            ""fileHash"": """ + HashB + @""",
+            ""source"": { ""kind"": ""file"", ""artifactHash"": """ + HashA + @""" }
+        }");
+        ((JArray)json["files"]!).Add(secondFile);
+
+        ReleaseManifest.TryParse(json, out ReleaseManifest? manifest, out _);
+        ValidationResult result = ManifestValidator.Validate(manifest!);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Code == ManifestErrorCodes.InconsistentFileArtifactContent);
+    }
+
+    [Fact]
+    public void RejectsCaseInsensitiveDuplicateFilePaths()
+    {
+        string json = $@"{{
+            ""schemaVersion"": 1,
+            ""packageId"": ""sample-game-client-data"",
+            ""dataVersion"": ""{DataVersion}"",
+            ""compactVersion"": 0,
+            ""groups"": [ {{ ""name"": ""core"", ""required"": true }} ],
+            ""artifacts"": [
+                {{
+                    ""kind"": ""file"",
+                    ""compression"": {{ ""kind"": ""none"" }},
+                    ""payload"": {{ ""kind"": ""single"", ""path"": ""sample-game-client-data/artifacts/files/{HashA}/content"", ""size"": 14, ""artifactHash"": ""{HashA}"" }}
+                }}
+            ],
+            ""files"": [
+                {{ ""path"": ""Data/config.json"", ""group"": ""core"", ""size"": 14, ""fileHash"": ""{HashA}"", ""source"": {{ ""kind"": ""file"", ""artifactHash"": ""{HashA}"" }} }},
+                {{ ""path"": ""data/config.json"", ""group"": ""core"", ""size"": 14, ""fileHash"": ""{HashA}"", ""source"": {{ ""kind"": ""file"", ""artifactHash"": ""{HashA}"" }} }}
+            ]
+        }}";
+
+        bool parsed = ReleaseManifest.TryParse((JObject)JToken.Parse(json), out ReleaseManifest? manifest, out IReadOnlyList<GamePatchKitError> parseErrors);
+        Assert.True(parsed, string.Join("; ", parseErrors));
+
+        ValidationResult result = ManifestValidator.Validate(manifest!);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Code == ManifestErrorCodes.CaseInsensitiveDuplicateFilePath);
+    }
+
+    [Fact]
+    public void RejectsDuplicateBundleEntryPathWithinOneBundle()
+    {
+        string json = $@"{{
+            ""schemaVersion"": 1,
+            ""packageId"": ""sample-game-client-data"",
+            ""dataVersion"": ""{DataVersion}"",
+            ""compactVersion"": 0,
+            ""groups"": [ {{ ""name"": ""maps"", ""required"": true }} ],
+            ""artifacts"": [
+                {{
+                    ""kind"": ""bundle"",
+                    ""group"": ""maps"",
+                    ""path"": ""sample-game-client-data/artifacts/bundles/maps/{HashB}.tar"",
+                    ""size"": 28,
+                    ""artifactHash"": ""{HashB}"",
+                    ""compression"": {{ ""kind"": ""none"" }},
+                    ""entries"": [ {{ ""path"": ""maps/level1.bin"" }}, {{ ""path"": ""maps/level1.bin"" }} ]
+                }}
+            ],
+            ""files"": [
+                {{ ""path"": ""maps/level1.bin"", ""group"": ""maps"", ""size"": 14, ""fileHash"": ""{HashA}"", ""source"": {{ ""kind"": ""bundleEntry"", ""artifactHash"": ""{HashB}"", ""entryPath"": ""maps/level1.bin"" }} }}
+            ]
+        }}";
+
+        bool parsed = ReleaseManifest.TryParse((JObject)JToken.Parse(json), out ReleaseManifest? manifest, out IReadOnlyList<GamePatchKitError> parseErrors);
+        Assert.True(parsed, string.Join("; ", parseErrors));
+
+        ValidationResult result = ManifestValidator.Validate(manifest!);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Code == ManifestErrorCodes.DuplicateBundleEntryPath);
+    }
+
+    [Fact]
+    public void RejectsFilePathNotMatchingItsOwnBundleEntryPath()
+    {
+        string json = $@"{{
+            ""schemaVersion"": 1,
+            ""packageId"": ""sample-game-client-data"",
+            ""dataVersion"": ""{DataVersion}"",
+            ""compactVersion"": 0,
+            ""groups"": [ {{ ""name"": ""maps"", ""required"": true }} ],
+            ""artifacts"": [
+                {{
+                    ""kind"": ""bundle"",
+                    ""group"": ""maps"",
+                    ""path"": ""sample-game-client-data/artifacts/bundles/maps/{HashB}.tar"",
+                    ""size"": 28,
+                    ""artifactHash"": ""{HashB}"",
+                    ""compression"": {{ ""kind"": ""none"" }},
+                    ""entries"": [ {{ ""path"": ""maps/level1.bin"" }} ]
+                }}
+            ],
+            ""files"": [
+                {{ ""path"": ""maps/renamed.bin"", ""group"": ""maps"", ""size"": 14, ""fileHash"": ""{HashA}"", ""source"": {{ ""kind"": ""bundleEntry"", ""artifactHash"": ""{HashB}"", ""entryPath"": ""maps/level1.bin"" }} }}
+            ]
+        }}";
+
+        bool parsed = ReleaseManifest.TryParse((JObject)JToken.Parse(json), out ReleaseManifest? manifest, out IReadOnlyList<GamePatchKitError> parseErrors);
+        Assert.True(parsed, string.Join("; ", parseErrors));
+
+        ValidationResult result = ManifestValidator.Validate(manifest!);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, e => e.Code == ManifestErrorCodes.BundleEntryPathMismatch);
+    }
+
+    [Fact]
+    public void RejectsPartSizeSumThatWouldSilentlyOverflowLongToTheDeclaredTotal()
+    {
+        // Codex adversarial-review finding: 2048 parts of exactly (2^53-1) bytes plus one 2048-byte
+        // part sums to exactly 2^64, which unchecked `long` addition wraps to 0 - matching a forged
+        // declared total of 0 and passing the naive `sizeSum != parts.Size` check.
+        var partsArray = new JArray();
+        for (int i = 0; i < 2048; i++)
+        {
+            partsArray.Add(JObject.Parse($@"{{ ""index"": {i}, ""path"": ""p/artifacts/files/{HashA}/part-{i:D5}"", ""size"": {JsonNumbers.MaxSafeInteger}, ""partHash"": ""{HashA}"" }}"));
+        }
+
+        partsArray.Add(JObject.Parse($@"{{ ""index"": 2048, ""path"": ""p/artifacts/files/{HashA}/part-02048"", ""size"": 2048, ""partHash"": ""{HashA}"" }}"));
+
+        string json = $@"{{
+            ""schemaVersion"": 1,
+            ""packageId"": ""p"",
+            ""dataVersion"": ""{DataVersion}"",
+            ""compactVersion"": 0,
+            ""groups"": [ {{ ""name"": ""core"", ""required"": true }} ],
+            ""artifacts"": [
+                {{
+                    ""kind"": ""file"",
+                    ""compression"": {{ ""kind"": ""none"" }},
+                    ""payload"": {{ ""kind"": ""parts"", ""size"": 0, ""artifactHash"": ""{HashA}"", ""parts"": {partsArray.ToString(Newtonsoft.Json.Formatting.None)} }}
+                }}
+            ],
+            ""files"": [
+                {{ ""path"": ""data/huge.bin"", ""group"": ""core"", ""size"": 0, ""fileHash"": ""{HashA}"", ""source"": {{ ""kind"": ""file"", ""artifactHash"": ""{HashA}"" }} }}
+            ]
+        }}";
+
+        bool parsed = ReleaseManifest.TryParse((JObject)JToken.Parse(json), out ReleaseManifest? manifest, out IReadOnlyList<GamePatchKitError> parseErrors);
+        Assert.True(parsed, string.Join("; ", parseErrors));
+
+        ValidationResult result = ManifestValidator.Validate(manifest!);
+
+        Assert.False(result.IsValid, "a wrapped-to-zero part-size sum must still be rejected, not silently accepted");
+        Assert.Contains(result.Errors, e => e.Code == ManifestErrorCodes.PartSizeSumMismatch);
     }
 
     [Fact]

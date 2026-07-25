@@ -47,6 +47,44 @@ public class TestPackageConfig
     }
 
     [Fact]
+    public void RejectsUnknownTopLevelProperty()
+    {
+        var json = (JObject)JToken.Parse(MinimalJson);
+        json["unexpectedField"] = true;
+
+        bool ok = PackageConfig.TryParse(json, out PackageConfig? config, out IReadOnlyList<GamePatchKitError> errors);
+
+        Assert.False(ok);
+        Assert.Null(config);
+        Assert.Contains(errors, e => e.Code == PackageConfigErrorCodes.UnknownProperty);
+    }
+
+    [Fact]
+    public void RejectsUnknownGroupProperty()
+    {
+        var json = (JObject)JToken.Parse(GroupsAndCompressionJson);
+        ((JObject)json["groups"]![0]!)["unexpectedField"] = true;
+
+        bool ok = PackageConfig.TryParse(json, out PackageConfig? config, out IReadOnlyList<GamePatchKitError> errors);
+
+        Assert.False(ok);
+        Assert.Null(config);
+        Assert.Contains(errors, e => e.Code == PackageConfigErrorCodes.UnknownProperty);
+    }
+
+    [Fact]
+    public void RejectsMissingGroupsProperty()
+    {
+        var json = (JObject)JToken.Parse(MinimalJson);
+        json.Remove("groups");
+
+        bool ok = PackageConfig.TryParse(json, out PackageConfig? config, out IReadOnlyList<GamePatchKitError> errors);
+
+        Assert.False(ok, "schema requires 'groups' to be present (though it may be empty)");
+        Assert.Null(config);
+    }
+
+    [Fact]
     public void ParsesGroupsAndCompressionConfig()
     {
         var json = (JObject)JToken.Parse(GroupsAndCompressionJson);

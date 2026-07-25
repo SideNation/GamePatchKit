@@ -66,7 +66,7 @@ namespace GamePatchKit.Core.Manifests
                 errorList.Add(new GamePatchKitError(Stage, ManifestErrorCodes.InvalidField, "Part 'partHash' must be lowercase hex64."));
             }
 
-            if (!hasIndex || !hasPath || !hasSize || !hasPartHash)
+            if (!hasIndex || !hasPath || !hasSize || !hasPartHash || errorList.Count > 0)
             {
                 part = null;
                 errors = errorList;

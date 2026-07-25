@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using GamePatchKit.Core.Paths;
 
 namespace GamePatchKit.Core.Globbing
@@ -132,7 +133,11 @@ namespace GamePatchKit.Core.Globbing
                 return false;
             }
 
-            string[] rawSegments = pattern.Split('/');
+            // Normalize to NFC so a pattern and a RelativePathNormalizer-normalized candidate path always
+            // agree on which of two canonically-equivalent Unicode encodings ("cafe" + combining accent vs
+            // the precomposed character) to compare against; matching never NFC-normalizes candidate paths.
+            string normalizedPattern = pattern.Normalize(NormalizationForm.FormC);
+            string[] rawSegments = normalizedPattern.Split('/');
             var segments = new List<ISegment>(rawSegments.Length);
 
             foreach (string rawSegment in rawSegments)
@@ -146,7 +151,7 @@ namespace GamePatchKit.Core.Globbing
                 segments.Add(segment!);
             }
 
-            result = new GlobPattern(pattern, segments);
+            result = new GlobPattern(normalizedPattern, segments);
             errorCode = string.Empty;
             return true;
         }

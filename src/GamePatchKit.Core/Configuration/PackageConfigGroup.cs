@@ -66,7 +66,7 @@ namespace GamePatchKit.Core.Configuration
 
             bool hasValidCompression = TryParseOptionalCompression(obj, errorList, out CompressionKind? compression);
 
-            if (!hasValidName || !hasValidInclude || !hasValidArtifactMode || !hasValidRequired || !hasValidCompression)
+            if (!hasValidName || !hasValidInclude || !hasValidArtifactMode || !hasValidRequired || !hasValidCompression || errorList.Count > 0)
             {
                 group = null;
                 errors = errorList;

@@ -85,7 +85,7 @@ namespace GamePatchKit.Core.Signatures
                 errorList.Add(new GamePatchKitError(Stage, ManifestSignatureErrorCodes.InvalidSignature, "'signature' must be an unpadded base64url encoding of exactly 64 bytes with zero padding bits."));
             }
 
-            if (!hasSchemaVersion || !hasAlgorithm || !hasKeyId || !signatureDecodesToExpectedLength)
+            if (!hasSchemaVersion || !hasAlgorithm || !hasKeyId || !signatureDecodesToExpectedLength || errorList.Count > 0)
             {
                 signature = null;
                 errors = errorList;

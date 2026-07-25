@@ -74,7 +74,7 @@ namespace GamePatchKit.Core.Manifests
                 errorList.Add(new GamePatchKitError(Stage, ManifestErrorCodes.InvalidField, "Single payload 'artifactHash' must be lowercase hex64."));
             }
 
-            if (!hasPath || !hasSize || !hasHash)
+            if (!hasPath || !hasSize || !hasHash || errorList.Count > 0)
             {
                 payload = null;
                 errors = errorList;
@@ -137,7 +137,7 @@ namespace GamePatchKit.Core.Manifests
                 parts.Add(part!);
             }
 
-            if (!hasSize || !hasHash || !partsOk)
+            if (!hasSize || !hasHash || !partsOk || errorList.Count > 0)
             {
                 payload = null;
                 errors = errorList;
