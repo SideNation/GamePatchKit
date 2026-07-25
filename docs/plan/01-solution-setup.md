@@ -15,10 +15,10 @@ PRD의 프로젝트 구조·target framework·의존 방향을 그대로 갖춘,
 
 ### solution·공통 설정
 
-- [ ] `GamePatchKit.sln` 생성
-- [ ] `Directory.Packages.props`로 중앙 package version 관리 구성
-- [ ] `NativeCompressions.Zstandard` version을 중앙 설정에 고정한다(자동 업그레이드 금지)
-- [ ] `schemas/` 디렉터리, `README.md`, `LICENSE` placeholder 생성
+- [x] `GamePatchKit.sln` 생성
+- [x] `Directory.Packages.props`로 중앙 package version 관리 구성
+- [x] `NativeCompressions.Zstandard` version을 중앙 설정에 고정한다(자동 업그레이드 금지)
+- [x] `schemas/` 디렉터리, `README.md`, `LICENSE` placeholder 생성
 
 ### src 프로젝트 생성
 
@@ -31,22 +31,22 @@ PRD의 프로젝트 구조·target framework·의존 방향을 그대로 갖춘,
 | `GamePatchKit.Cli` | `net10.0` |
 | `GamePatchKit.DotNet` | `net10.0` |
 
-- [ ] src 프로젝트 6개 생성
-- [ ] tests 프로젝트 6개 생성 (Core, Compression.NativeCompressions, Packager, Runtime,
+- [x] src 프로젝트 6개 생성
+- [x] tests 프로젝트 6개 생성 (Core, Compression.NativeCompressions, Packager, Runtime,
       DotNet, IntegrationTests)
 
 ### 의존 방향 연결
 
-- [ ] `Packager` → `Core`, `Packager` → `Compression.NativeCompressions`
-- [ ] `Compression.NativeCompressions` → `Core`
-- [ ] `Runtime` → `Core`
-- [ ] `DotNet` → `Runtime`, `Core`, `Compression.NativeCompressions`
-- [ ] `Cli` → `Packager`
-- [ ] `Packager`와 `Runtime`은 서로 참조하지 않는다
+- [x] `Packager` → `Core`, `Packager` → `Compression.NativeCompressions`
+- [x] `Compression.NativeCompressions` → `Core`
+- [x] `Runtime` → `Core`
+- [x] `DotNet` → `Runtime`, `Core`, `Compression.NativeCompressions`
+- [x] `Cli` → `Packager`
+- [x] `Packager`와 `Runtime`은 서로 참조하지 않는다
 
 ### 의존 방향 빌드 검증
 
-- [ ] 역방향·금지 참조를 검증하는 architecture test 추가
+- [x] 역방향·금지 참조를 검증하는 architecture test 추가
   - `Core`는 다른 GamePatchKit 프로젝트를 참조하지 않는다
   - `Core`·`Runtime`은 `UnityEngine`, `NativeCompressions` assembly를 참조하지 않는다
   - `Runtime`은 compression adapter를 참조하지 않는다
