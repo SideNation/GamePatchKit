@@ -23,6 +23,8 @@ Packager·Core 기능을 명령행으로 노출한다: `package`, `diff`, `verif
 - [ ] YAML을 JSON-compatible 데이터로 변환한 뒤 `package-config.schema.json`과 설정
       모델을 순서대로 검증
 - [ ] YAML 문법 오류·schema 오류·설정 의미 오류를 입력 오류로 구분해 보고
+- [ ] 02의 유효·무효 YAML fixture로 입력 계약의 허용·거부 동작을 테스트한다
+      (검증 기준 24의 동작 검증은 07에서 완료)
 - [ ] exit code 체계 고정: 성공 `0`, 입력 오류·무결성 오류·실행 실패를 구분하는
       non-zero 코드표
 - [ ] `--json` machine-readable 결과 출력
@@ -60,6 +62,8 @@ Packager·Core 기능을 명령행으로 노출한다: `package`, `diff`, `verif
       (개인키는 CLI가 파일 경로 또는 환경 변수로 로드해 Packager signer에 전달)
 - [ ] 기존 `manifest.sig`가 같은 byte면 검증 후 재사용하고 다른 key ID·signature면
       불변 경로를 덮어쓰지 않고 실패
+- [ ] sign 테스트는 선정 Ed25519 구현의 verify로 서명 byte의 암호학적 유효성을
+      확인한다 (Core 공용 검증 API·signed golden vector 연결은 11 단계)
 
 ### 관측 지표
 
@@ -71,6 +75,9 @@ Packager·Core 기능을 명령행으로 노출한다: `package`, `diff`, `verif
 - [ ] Ed25519 서명 구현 선정: 서명 생성(net10.0)과 Core 검증(netstandard2.1,
       11 단계)이 같은 구현을 공유할 수 있는지 확인하고 선택한다. 구체 라이브러리
       type은 public API에 노출하지 않는다.
+- [ ] YAML 파서 라이브러리 선정: 단일 document 강제, anchor·alias·merge key·custom
+      tag 거부와 중복 mapping key 거부를 구현할 수 있는지를 기준으로 선택한다.
+      파서 type은 public API에 노출하지 않는다.
 
 ## 산출물
 
@@ -83,6 +90,8 @@ Packager·Core 기능을 명령행으로 노출한다: `package`, `diff`, `verif
 - `--json` 출력이 안정된 형식을 가지고 CI에서 파싱 가능하다.
 - `--dry-run`이 어떤 파일도 만들지 않는다.
 - Packager API와 CLI가 같은 fixture에서 동일한 verify·sign 결과와 오류를 만든다.
+- `verify`가 손상된 part·bundle·manifest payload를 무결성 오류 exit code로 거부한다
+  (검증 기준 11, Packager verify 범위).
 - compact no-op이 exit code `0`, `changed: false`와 기존 identity를 반환하고 파일을
   만들지 않는다(검증 기준 9).
 - `sign`이 개인키 내용을 어디에도 출력하지 않고 파생 `keyId`의 유효한

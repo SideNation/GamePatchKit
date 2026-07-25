@@ -16,7 +16,7 @@ PRD 검증 기준 번호(1~26)로 연결한다.
 | 06 | [deterministic bundle·compact](06-bundle-compact.md) | 05 |
 | 07 | [CLI `gpk`](07-cli.md) | 05, 06 |
 | 08 | [Runtime 상태 머신](08-runtime.md) | 03 |
-| 09 | [DotNet adapter·통합 테스트](09-dotnet-adapter.md) | 04, 08 |
+| 09 | [DotNet adapter·통합 테스트](09-dotnet-adapter.md) | 04, 08 (e2e는 05·06 이후) |
 | 10 | [adapter conformance](10-adapter-conformance.md) | 08, 09 |
 | 11 | [서명·key rotation](11-signing-key-rotation.md) | 07, 08, 10 |
 | 12 | [성능·메모리 검증](12-performance-validation.md) | 05~11 |
@@ -29,7 +29,7 @@ Packager와 Runtime은 Core 계약(03)으로만 연결되므로 03 이후 두 �
 
 - 공통 기반: 01 → 02 → 03 → 04
 - Packager 트랙: 05 → 06 → 07 (04 이후)
-- Runtime 트랙: 08 (03 이후 시작 가능) → 09 (04·08 이후) → 10
+- Runtime 트랙: 08 (03 이후 시작 가능) → 09 (04·08 이후, e2e는 05·06 이후) → 10
 - 서명 통합: 11 (07·08·10 이후)
 - 마무리: 12 (05~11 이후) → 13
 
@@ -53,7 +53,7 @@ Packager와 Runtime은 Core 계약(03)으로만 연결되므로 03 이후 두 �
 | 8 | compact의 override 통합·file 재사용 | 06 |
 | 9 | compact 물리 변경 시 version 증가, 동일 배치는 no-op 재사용 | 03, 06, 07 |
 | 10 | compact 후 재다운로드 없음 | 08, 09 |
-| 11 | 손상 part·bundle·manifest·signature 거부 | 05, 06, 08, 09, 11 |
+| 11 | 손상 part·bundle·manifest·signature 거부 | 05, 06, 07, 08, 09, 11 |
 | 12 | 모든 artifact ≤ `maxArtifactBytes` | 05, 06 |
 | 13 | client package에 private 정보 없음 | 05 |
 | 14 | DotNet·fake adapter 동일 결과 | 10 |

@@ -25,9 +25,13 @@
 - [ ] 2개 이상 group activation batch에서 준비 순서·단일 group 실패·동시 revision
       충돌을 주입하고 부분 `ready` state가 노출되지 않는지 검증
 - [ ] in-memory fake adapter와 DotNet adapter를 같은 suite로 실행해 결과를 비교
-- [ ] 외부 host가 소비할 배포 형태 결정 (NuGet test package 또는 소스 fixture)
 - [ ] signed fixture와 signature 검증 case는 11단계에서 같은 suite의 extension으로
       추가
+
+## 결정 사항
+
+- [ ] 외부 host가 소비할 배포 형태 선정: NuGet test package 또는 소스 fixture 중
+      외부 adapter 구현만 주입해 실행하기 쉬운 형태를 선택한다.
 
 ## 산출물
 

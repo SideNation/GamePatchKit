@@ -30,6 +30,8 @@ content-addressed cache → group별 staging → required group 확인 → `Pack
 
 - [ ] 신뢰하는 channel 또는 서버 응답에서 `packageId`·`dataVersion`·`manifestHash`
       수신
+- [ ] `IArtifactTransport`로 연 channel 문서를 `channel.schema.json`과 Core 모델로
+      검증하고 요청한 `packageId`와 일치하는지 확인
 - [ ] 목표 canonical manifest 원본 byte의 SHA-256이 `manifestHash`와 같은지 확인하고
       02의 schema·Core 의미·참조 무결성 검증 (signature 검증 연결은 11 단계)
 - [ ] 공용 golden vector의 모든 manifest union branch와 invalid ref·order fixture가

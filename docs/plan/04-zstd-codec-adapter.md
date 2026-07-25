@@ -23,6 +23,8 @@ deterministic streaming round-trip을 보장한다.
       adapter 내부에서만 사용한다
 - [ ] 선정 version의 native runtime 지원 platform 목록을 고정하고 platform smoke
       test를 만든다
+- [ ] smoke test 실행 방식 문서화: 대상 OS 목록과 로컬·수동 실행 절차
+      (특정 CI 제품 pipeline은 PRD 범위 밖)
 
 ## 산출물
 

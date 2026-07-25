@@ -79,4 +79,6 @@ incremental override가 누적된 bundle group을 새 baseline으로 통합할 �
   `changed: false`를 기록한다.
 - bundle manifest가 공용 golden vector와 일치하고 잘못된 entry 참조·순서·중복·
   미참조 bundle을 거부한다(검증 기준 25, bundle 범위).
+- 손상된 bundle payload를 재사용·package 검증에서 거부한다(검증 기준 11, bundle
+  범위).
 - 실패한 compact가 기존 artifact·manifest를 변경하지 않는다(검증 기준 18).

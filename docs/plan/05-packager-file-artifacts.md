@@ -91,6 +91,9 @@ pipeline은 bundle 생성 단계를 끼울 수 있는 구조로 만든다.
       `manifests/<manifestHash>/manifest.json`에 배치
 - [ ] `dataVersion`·`compactVersion`·`manifestHash`와 추가·변경·삭제 목록, 생성 시각,
       머신, source revision, 적용한 compression 설정은 build report에 기록
+- [ ] 선택적 channel pointer 입력 자료 생성: `channel.schema.json`을 따르는
+      `packageId`·`dataVersion`·`manifestHash` JSON을 publish tree에 출력한다
+      (channel pointer 교체 자체는 publisher 책임)
 
 ### 재현성·멱등성
 
@@ -114,6 +117,8 @@ pipeline은 bundle 생성 단계를 끼울 수 있는 구조로 만든다.
   `manifestHash`를 그대로 재사용한다(검증 기준 6).
 - 삭제 파일이 새 artifact 없이 최종 `files[]`와 `dataVersion`에 반영된다(검증 기준 7).
 - 모든 file artifact·part가 `maxArtifactBytes` 이하다(검증 기준 12, file 범위).
+- 손상된 file artifact·part payload를 재사용·package 검증에서 거부한다
+  (검증 기준 11, file 범위).
 - 서로 다른 package의 경로·hash·artifact 위치가 manifest에 섞이지 않는다
   (검증 기준 13).
 - single·parts file manifest가 공용 golden vector와 일치하고 잘못된 참조·part

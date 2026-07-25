@@ -80,5 +80,7 @@ Runtime 통합, publisher 계약을 적용할 수 있게 한다.
   시나리오를 재현할 수 있다.
 - README의 glob 예시와 fixture가 지원 OS에서 같은 선택·group·정렬 결과를 만든다
   (검증 기준 26).
+- README의 YAML 단일-document·금지 기능 설명이 02·07 fixture의 허용·거부 경우와
+  일치한다(검증 기준 24, 문서 범위).
 - 문서의 명령·설정·API가 구현과 일치한다.
 - PRD 배포 산출물 목록이 모두 빌드 가능한 상태로 준비된다.

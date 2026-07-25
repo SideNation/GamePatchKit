@@ -11,7 +11,7 @@ codec 구성.
 
 ## 선행 단계
 
-04, 08
+04, 08 (Packager 출력물을 fixture로 쓰는 end-to-end 시나리오는 05·06 이후)
 
 ## 작업 항목
 

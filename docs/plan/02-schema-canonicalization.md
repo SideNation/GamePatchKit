@@ -51,15 +51,19 @@ channel의 JSON Schema를 확정하고, canonical JSON·manifest 참조 무결�
 - [ ] `channel.schema.json`
   - 환경이 사용할 `packageId`·`manifestHash`·`dataVersion` pointer
 
-### `gamepatchkit.yml` 입력 계약
+### `gamepatchkit.yml` 입력 계약 (계약·fixture 정의)
 
-- [ ] 비어 있지 않은 YAML document 정확히 하나와 mapping root만 허용
-- [ ] 두 번째 document, anchor, alias, merge key(`<<`), custom tag와 중복 mapping
-      key 거부
-- [ ] JSON-compatible scalar·array·mapping만 설정 데이터로 변환
-- [ ] YAML 문법 검증 → JSON-compatible 데이터 변환 → `package-config.schema.json`
-      검증 → 설정 모델 의미 검증 순서 고정
-- [ ] 유효·무효 YAML fixture를 07 CLI parser 테스트에서도 재사용할 수 있게 제공
+YAML 로드·문법 검증의 구현과 동작 테스트는 07 CLI 책임이다. 02는 입력 계약과
+fixture만 고정한다.
+
+- [ ] 입력 계약 문서화: 비어 있지 않은 YAML document 정확히 하나와 mapping root만
+      허용하고 두 번째 document, anchor, alias, merge key(`<<`), custom tag와 중복
+      mapping key를 거부한다
+- [ ] 변환·검증 순서 고정: JSON-compatible scalar·array·mapping만 설정 데이터로
+      변환하며 YAML 문법 검증 → JSON-compatible 데이터 변환 →
+      `package-config.schema.json` 검증 → 설정 모델 의미 검증 순서를 따른다
+- [ ] 07 CLI parser 테스트가 추가 fixture 없이 검증 기준 24를 구성할 수 있는
+      유효·무효 YAML fixture 제공
 - [ ] release manifest는 설정 파일이 아니라 Packager가 생성하는 별도 canonical JSON
       산출물임을 schema 설명에 명시
 
@@ -153,8 +157,9 @@ channel의 JSON Schema를 확정하고, canonical JSON·manifest 참조 무결�
 - 유효 fixture는 schema·모델 검증을 통과하고, 무효 fixture(빈 `include`, 잘못된
   `packageId`, group 중복 일치, 경로 규칙 위반, 잘못된 `compactVersion`·
   `manifestHash`)는 정확한 오류로 실패한다.
-- 단일 mapping document fixture는 통과하고 빈·다중 document, anchor·alias·merge
-  key·custom tag·중복 key fixture는 package 실행 전에 실패한다(검증 기준 24).
+- 유효·무효 YAML fixture가 단일 mapping document 허용과 빈·다중 document,
+  anchor·alias·merge key·custom tag·중복 key 거부 경우를 모두 포함한다
+  (거부 동작 검증은 07 완료 기준, 검증 기준 24).
 - single file·multipart file·bundle entry branch의 유효 fixture는 통과하고 잘못된
   discriminator·참조·순서·중복·미참조 fixture는 실패한다(검증 기준 25).
 - canonical writer의 출력, `dataVersion`과 `manifestHash`가 공용 golden vector의
