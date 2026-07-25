@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace GamePatchKit.Core
 {
-    // Shared by packageId and group names across config, manifest, and channel: lowercase kebab-case,
+    // Shared by packageId and group names across config and manifest: lowercase kebab-case,
     // no leading/trailing/double hyphens, no empty string.
     public static class KebabCaseId
     {

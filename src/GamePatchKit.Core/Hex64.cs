@@ -2,7 +2,7 @@ using System.Text.RegularExpressions;
 
 namespace GamePatchKit.Core
 {
-    // Shared by fileHash, artifactHash, partHash, and channel manifestHash: lowercase hex, exactly 64 chars.
+    // Shared by fileHash, artifactHash, partHash, and manifestHash: lowercase hex, exactly 64 chars.
     public static class Hex64
     {
         public const string Pattern = "^[0-9a-f]{64}$";

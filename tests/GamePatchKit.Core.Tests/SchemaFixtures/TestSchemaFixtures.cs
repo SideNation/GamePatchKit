@@ -1,6 +1,5 @@
 using System.IO;
 using System.Text.Json;
-using GamePatchKit.Core.Channels;
 using GamePatchKit.Core.Configuration;
 using GamePatchKit.Core.Errors;
 using GamePatchKit.Core.Manifests;
@@ -10,7 +9,7 @@ using Newtonsoft.Json.Linq;
 
 namespace GamePatchKit.Core.Tests.SchemaFixtures;
 
-// Validates tests/fixtures/{package-config,release-manifest,manifest-signature,channel}/{valid,invalid}
+// Validates tests/fixtures/{package-config,release-manifest,manifest-signature}/{valid,invalid}
 // against both schemas/*.schema.json (via JsonSchema.Net, test-only) and Core's own model validation -
 // proving the schema files themselves are correct, independent of Core's hand-written parsing/validation.
 public class TestSchemaFixtures
@@ -27,7 +26,6 @@ public class TestSchemaFixtures
         yield return new object[] { "package-config", "package-config.schema.json" };
         yield return new object[] { "release-manifest", "release-manifest.schema.json" };
         yield return new object[] { "manifest-signature", "manifest-signature.schema.json" };
-        yield return new object[] { "channel", "channel.schema.json" };
     }
 
     [Theory]
@@ -99,13 +97,6 @@ public class TestSchemaFixtures
             case "manifest-signature":
             {
                 bool ok = ManifestSignature.TryParse(obj, out _, out IReadOnlyList<GamePatchKitError> parseErrors);
-                error = string.Join("; ", parseErrors);
-                return ok;
-            }
-
-            case "channel":
-            {
-                bool ok = Channel.TryParse(obj, out _, out IReadOnlyList<GamePatchKitError> parseErrors);
                 error = string.Join("; ", parseErrors);
                 return ok;
             }
