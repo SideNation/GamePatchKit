@@ -4,6 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>HttpClient- and filesystem-based .NET adapter for the GamePatchKit Runtime, with default zstd codec configuration</Description>
   </PropertyGroup>
 
   <ItemGroup>

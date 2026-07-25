@@ -3,6 +3,11 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <Nullable>enable</Nullable>
+    <Description>Engine-independent core contracts for game data identity, canonical JSON, diff, and download-plan computation</Description>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" />
+  </ItemGroup>
 
 </Project>

@@ -3,6 +3,7 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <Nullable>enable</Nullable>
+    <Description>Zstandard compression codec adapter for GamePatchKit, based on NativeCompressions.Zstandard</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "Ed25519",
+  "keyId": "ed25519-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "signature": "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJyg"
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "manifest-signature.schema.json",
+  "title": "GamePatchKit manifest signature",
+  "description": "Canonical JSON content of a manifests/<manifestHash>/manifest.sig file. Immutable once created for a given manifestHash: re-running signing with the same manifest and the same key must reproduce these exact bytes, and creating a different keyId or signature for an existing manifestHash is rejected.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "algorithm", "keyId", "signature"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "algorithm": {
+      "const": "Ed25519"
+    },
+    "keyId": {
+      "type": "string",
+      "pattern": "^ed25519-[0-9a-f]{64}$",
+      "description": "'ed25519-' followed by the lowercase hex64 SHA-256 of the raw 32-byte Ed25519 public key. Never an arbitrary alias."
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{86}$",
+      "description": "Unpadded base64url encoding of the 64-byte Ed25519 signature (86 characters cover 512 bits with 4 padding bits that must be zero). This pattern only checks length and character set; exact decodability, the zero-padding-bits requirement, and the decoded length being exactly 64 bytes are enforced by Core model validation, not by this pattern."
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "packageId": "sample-game-client-data",
+  "inputRoot": "./game-data",
+  "include": ["**/*"],
+  "compression": { "kind": "none" },
+  "groups": [
+    { "name": "core", "include": ["core/**/*"], "artifactMode": "file", "required": true },
+    { "name": "core", "include": ["core2/**/*"], "artifactMode": "file", "required": false }
+  ]
+}
