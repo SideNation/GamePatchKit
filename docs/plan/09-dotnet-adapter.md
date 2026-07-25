@@ -1,6 +1,7 @@
 # 09. DotNet adapter·통합 테스트
 
-> PRD 섹션: DotNet adapter, 프로젝트 책임 `GamePatchKit.DotNet`, publish와 channel 연동
+> PRD 섹션: DotNet adapter, 프로젝트 책임 `GamePatchKit.DotNet`, publish와 target
+> manifest 선택
 
 ## 목표
 
@@ -38,8 +39,9 @@ codec 구성.
 - [ ] `PackageState` 교체 전 기존 state와 referenced installation을 변경·삭제하지 않음
 - [ ] 손상·알 수 없는 schema·누락 installation state를 활성 근거로 사용하지 않고
       cache와 installation을 보존
-- [ ] state 복구는 host가 제공한 신뢰 가능한 target pointer의 manifest·file hash를
-      재검증해 수행하고, pointer가 없으면 디렉터리 이름으로 active release를 추정하지 않음
+- [ ] state 복구는 host가 제공한 신뢰 가능한 target manifest reference의
+      manifest·file hash를 재검증해 수행하고, reference가 없으면 디렉터리 이름으로
+      active release를 추정하지 않음
 - [ ] 프로세스 중단 후 재시작 시 검증된 cache를 인식하고 이어받는다
 
 ### 구성

@@ -1,6 +1,7 @@
 # 13. 문서화·배포 산출물 정리
 
-> PRD 섹션: 배포 산출물, publish와 channel 연동, 외부 host 연동, 서명과 무결성
+> PRD 섹션: 배포 산출물, publish와 target manifest 선택, 외부 host 연동, 서명과
+> 무결성
 
 ## 목표
 
@@ -41,14 +42,16 @@ Runtime 통합, publisher 계약을 적용할 수 있게 한다.
 - [ ] Runtime 통합 가이드: DotNet adapter 사용 예시, 외부 host(Unity)의
       `IArtifactTransport`·`IRuntimeStorage`·codec 주입 구현 가이드,
       iOS IL2CPP 기본 codec 미지원 제약 명시
-- [ ] target pointer·active pointer·`PackageState`·group install state의 차이와
-      required-only 최초 설치·optional 후속 설치 흐름
+- [ ] host의 target manifest reference·active pointer·`PackageState`·group install
+      state의 차이와 required-only 최초 설치·optional 후속 설치 흐름
 - [ ] `package-state.json` 필드·형식·최초 상태·불변 조건·filesystem 배치·writer
       lock·원자적 교체·trusted target 기반 손상 복구 규칙
 - [ ] 여러 group 요청의 activation batch 경계, 병렬 다운로드·staging과 단일 state
       commit, 실패·revision 충돌 시 all-or-nothing 규칙
-- [ ] publisher 계약: 업로드 순서(artifact → 검증 → manifest → 재검증 → channel
-      교체), cache 정책, rollback
+- [ ] publisher 계약: 불변 artifact → 검증 → manifest·signature → 재검증 업로드 순서,
+      immutable cache 정책, host가 이전 manifest를 다시 선택하는 rollback
+- [ ] 환경별 target 선택 모델·schema·파일은 제공하지 않고 host 또는 서버가 target
+      manifest 선택·저장·원자적 전환을 소유한다는 책임 경계
 - [ ] Core의 문자열 경로·glob 책임과 Packager의 no-follow filesystem 열거·source
       snapshot·경합 실패 책임을 구분하고 안정된 source 입력 조건 문서화
 - [ ] 서명 운영: `ed25519-<public key SHA-256>` key ID, immutable `manifest.sig`,
@@ -59,7 +62,7 @@ Runtime 통합, publisher 계약을 적용할 수 있게 한다.
 
 ### schema·버전 정책
 
-- [ ] versioned JSON Schema 4종의 배포 방식과 manifest 호환 버전 정책 문서화
+- [ ] versioned JSON Schema 3종의 배포 방식과 manifest 호환 버전 정책 문서화
       (schema와 manifest 호환 버전은 같은 repository release에서 함께 관리)
 - [ ] adapter conformance fixture·test suite 사용법 문서화
 

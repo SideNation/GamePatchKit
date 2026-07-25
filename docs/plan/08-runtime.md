@@ -5,9 +5,9 @@
 
 ## 목표
 
-platform 독립 Runtime을 구현한다: channel·manifest 검증 → download plan 실행 →
-content-addressed cache → group별 staging → required group 확인 → `PackageState`
-원자적 활성화 → optional group 후속 설치 → 취소·재시도·중단 복구.
+platform 독립 Runtime을 구현한다: host가 지정한 target manifest 검증 → download
+plan 실행 → content-addressed cache → group별 staging → required group 확인 →
+`PackageState` 원자적 활성화 → optional group 후속 설치 → 취소·재시도·중단 복구.
 
 ## 선행 단계
 
@@ -17,8 +17,8 @@ content-addressed cache → group별 staging → required group 확인 → `Pack
 
 ### adapter contract 정의
 
-- [ ] `IArtifactTransport`: immutable channel·manifest·artifact를 읽기 전용 stream으로
-      연다
+- [ ] `IArtifactTransport`: immutable manifest·signature·artifact를 읽기 전용
+      stream으로 연다
 - [ ] `IRuntimeStorage`: package별 writer lock, `PackageState` byte의 읽기·원자적 교체,
       content-addressed cache, staging stream, immutable installation 승격 제공
 - [ ] adapter가 해석하지 않는 opaque `installationKey` contract
@@ -26,12 +26,12 @@ content-addressed cache → group별 staging → required group 확인 → `Pack
 - [ ] `CancellationToken`과 `IProgress<PatchProgress>` 전달 규칙
 - [ ] `PatchProgress` 모델: 단계, 파일·byte 진행, 재시도 횟수 등 관측 기준 값
 
-### 목표 release 결정·검증
+### target manifest 수신·검증
 
-- [ ] 신뢰하는 channel 또는 서버 응답에서 `packageId`·`dataVersion`·`manifestHash`
-      수신
-- [ ] `IArtifactTransport`로 연 channel 문서를 `channel.schema.json`과 Core 모델로
-      검증하고 요청한 `packageId`와 일치하는지 확인
+- [ ] 신뢰하는 host 입력 또는 서버 응답에서 target manifest reference인
+      `packageId`·`dataVersion`·`manifestHash`를 수신
+- [ ] Runtime은 최신 release, stage/live, rollout과 rollback 대상을 결정하지 않고
+      환경별 target 선택 모델·schema·저장 형식을 제공하지 않는다
 - [ ] 목표 canonical manifest 원본 byte의 SHA-256이 `manifestHash`와 같은지 확인하고
       02의 schema·Core 의미·참조 무결성 검증 (signature 검증 연결은 11 단계)
 - [ ] 공용 golden vector의 모든 manifest union branch와 invalid ref·order fixture가
@@ -53,8 +53,9 @@ content-addressed cache → group별 staging → required group 확인 → `Pack
 - [ ] `installing`·진행률은 committed state에 넣지 않고 staging·cache에서만 관리
 - [ ] state는 신뢰 근거가 아니므로 로드 시 schema·packageId·manifest·installation
       참조를 검증
-- [ ] state 손상 시 host의 신뢰 가능한 target pointer를 기준으로만 재구성하고,
-      pointer가 없으면 cache·디렉터리 이름에서 active release를 추정하지 않음
+- [ ] state 손상 시 host의 신뢰 가능한 target manifest reference를 기준으로만
+      재구성하고, reference가 없으면 cache·디렉터리 이름에서 active release를
+      추정하지 않음
 - [ ] local state 자체에는 signature·secret을 기록하지 않음
 
 ### download plan 실행

@@ -91,9 +91,8 @@ pipeline은 bundle 생성 단계를 끼울 수 있는 구조로 만든다.
       `manifests/<manifestHash>/manifest.json`에 배치
 - [ ] `dataVersion`·`compactVersion`·`manifestHash`와 추가·변경·삭제 목록, 생성 시각,
       머신, source revision, 적용한 compression 설정은 build report에 기록
-- [ ] 선택적 channel pointer 입력 자료 생성: `channel.schema.json`을 따르는
-      `packageId`·`dataVersion`·`manifestHash` JSON을 publish tree에 출력한다
-      (channel pointer 교체 자체는 publisher 책임)
+- [ ] 이 단계의 publish tree에는 불변 artifact·manifest만 포함하며 환경별 target
+      manifest 선택 자료는 생성하지 않는다 (`manifest.sig`는 07의 `sign`이 추가)
 
 ### 재현성·멱등성
 

@@ -63,6 +63,7 @@ platform 기능은 Runtime interface 구현으로 연결한다.
 
 - Supabase Storage, S3, Steam 등 특정 원격 저장소에 직접 업로드하는 publisher
 - `dev`·`stage`·`live` 승인 UI와 CI 제품별 pipeline
+- GamePatchKit이 소유하는 환경별 target manifest 선택 모델·schema·저장소
 - Unity Addressables와 Unreal Pak 등 엔진 전용 asset 변환
 - 공식 Unity 전용 프로젝트와 엔진 전용 배포물
 - 게임 실행 바이너리와 앱 스토어 빌드 배포
@@ -85,7 +86,7 @@ platform 기능은 Runtime interface 구현으로 연결한다.
    interface contract만 의존한다.
 8. DotNet adapter와 외부 host 구현은 Runtime 내부 규칙을 복제하지 않는다.
 9. 명시적 설정을 우선하며 용량에 따라 artifact mode를 자동으로 왕복 전환하지 않는다.
-10. package 생성과 publish·promote를 분리한다.
+10. package 생성, publish와 host의 target manifest 선택을 분리한다.
 
 ### 용어
 
@@ -102,8 +103,7 @@ platform 기능은 Runtime interface 구현으로 연결한다.
 | `dataVersion` | 최종 논리 파일 상태와 전달 의미의 digest |
 | `compactVersion` | 최초 package의 `0`에서 시작해 compact할 때만 증가하는 물리 packaging 세대 |
 | `manifestHash` | canonical manifest 원본 byte의 SHA-256이자 불변 manifest 식별자 |
-| channel | 환경이 사용할 `manifestHash`와 `dataVersion`을 가리키는 외부 pointer |
-| target pointer | channel 또는 서버가 클라이언트에 요구하는 `dataVersion`·`manifestHash` |
+| target manifest reference | 신뢰하는 host 또는 서버가 Runtime에 전달하는 `packageId`·`dataVersion`·`manifestHash` |
 | active pointer | required group까지 준비되어 현재 활성화된 로컬 `dataVersion`·`manifestHash` |
 | `PackageState` | active pointer와 group별 설치 상태를 원자적으로 기록하는 package별 로컬 상태 |
 | group install state | optional group이 어느 manifest 기준으로 설치·검증됐는지 나타내는 로컬 상태 |
@@ -131,8 +131,7 @@ game-patch-kit/
 ├── schemas/
 │   ├── package-config.schema.json
 │   ├── release-manifest.schema.json
-│   ├── manifest-signature.schema.json
-│   └── channel.schema.json
+│   └── manifest-signature.schema.json
 ├── src/
 │   ├── GamePatchKit.Core/
 │   ├── GamePatchKit.Compression.NativeCompressions/
@@ -215,7 +214,7 @@ Packager는 `GamePatchKit.Compression.NativeCompressions`를 기본 zstd 구현�
 
 #### `GamePatchKit.Runtime`
 
-- channel과 manifest 검증
+- host가 지정한 target manifest 수신·검증
 - 로컬 파일 상태와 목표 release 비교
 - download plan 실행
 - content-addressed cache
@@ -387,7 +386,7 @@ group matching은 전역 `include`·`exclude`를 통과한 파일에만 적용�
 - 크고 안정적인 맵·퀘스트·정적 콘텐츠는 bundle group을 우선한다.
 - 로그인과 최초 화면의 최소 데이터는 `required: true` core group으로 분리할 수 있다.
 - 초기 group 수는 package당 4~6개 이하를 권장한다.
-- group별 독립 `dataVersion`이나 channel을 만들지 않는다.
+- group별 독립 `dataVersion`이나 target manifest를 만들지 않는다.
 - 공개 범위가 다르면 group이 아니라 package를 분리한다.
 
 ### 배포 대상 파일 규칙
@@ -662,7 +661,7 @@ incremental package는 기존 bundle을 수정하거나 동일 경로에 다시 
    `compactVersion`·`manifestHash`를 반환하며 새 artifact와 manifest를 만들지 않는다.
 10. 다르면 `dataVersion`은 유지하고 `compactVersion`을 1 증가시킨 뒤 새
     `manifestHash`를 계산해 새 bundle과 manifest를 불변 경로에 생성한다.
-11. channel 변경과 이전 artifact 삭제는 수행하지 않는다.
+11. host의 target manifest 선택 변경과 이전 artifact 삭제는 수행하지 않는다.
 
 기존 설치는 경로와 `fileHash`가 같으면 artifact 위치가 달라도 새 bundle을 다운로드하지
 않는다.
@@ -713,8 +712,9 @@ incremental package는 기존 bundle을 수정하거나 동일 경로에 다시 
 
 ### Runtime 동작
 
-1. 신뢰하는 channel 또는 서버 응답에서 `packageId`, `dataVersion`, `manifestHash`를
-   받는다.
+1. 신뢰하는 host 입력 또는 서버 응답에서 target manifest reference인 `packageId`,
+   `dataVersion`, `manifestHash`를 받는다. Runtime은 최신 release나 배포 환경을
+   스스로 선택하지 않는다.
 2. 목표 canonical manifest 원본 byte의 SHA-256이 `manifestHash`와 같은지 확인하고
    manifest와 signature를 검증한다.
 3. 한 요청의 target group 집합을 activation batch로 고정한다. 최초 설치와 전역 release
@@ -732,13 +732,13 @@ incremental package는 기존 bundle을 수정하거나 동일 경로에 다시 
     전역 active pointer는 바꾸지 않은 채 모든 요청 group의 상태를 단일
     `PackageState` revision으로 갱신한다.
 
-멀티플레이 클라이언트는 독립적으로 최신 channel을 선택하지 않고 접속할 서버가 요구하는
-정확한 client package `dataVersion`을 사용한다.
+멀티플레이 클라이언트는 최신 release를 독립적으로 선택하지 않고 접속할 서버가 지정한
+정확한 client package target manifest를 사용한다.
 
 release manifest는 patch chain이 아니라 최종 상태 전체를 기록하므로 다음 release의
-download plan은 이전 release pointer가 없어도 검증된 로컬 경로·`fileHash`로 계산할 수
-있다. 로컬 active pointer와 group install state는 활성 상태 증명·복구·검사 최적화를
-위해 유지한다.
+download plan은 이전 target manifest reference가 없어도 검증된 로컬 경로·
+`fileHash`로 계산할 수 있다. 로컬 active pointer와 group install state는 활성 상태
+증명·복구·검사 최적화를 위해 유지한다.
 
 ### `PackageState`와 optional group 상태
 
@@ -786,7 +786,7 @@ group 상태:
 - `stale` group의 installation은 보존할 수 있지만 애플리케이션에 활성 데이터로
   노출하지 않는다.
 - 모든 `installationKey`는 준비·검증이 끝난 immutable installation을 가리킨다.
-- group별 독립 `dataVersion`·channel·공개 release pointer는 만들지 않는다.
+- group별 독립 `dataVersion`이나 target manifest reference는 만들지 않는다.
 
 최초 `PackageState` commit에서는 target manifest의 required group을 모두 `ready`로
 기록하고 optional group을 모두 `notInstalled`로 기록한다. 이후 optional group 설치가
@@ -827,7 +827,8 @@ commit한다.
 
 `GamePatchKit.Runtime`은 최소한 다음 platform contract를 정의한다.
 
-- `IArtifactTransport`: immutable channel·manifest·artifact를 읽기 전용 stream으로 연다.
+- `IArtifactTransport`: immutable manifest·signature·artifact를 읽기 전용 stream으로
+  연다.
 - `IRuntimeStorage`: package별 writer lock, `PackageState` 읽기·원자적 교체,
   content-addressed cache, staging stream과 immutable installation 승격을 제공한다.
 - `ICompressionCodec`: Core가 정의한 codec ID별 streaming 압축 해제 contract다.
@@ -868,10 +869,11 @@ contract 규칙:
 - state 파일은 in-place로 덮어쓰지 않으며 state 교체 전에는 기존 state와 referenced
   installation을 변경하거나 삭제하지 않는다.
 - 손상되거나 알 수 없는 schema의 state는 활성 근거로 사용하지 않는다. host가 제공한
-  신뢰 가능한 target pointer의 manifest를 다시 검증하고 cache·installation의 file
-  hash를 확인해 새 state를 구성하며, 복구 중 기존 cache·installation은 보존한다.
-- 신뢰 가능한 target pointer가 없으면 cache나 디렉터리 이름만으로 active release를
-  추정하지 않고 활성 package가 없는 상태를 반환한다.
+  신뢰 가능한 target manifest reference의 manifest를 다시 검증하고
+  cache·installation의 file hash를 확인해 새 state를 구성하며, 복구 중 기존
+  cache·installation은 보존한다.
+- 신뢰 가능한 target manifest reference가 없으면 cache나 디렉터리 이름만으로 active
+  release를 추정하지 않고 활성 package가 없는 상태를 반환한다.
 - ASP.NET 서버와 worker는 시작 전 필수 package를 검증하고 준비되지 않으면 기동을
   실패시킬 수 있다.
 
@@ -914,13 +916,12 @@ DotNet adapter filesystem layout:
   package별 atomic read·replace와 immutable installation contract만 구현한다.
 - GamePatchKit 저장소는 Unity 전용 assembly와 package를 빌드하거나 배포하지 않는다.
 
-### publish와 channel 연동
+### publish와 target manifest 선택
 
 Packager는 다음 publish tree를 로컬에 생성한다.
 
 1. 불변 file·bundle artifact
 2. 불변 release manifest와 signature
-3. 선택적 channel pointer 입력 자료
 
 외부 publisher 순서:
 
@@ -928,15 +929,18 @@ Packager는 다음 publish tree를 로컬에 생성한다.
 2. 원격 크기와 SHA-256 검증
 3. manifest와 signature 업로드
 4. 원격 manifest와 모든 참조 재검증
-5. 승인 후 channel pointer 교체
 
-cache 정책:
+GamePatchKit은 환경별 최신 release, stage/live, rollout과 rollback 상태를 나타내는
+target 선택 모델·schema·파일을 제공하지 않는다. 각 애플리케이션의 host 또는 서버가
+자신의 설정·DB·배포 시스템에서 target manifest를 선택하고, 신뢰 가능한 `packageId`·
+`dataVersion`·`manifestHash`를 Runtime에 전달한다.
 
-- hash 경로 artifact와 `manifestHash` 경로 manifest는 immutable 장기 cache
-- channel pointer는 `no-cache` 또는 짧은 TTL과 재검증
-- rollback은 artifact 복사 없이 이전 release로 channel 전환
+hash 경로 artifact와 `manifestHash` 경로 manifest는 immutable 장기 cache한다.
+rollback은 artifact를 복사하지 않고 host 또는 서버가 이전 immutable manifest를 다시
+target으로 선택한다.
 
-Storage credential, 원격 원자적 교체와 승인 정책은 publisher 책임이다.
+Storage credential, 승인과 target 선택의 원자성은 publisher·host 운영 계층의
+책임이다.
 
 ### 서명과 무결성
 
@@ -957,9 +961,9 @@ Storage credential, 원격 원자적 교체와 승인 정책은 publisher 책임
 - v1 key rotation은 기존 release를 재서명하지 않고 새 `manifestHash`의 release부터
   새 key를 사용한다. 서명만 바꾸기 위해 no-op compact나 새 release를 만들지 않는다.
 - Runtime은 신뢰하는 public key 목록과 key ID로 manifest를 검증한다.
-- key rotation은 구·신 public key 동시 신뢰 → 신 key로 새 release 서명·channel
-  전환 → 구 key release가 active·rollback 대상과 지원 client에서 사라진 뒤 구 key
-  제거 순서로 수행한다.
+- key rotation은 구·신 public key 동시 신뢰 → 신 key로 새 release 서명 → host가
+  새 manifest를 target으로 선택 → 구 key release가 active·rollback 대상과 지원
+  client에서 사라진 뒤 구 key 제거 순서로 수행한다.
 - 유출 key로 서명된 기존 release를 즉시 새 key로 다시 서명해야 한다면 단일
   `manifest.sig` v1 계약으로는 지원하지 않으며 다중 immutable signature 계약이
   필요하다.
@@ -1048,8 +1052,8 @@ package·diff·Runtime 결과는 최소한 다음 값을 제공한다.
 - NuGet `GamePatchKit.Compression.NativeCompressions`
 - NuGet `GamePatchKit.DotNet`
 - .NET tool 또는 실행 파일 `gpk`
-- versioned JSON Schema 4종(`package-config`, `release-manifest`,
-  `manifest-signature`, `channel`)
+- versioned JSON Schema 3종(`package-config`, `release-manifest`,
+  `manifest-signature`)
 - package별 manifest와 artifact
 - Runtime adapter conformance fixture와 test suite
 
@@ -1133,7 +1137,7 @@ schema와 manifest 호환 버전은 같은 repository release에서 함께 관�
 - v1은 단순성과 재현성을 위해 bundle 전체 다운로드를 사용한다.
 - bundle 크기와 group 구성은 자동 최적화하지 않고 측정 결과로 조정한다.
 - override 누적 시점의 compact 판단은 외부 운영 계층이 결정한다.
-- compact는 channel promote와 garbage collection을 수행하지 않는다.
+- compact는 host의 target manifest 선택 변경과 garbage collection을 수행하지 않는다.
 - Runtime은 데이터를 안전하게 전달·활성화하지만 게임별 데이터 로딩 의미는 알지 못한다.
 - NativeCompressions가 preview인 동안 지원 platform은 고정 version의 검증 결과로
   제한하며 upstream API·runtime 변경은 adapter 내부에서 흡수한다.

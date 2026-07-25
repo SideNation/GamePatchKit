@@ -54,7 +54,7 @@ incremental override가 누적된 bundle group을 새 baseline으로 통합할 �
       `compactVersion`·`manifestHash`를 반환하며 artifact·manifest를 만들지 않는다
 - [ ] 다르면 `dataVersion`은 유지하고 `compactVersion`을 1 증가시켜 새 canonical
       manifest의 `manifestHash`를 계산하고 새 bundle·manifest를 불변 경로에 생성한다
-- [ ] channel 변경과 이전 artifact 삭제는 수행하지 않는다
+- [ ] host의 target manifest 선택 변경과 이전 artifact 삭제는 수행하지 않는다
 
 ## 산출물
 

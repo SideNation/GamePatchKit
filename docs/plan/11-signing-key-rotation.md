@@ -33,8 +33,9 @@ key 목록·key ID 검증, key rotation, 서명 필수 모드.
 - [ ] 신뢰하는 public key 목록과 key ID 매칭으로 manifest 검증
 - [ ] v1 key rotation은 기존 release를 재서명하지 않고 새 `manifestHash`의 release부터
       새 key를 사용하며, 서명만 바꾸는 release나 no-op compact를 만들지 않는다
-- [ ] 구·신 public key 동시 신뢰 → 신 key release 서명·channel 전환 → 구 key
-      release가 active·rollback 대상과 지원 client에서 사라진 뒤 구 key 제거
+- [ ] 구·신 public key 동시 신뢰 → 신 key release 서명 → host가 새 manifest를
+      target으로 선택 → 구 key release가 active·rollback 대상과 지원 client에서
+      사라진 뒤 구 key 제거
 - [ ] 유출 key로 서명된 기존 release의 즉시 재서명은 단일 `manifest.sig` v1 범위에서
       지원하지 않으며 필요하면 다중 immutable signature 계약으로 schema를 변경해야 함
 - [ ] 서명 필수 모드: 서명 누락, 알 수 없는 key ID, 검증 실패를 모두 거부

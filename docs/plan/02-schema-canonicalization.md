@@ -4,9 +4,9 @@
 
 ## 목표
 
-`gamepatchkit.yml` 입력 계약과 package 설정·release manifest·manifest signature·
-channel의 JSON Schema를 확정하고, canonical JSON·manifest 참조 무결성과 경로·glob
-순수 규칙을 Core에 구현해 이후 모든 단계가 사용할 데이터 계약을 고정한다.
+`gamepatchkit.yml` 입력 계약과 package 설정·release manifest·manifest signature의
+JSON Schema를 확정하고, canonical JSON·manifest 참조 무결성과 경로·glob 순수 규칙을
+Core에 구현해 이후 모든 단계가 사용할 데이터 계약을 고정한다.
 
 ## 선행 단계
 
@@ -48,8 +48,6 @@ channel의 JSON Schema를 확정하고, canonical JSON·manifest 참조 무결�
   - `keyId`는 raw 32-byte public key의 SHA-256으로 파생한
     `^ed25519-[0-9a-f]{64}$` 형식
   - signature는 padding 없는 base64url로 표현한 정확히 64-byte 값
-- [x] `channel.schema.json`
-  - 환경이 사용할 `packageId`·`manifestHash`·`dataVersion` pointer
 
 ### `gamepatchkit.yml` 입력 계약 (계약·fixture 정의)
 
@@ -69,12 +67,11 @@ fixture만 고정한다.
 
 ### Core 모델·검증
 
-- [x] config·manifest·channel 모델 클래스 (YAML 파일 로드·문법 검증은 CLI 책임이며,
+- [x] config·manifest 모델 클래스 (YAML 파일 로드·문법 검증은 CLI 책임이며,
       Core는 filesystem과 YAML parser에 의존하지 않는다) — `manifest-signature`
       모델도 함께 구현
 - [x] schema 규칙에 대응하는 모델 검증: packageId·group 이름 규칙, group 중복 일치
-      오류, 예약 group `default` 처리, 음수가 아닌 `compactVersion`, channel의
-      lowercase hex 64자 `manifestHash`
+      오류, 예약 group `default` 처리, 음수가 아닌 `compactVersion`
 - [x] config의 모든 glob pattern을 Core parser로 검증하고 전역 include → exclude →
       group matching 순서와 중복 group 오류를 filesystem 비의존 함수로 제공
       (`GamePatchKit.Core.Globbing.FileSelector`)
@@ -171,7 +168,7 @@ fixture만 고정한다.
 
 ## 산출물
 
-- `schemas/` JSON Schema 4종
+- `schemas/` JSON Schema 3종
 - Core 모델, `ManifestValidator`, canonical JSON writer, 경로 정규화·glob
   parser·matcher·파일 선택 함수, 공통 오류 타입
 - 유효·무효 fixture와 공용 canonical golden vector 기반 테스트
