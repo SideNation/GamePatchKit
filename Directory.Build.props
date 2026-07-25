@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <!-- NuGet Package Metadata -->
+    <Authors>TenY</Authors>
+    <PackageProjectUrl>https://github.com/SideNation/GamePatchKit</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/SideNation/GamePatchKit.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Copyright>Copyright (c) 2026 TenY</Copyright>
+    <PackageTags>game;patch;package;content-delivery;download</PackageTags>
+  </PropertyGroup>
+</Project>

@@ -7,12 +7,28 @@
   <ItemGroup>
     <!-- Exact pin: NativeCompressions is preview; never auto-upgrade (PRD). -->
     <PackageVersion Include="NativeCompressions.Zstandard" Version="[0.6.1]" />
+    <!-- Minimum version: Core JSON parsing library (docs/plan/02-schema-canonicalization.md decision).
+         Not an exact pin like NativeCompressions above - Newtonsoft.Json is a mature, widely-depended-upon
+         package (e.g. Microsoft.NET.Test.Sdk requires >= 13.0.3 transitively) and hard-pinning it would
+         conflict with those transitive requirements instead of just floating up to satisfy them. -->
+    <PackageVersion Include="Newtonsoft.Json" Version="13.0.2" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- Test-only: validates fixtures against schemas/*.schema.json. System.Text.Json-based so it never
+         contends with the Newtonsoft.Json pin above (NJsonSchema would have forced Newtonsoft.Json 13.0.3+). -->
+    <PackageVersion Include="JsonSchema.Net" Version="9.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Build -->
+    <PackageVersion Include="Nuke.Common" Version="10.1.0" />
+    <!-- Transitive vulnerability overrides -->
+    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.9" />
+    <PackageVersion Include="NuGet.Packaging" Version="7.6.0" />
   </ItemGroup>
 
 </Project>

@@ -10,6 +10,14 @@ obj/
 /node_modules
 /wwwroot/node_modules
 
+# NuGet packages
+*.nupkg
+*.snupkg
+
+# Nuke build
+/artifacts/
+.nuke/temp/
+
 ### Unity ###
 # This .gitignore file should be placed at the root of your Unity project directory
 #
