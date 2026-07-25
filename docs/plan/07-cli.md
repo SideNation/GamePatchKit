@@ -16,10 +16,17 @@ Packager·Core 기능을 명령행으로 노출한다: `package`, `diff`, `verif
 
 ### 공통 기반
 
-- [ ] `gamepatchkit.yml` 로드·schema 검증·오류 보고
+- [ ] `gamepatchkit.yml`을 정확히 하나의 non-empty YAML document와 mapping root로
+      로드
+- [ ] 두 번째 document, anchor, alias, merge key(`<<`), custom tag와 중복 mapping
+      key를 schema 검증 전에 거부
+- [ ] YAML을 JSON-compatible 데이터로 변환한 뒤 `package-config.schema.json`과 설정
+      모델을 순서대로 검증
+- [ ] YAML 문법 오류·schema 오류·설정 의미 오류를 입력 오류로 구분해 보고
 - [ ] exit code 체계 고정: 성공 `0`, 입력 오류·무결성 오류·실행 실패를 구분하는
       non-zero 코드표
 - [ ] `--json` machine-readable 결과 출력
+- [ ] package·compact 결과에 `dataVersion`·`compactVersion`·`manifestHash` 출력
 - [ ] 파일을 만들지 않는 `--dry-run` (package, compact, sign 등 의미 있는 명령)
 - [ ] secret과 개인키 내용을 로그·결과에 기록하지 않는다
 
@@ -30,7 +37,8 @@ Packager·Core 기능을 명령행으로 노출한다: `package`, `diff`, `verif
 - [ ] `verify`: source·artifact·manifest 검증 (signature 검증 통합은 11 단계)
 - [ ] `compact`: 선택 bundle group의 새 baseline 생성
 - [ ] `plan-download`: 로컬 상태에서 목표 release까지 필요한 artifact·byte 계산
-      (로컬 상태 수집 helper는 Packager에 구현하고 Core의 download plan을 사용)
+      (`--required-only` 또는 명시적인 `--group` 집합 지원, 로컬 상태 수집 helper는
+      Packager에 구현하고 Core의 download plan을 사용)
 - [ ] `sign`: canonical manifest에 Ed25519 signature 생성, `manifest.sig`에는
       알고리즘·key ID·signature만 기록 (개인키는 파일 경로 또는 환경 변수로 입력)
 
@@ -55,3 +63,5 @@ Packager·Core 기능을 명령행으로 노출한다: `package`, `diff`, `verif
 - `--json` 출력이 안정된 형식을 가지고 CI에서 파싱 가능하다.
 - `--dry-run`이 어떤 파일도 만들지 않는다.
 - `sign`이 개인키 내용을 어디에도 출력하지 않고 유효한 `manifest.sig`를 생성한다.
+- 유효한 단일-document `gamepatchkit.yml`은 로드되고, 금지한 YAML 기능과 다중
+  document는 package 실행 전에 실패한다(검증 기준 24).

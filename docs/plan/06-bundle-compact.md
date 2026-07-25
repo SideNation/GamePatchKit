@@ -24,6 +24,8 @@ incremental override가 누적된 bundle group을 새 baseline으로 통합할 �
 ### bundle 조립
 
 - [ ] 압축은 `ICompressionCodec`의 zstd 또는 무압축 tar
+- [ ] 최초 package와 compact에서 새로 만드는 bundle에만 현재 compression 설정을
+      적용하고, 재사용하는 기존 bundle은 실제 compression metadata를 유지한다
 - [ ] 실제 bundle payload ≤ `maxArtifactBytes`, 초과 시 마지막 entry를 다음 bundle로
       이동해 다시 생성
 - [ ] 단일 파일이 제한을 만족하지 못하면 file artifact part로 fallback
@@ -37,14 +39,16 @@ incremental override가 누적된 bundle group을 새 baseline으로 통합할 �
 
 ### compact
 
-- [ ] source release와 대상 bundle group을 실행 시작 시 고정한다
+- [ ] source release의 `manifestHash`·`compactVersion`과 대상 bundle group을 실행
+      시작 시 고정한다
 - [ ] source manifest와 참조 artifact를 검증해 최종 상태를 복원한다
 - [ ] file group은 기존 file artifact를 그대로 재사용한다
 - [ ] 선택한 bundle group만 현재 최종 파일로 다시 묶고, file override를 새 bundle에
       포함하며, 삭제 파일과 미참조 byte는 제외한다
 - [ ] compact 전후 경로·크기·group·`fileHash`가 같은지 검증한다
-- [ ] `dataVersion`은 유지하고 새 `releaseId`를 계산하며, 새 bundle과 manifest를
-      불변 경로에 생성한다
+- [ ] `dataVersion`은 유지하고 `compactVersion`은 source 값보다 1 증가시킨다
+- [ ] 새 canonical manifest의 `manifestHash`를 계산하고 새 bundle과 manifest를 불변
+      경로에 생성한다
 - [ ] channel 변경과 이전 artifact 삭제는 수행하지 않는다
 
 ## 산출물
@@ -61,5 +65,8 @@ incremental override가 누적된 bundle group을 새 baseline으로 통합할 �
 - 파일 하나만 변경한 incremental release가 기존 bundle을 다시 만들지 않는다
   (검증 기준 6).
 - compact가 bundle override를 통합하고 file group artifact를 재사용한다(검증 기준 8).
-- compact 전후 `dataVersion`은 같고 `releaseId`만 달라진다(검증 기준 9).
+- compression 설정 변경 후 compact하면 선택한 group의 새 bundle에만 현재 설정을
+  적용하고 다른 group의 기존 artifact는 재사용한다.
+- compact 전후 `dataVersion`은 같고 `compactVersion`은 1 증가하며
+  `manifestHash`는 달라진다(검증 기준 9).
 - 실패한 compact가 기존 artifact·manifest를 변경하지 않는다(검증 기준 18).

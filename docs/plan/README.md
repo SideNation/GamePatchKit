@@ -2,7 +2,7 @@
 
 [PRD](../prd/game-patch-kit-prd.md)의 구현 순서를 기준으로 v1 개발을 13단계로 나눈다.
 각 단계는 개별 파일로 관리하고, 진행은 각 파일의 체크박스로 추적한다. 완료 기준은
-PRD 검증 기준 번호(1~21)로 연결한다.
+PRD 검증 기준 번호(1~24)로 연결한다.
 
 ## 단계 목록
 
@@ -10,7 +10,7 @@ PRD 검증 기준 번호(1~21)로 연결한다.
 | --- | --- | --- |
 | 01 | [solution·프로젝트 구성](01-solution-setup.md) | - |
 | 02 | [JSON Schema·canonical 규칙 고정](02-schema-canonicalization.md) | 01 |
-| 03 | [Core identity·diff·download plan](03-core-identity-diff-plan.md) | 02 |
+| 03 | [Core identity·manifest hash·diff·download plan](03-core-identity-diff-plan.md) | 02 |
 | 04 | [zstd codec adapter](04-zstd-codec-adapter.md) | 03 |
 | 05 | [Packager file artifact·package](05-packager-file-artifacts.md) | 03, 04 |
 | 06 | [deterministic bundle·compact](06-bundle-compact.md) | 05 |
@@ -44,13 +44,13 @@ Packager와 Runtime은 Core 계약(03)으로만 연결되므로 03 이후 두 �
 | --- | --- | --- |
 | 1 | 같은 입력 → 같은 artifact·manifest byte | 05, 06, 12 |
 | 2 | 기본 설정은 모두 file artifact | 05 |
-| 3 | file group은 bundle 미포함 | 05, 06 |
+| 3 | file group의 bundle 미포함·group/mode 전환 | 05, 06 |
 | 4 | deterministic bundle·크기 상한 | 06 |
 | 5 | 큰 bundle entry의 file part fallback | 06 |
-| 6 | incremental이 기존 bundle 재생성 안 함 | 06 |
+| 6 | incremental의 기존 artifact 재사용·compression 변경 시 재생성 안 함 | 05, 06 |
 | 7 | 삭제 파일 반영 | 05 |
 | 8 | compact의 override 통합·file 재사용 | 06 |
-| 9 | compact 시 `dataVersion` 유지 | 03, 06 |
+| 9 | compact 시 `dataVersion` 유지·`compactVersion` 증가·`manifestHash` 변경 | 03, 06 |
 | 10 | compact 후 재다운로드 없음 | 08, 09 |
 | 11 | 손상 part·bundle·manifest·signature 거부 | 05, 06, 08, 09, 11 |
 | 12 | 모든 artifact ≤ `maxArtifactBytes` | 05, 06 |
@@ -63,12 +63,15 @@ Packager와 Runtime은 Core 계약(03)으로만 연결되므로 03 이후 두 �
 | 19 | zstd deterministic round-trip | 04 |
 | 20 | 미지원 codec 요구 시 활성화 전 실패 | 08 |
 | 21 | Core·Runtime의 Unity API 비참조 | 01 |
+| 22 | required-only 설치·optional group 상태 전환 | 03, 08, 09, 10 |
+| 23 | `PackageState` 원자적 교체·multi-group batch·손상 복구 | 08, 09, 10 |
+| 24 | 단일-document YAML 설정·금지 기능·schema 검증 | 02, 07, 13 |
 
 ## 진행 상태
 
 - [ ] 01 solution·프로젝트 구성
 - [ ] 02 JSON Schema·canonical 규칙 고정
-- [ ] 03 Core identity·diff·download plan
+- [ ] 03 Core identity·manifest hash·diff·download plan
 - [ ] 04 zstd codec adapter
 - [ ] 05 Packager file artifact·package
 - [ ] 06 deterministic bundle·compact

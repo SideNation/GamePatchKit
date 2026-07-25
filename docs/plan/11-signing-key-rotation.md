@@ -16,7 +16,8 @@ key 목록·key ID 검증, key rotation, 서명 필수 모드.
 ### 서명 형식·검증
 
 - [ ] `manifest.sig` 형식 고정: 알고리즘, key ID, signature만 기록
-- [ ] identity 계산과 동일한 canonical JSON 원본 byte를 기준으로 서명·검증
+- [ ] `manifestHash` 계산과 동일한 canonical manifest 원본 byte를 기준으로 서명·검증
+- [ ] signature와 key가 달라져도 canonical manifest의 `manifestHash`는 바뀌지 않는다
 - [ ] Core에 서명 검증 API 구현 (Runtime·CLI 공용, 07에서 선정한 Ed25519 구현이
       netstandard2.1에서 동작하지 않으면 검증 전용 managed 구현을 채택)
 
