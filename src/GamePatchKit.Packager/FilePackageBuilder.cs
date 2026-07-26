@@ -93,19 +93,23 @@ public sealed class FilePackageBuilder
             }
 
             SourceSnapshotter.VerifyUnchanged(source, request.Config);
-            await PublishArtifactsAsync(
-                state.Finalized.Manifest,
-                outputRoot,
-                stagingRoot,
-                request.Config.PackageId,
-                cancellationToken).ConfigureAwait(false);
-            await PackagePayloadVerifier.VerifyAsync(outputRoot, state.Finalized.Manifest, _zstdCodec, cancellationToken).ConfigureAwait(false);
-            await PublishManifestAsync(
-                state.Finalized,
-                request.WriteCompressedManifest,
-                outputRoot,
-                stagingRoot,
-                cancellationToken).ConfigureAwait(false);
+
+            if (!request.DryRun)
+            {
+                await PublishArtifactsAsync(
+                    state.Finalized.Manifest,
+                    outputRoot,
+                    stagingRoot,
+                    request.Config.PackageId,
+                    cancellationToken).ConfigureAwait(false);
+                await PackagePayloadVerifier.VerifyAsync(outputRoot, state.Finalized.Manifest, _zstdCodec, cancellationToken).ConfigureAwait(false);
+                await PublishManifestAsync(
+                    state.Finalized,
+                    request.WriteCompressedManifest,
+                    outputRoot,
+                    stagingRoot,
+                    cancellationToken).ConfigureAwait(false);
+            }
 
             bool reusedManifest = previous != null && previous.FinalizedManifest.ManifestHash == state.Finalized.ManifestHash;
             PackageBuildReport report = CreateReport(request, state);
@@ -527,9 +531,9 @@ public sealed class FilePackageBuilder
             throw new PackageException(canonicalValidation.Errors);
         }
 
-        string canonicalDirectory = $"{finalized.Manifest.PackageId}/manifests/{finalized.ManifestHash}";
+        string canonicalDirectory = PackageLayout.ManifestDirectory(finalized.Manifest.PackageId, finalized.ManifestHash);
         string destinationDirectory = PackagePath.Resolve(outputRoot, canonicalDirectory);
-        string destinationManifestPath = Path.Combine(destinationDirectory, "manifest.json");
+        string destinationManifestPath = Path.Combine(destinationDirectory, PackageLayout.ManifestFileName);
 
         if (File.Exists(destinationManifestPath))
         {
@@ -546,7 +550,7 @@ public sealed class FilePackageBuilder
         {
             string stagedDirectory = PackagePath.Resolve(stagingRoot, canonicalDirectory);
             Directory.CreateDirectory(stagedDirectory);
-            string stagedManifestPath = Path.Combine(stagedDirectory, "manifest.json");
+            string stagedManifestPath = Path.Combine(stagedDirectory, PackageLayout.ManifestFileName);
             await File.WriteAllBytesAsync(stagedManifestPath, canonicalBytes, cancellationToken).ConfigureAwait(false);
             Directory.CreateDirectory(Path.GetDirectoryName(destinationDirectory)!);
 
@@ -583,7 +587,7 @@ public sealed class FilePackageBuilder
                 finalized.Manifest.PackageId);
         }
 
-        string compressedPath = Path.Combine(destinationDirectory, "manifest.json.zst");
+        string compressedPath = Path.Combine(destinationDirectory, PackageLayout.CompressedManifestFileName);
         string temporaryPath = Path.Combine(destinationDirectory, $".manifest-{Guid.NewGuid():N}.tmp");
 
         try
@@ -658,7 +662,7 @@ public sealed class FilePackageBuilder
                     PackageErrorCodes.ArtifactCorrupted,
                     "The compressed manifest does not reconstruct the canonical manifest.",
                     packageId,
-                    relativePath: "manifest.json.zst"));
+                    relativePath: PackageLayout.CompressedManifestFileName));
         }
     }
 

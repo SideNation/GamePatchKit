@@ -99,6 +99,9 @@ public static class BundleCompact
 뜻이며, 과거 release를 보관 중이라면 해당 release들이 점유한 전체 object 경로·크기·
 hash를 전달해야 part 경로 충돌과 rollback 데이터 덮어쓰기를 막을 수 있다.
 
+`DryRun`을 `true`로 지정하면 compact를 끝까지 판단하고 게시만 하지 않는다. `Changed`와
+identity는 실제 실행과 같고 output tree는 실행 전과 같다.
+
 `Changed`가 `false`면 candidate의 canonical byte가 source와 같았던 성공 no-op이다.
 이 경우 기존 `dataVersion`, `compactVersion`, `manifestHash`를 그대로 반환하고
 artifact나 manifest를 게시하지 않는다. `Changed`가 `true`일 때만 `dataVersion`을

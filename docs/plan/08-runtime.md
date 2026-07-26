@@ -137,3 +137,53 @@ plan 실행 → content-addressed cache → group별 staging → required group 
 - 여러 group activation batch는 모든 target group을 한 revision에 반영하거나 아무
   group도 반영하지 않는다(검증 기준 23).
 - public API가 `UnityEngine`·`NativeCompressions` type을 노출하지 않는다.
+
+## 개발 v2
+
+> v1 계획 본문은 보존하고 아래 내용이 현재 구현 상태를 덮어쓴다.
+
+### 구현 완료
+
+- [x] `IArtifactTransport`, `IRuntimeStorage`, cache writer와 group staging contract를
+      추가하고 stream 수명, package writer lock, atomic state 교체, opaque
+      `installationKey`와 exact installation file-set 검증 경계를 고정했다.
+- [x] host가 전달한 `packageId`·`dataVersion`·`manifestHash`만 target으로 받고
+      raw byte hash → strict/canonical JSON → Core schema·참조 → identity 순서로
+      manifest를 검증한다. channel·latest release 선택 모델은 추가하지 않았다.
+- [x] Runtime 소유 `PackageState` v1 모델, canonical serializer와 manifest 기반
+      validator를 구현했다. state별 field, 전체 group 집합·정렬, required/optional,
+      active manifest hash, opaque key와 I-JSON revision 상한을 검증한다.
+- [x] 최초·전역 설치는 required group만, optional API는 현재 active manifest의 요청
+      group만 Core download plan으로 처리한다.
+- [x] content-addressed cache object의 크기·SHA-256을 재검증하고 누락·손상 object만
+      재다운로드한다. multipart 결합 hash, file 해제 결과와 deterministic PAX bundle
+      byte 계약을 staging에서 검증한다.
+- [x] artifact별 compression metadata로 codec을 선택하고, 선택 group에 필요한
+      codec이 없으면 다운로드 전에 실패한다. Runtime assembly는 구체 zstd 구현을
+      참조하지 않는다.
+- [x] 한 요청의 group 전체를 staging·immutable promotion한 뒤 state 전체를 한 번
+      교체한다. commit 직전 lock 안에서 snapshot revision과 active identity를
+      재확인하고 충돌 시 최신 state로 재계획한다.
+- [x] unchanged optional installation과 compact의 동일 파일을 artifact 위치와
+      무관하게 재연결하고, changed optional은 기존 key를 보존한 `stale`,
+      optional→required는 active 교체 전 `ready`로 만든다.
+- [x] transient transport retry, cancellation 전파, 검증 cache 재사용, 손상 state의
+      trusted target 기반 재구성과 `PatchProgress` 단계·파일·byte·retry 보고를
+      구현했다.
+
+### 테스트 완료
+
+- [x] in-memory transport/storage로 required-only 최초 설치와 optional 후속 설치
+- [x] multi-group batch 단일 revision, promotion·state 교체 실패와 부분 state 부재
+- [x] cancellation 후 cache 재사용, transient retry와 손상 cache 재분류
+- [x] concurrent revision 충돌 재계획과 I-JSON revision 상한
+- [x] changed/unchanged optional, optional→required와 누락 installation 복구
+- [x] canonical·semantic manifest, single·multipart file, deterministic PAX bundle,
+      무압축·주입 zstd와 손상 payload 거부
+
+### 후속 단계 경계
+
+- manifest signature와 trusted key 검증은 `IArtifactTransport.OpenManifestSignatureAsync`
+  연결 지점만 제공하며 11단계에서 활성화한다.
+- 실제 filesystem/HTTP atomicity, process 간 lock과 crash recovery는 09
+  `GamePatchKit.DotNet` adapter에서 같은 contract로 검증한다.

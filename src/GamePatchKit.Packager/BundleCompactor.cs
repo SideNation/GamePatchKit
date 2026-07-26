@@ -106,23 +106,26 @@ public sealed class BundleCompactor
                     state.ReusedFileArtifactHashes.Count);
             }
 
-            await FilePackageBuilder.PublishArtifactsAsync(
-                decision.Result.Manifest,
-                outputRoot,
-                stagingRoot,
-                request.Config.PackageId,
-                cancellationToken).ConfigureAwait(false);
-            await PackagePayloadVerifier.VerifyAsync(
-                outputRoot,
-                decision.Result.Manifest,
-                _zstdCodec,
-                cancellationToken).ConfigureAwait(false);
-            await _packagePublisher.PublishManifestAsync(
-                decision.Result,
-                request.WriteCompressedManifest,
-                outputRoot,
-                stagingRoot,
-                cancellationToken).ConfigureAwait(false);
+            if (!request.DryRun)
+            {
+                await FilePackageBuilder.PublishArtifactsAsync(
+                    decision.Result.Manifest,
+                    outputRoot,
+                    stagingRoot,
+                    request.Config.PackageId,
+                    cancellationToken).ConfigureAwait(false);
+                await PackagePayloadVerifier.VerifyAsync(
+                    outputRoot,
+                    decision.Result.Manifest,
+                    _zstdCodec,
+                    cancellationToken).ConfigureAwait(false);
+                await _packagePublisher.PublishManifestAsync(
+                    decision.Result,
+                    request.WriteCompressedManifest,
+                    outputRoot,
+                    stagingRoot,
+                    cancellationToken).ConfigureAwait(false);
+            }
 
             return new BundleCompactResult(
                 changed: true,
@@ -367,6 +370,7 @@ public sealed class BundleCompactor
                     artifact,
                     _zstdCodec,
                     destination,
+                    file.Size,
                     source.Manifest.PackageId,
                     cancellationToken).ConfigureAwait(false);
                 await destination.FlushAsync(cancellationToken).ConfigureAwait(false);

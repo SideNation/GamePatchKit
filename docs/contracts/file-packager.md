@@ -106,8 +106,30 @@ bundle 생성 수·byte는 `CreatedBundleArtifactCount`와
 
 `PackagePayloadVerifier.VerifyAsync`는 이미 parse된 manifest의 Core 의미 규칙과 실제
 artifact object 크기·SHA-256, part 결합, zstd 해제 후 원본 크기·`fileHash`를
-streaming으로 검증한다. manifest byte parsing·`manifestHash`와 signature까지 받는
-통합 verify API는 07·11단계에서 이 payload 검증을 조합한다.
+streaming으로 검증한다.
+
+manifest byte parsing·`manifestHash`와 signature까지 받는 통합 verify API는
+`ReleaseVerifier.VerifyAsync`이며 schema → Core 의미·참조 무결성 → payload byte →
+signature document 순서로 이 payload 검증을 조합한다. signature byte의 암호학적 검증은
+`IManifestSignatureVerifier` 확장점으로 11단계에서 연결한다. manifest 문서 자체만 확인하면
+되는 diff·download plan·retained inventory는 `ReleaseManifestReader`를 쓴다.
+서명 생성은 `ReleaseSigner.SignAsync`가 담당한다. 자세한 내용은
+[gpk CLI](cli.md)를 참조한다.
+
+검증·복원 중 압축 해제는 manifest가 선언한 파일 크기를 넘는 순간 중단한다. 저장 object는
+크기와 SHA-256이 이미 고정돼 있지만 **해제 결과 크기는 그렇지 않다.** 나중에 비교만 하면 팽창이
+먼저 일어나므로, verify에서는 CPU를, compact 복원에서는 디스크를 소모한 뒤에야 거부하게 된다.
+bundle 해제는 처음부터 같은 방식으로 tar 크기를 상한으로 쓴다.
+
+published manifest는 최대 64 MiB, `manifest.sig`는 최대 4 KiB까지만 읽는다. 둘 다 자신을
+거부할 hash를 그 byte에서 계산하므로 읽기 전에는 아무것도 알 수 없고, 길이만이 미리 판단할 수
+있는 값이다. canonical `manifest.sig`는 항상 정확히 225 byte다. 상한을 그 값에 딱 맞추지 않은
+것은, 향후 `schemaVersion` 변경이 "canonical이 아니다" 대신 "너무 크다"로 보고되는 걸 피하기
+위해서다.
+
+`FilePackageRequest.DryRun`은 release를 끝까지 계산하고 게시만 하지 않는다. staging은
+평소처럼 쓰고 폐기하므로 output tree는 실행 전과 같으며, 반환하는 identity는 실제 실행과
+같다. 게시 후 수행하는 published byte 재검증은 게시가 없으므로 건너뛴다.
 
 예상 가능한 package 실패는 `PackageException`으로 발생하며 상세 항목은
 `Errors`의 `GamePatchKitError`에서 확인한다. 취소는 `OperationCanceledException`을

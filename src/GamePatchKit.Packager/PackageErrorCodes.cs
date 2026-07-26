@@ -23,4 +23,12 @@ public static class PackageErrorCodes
     public const string ImmutablePathConflict = "packager.immutable-path-conflict";
 
     public const string ManifestInvalid = "packager.manifest-invalid";
+
+    public const string InvalidManifestDocument = "packager.invalid-manifest-document";
+
+    public const string ManifestNotFound = "packager.manifest-not-found";
+
+    public const string InvalidSignature = "packager.invalid-signature";
+
+    public const string InvalidSigningKey = "packager.invalid-signing-key";
 }

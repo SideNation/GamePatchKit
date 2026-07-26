@@ -114,19 +114,29 @@ public static class PackagePayloadVerifier
         }
     }
 
+    // maximumDecodedBytes is the size files[] declares for the file this artifact reconstructs. Required
+    // rather than optional: the caller always knows it, and the decoder's output is the one thing here whose
+    // length is not already pinned by a verified object hash. A zstd object that passes the stored-object
+    // check can still expand without bound, so the declared size is enforced while decoding instead of being
+    // compared once the expansion has already happened.
     internal static async Task WriteDecodedFileArtifactAsync(
         string outputRoot,
         ManifestArtifact.FileArtifact artifact,
         ICompressionCodec? zstdCodec,
         Stream destination,
+        long maximumDecodedBytes,
         string packageId,
         CancellationToken cancellationToken)
     {
         await using var payload = new ArtifactObjectReadStream(outputRoot, artifact.GetPayloadObjects());
+        await using var limited = new MaximumLengthWriteStream(
+            destination,
+            maximumDecodedBytes,
+            "A file artifact decodes to more bytes than the manifest declares for it.");
 
         if (artifact.Compression == CompressionKind.None)
         {
-            await payload.CopyToAsync(destination, StreamBufferSize, cancellationToken).ConfigureAwait(false);
+            await payload.CopyToAsync(limited, StreamBufferSize, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -138,7 +148,7 @@ public static class PackagePayloadVerifier
                 packageId);
         }
 
-        await zstdCodec.DecompressAsync(payload, destination, cancellationToken).ConfigureAwait(false);
+        await zstdCodec.DecompressAsync(payload, limited, cancellationToken).ConfigureAwait(false);
     }
 
     private static void VerifyFileArtifactDirectoryShape(
@@ -191,6 +201,7 @@ public static class PackagePayloadVerifier
             artifact,
             zstdCodec,
             verifiedOutput,
+            referencedFile.Size,
             manifest.PackageId,
             cancellationToken).ConfigureAwait(false);
 

@@ -102,7 +102,10 @@ internal static class BundleArchiveReader
                     FileShare.None,
                     StreamBufferSize,
                     FileOptions.Asynchronous | FileOptions.SequentialScan);
-                using var limitedTar = new MaximumLengthWriteStream(tar, expectedTarSize);
+                using var limitedTar = new MaximumLengthWriteStream(
+                    tar,
+                    expectedTarSize,
+                    "The decompressed bundle exceeds its declared deterministic tar size.");
                 await zstdCodec.DecompressAsync(compressed, limitedTar, cancellationToken).ConfigureAwait(false);
 
                 if (limitedTar.BytesWritten != expectedTarSize)
@@ -359,102 +362,5 @@ internal static class BundleArchiveReader
         string? group = null)
     {
         return new PackageException(new GamePatchKitError(Stage, code, message, packageId, relativePath, group));
-    }
-
-    private sealed class MaximumLengthWriteStream : Stream
-    {
-        private readonly Stream _inner;
-        private readonly long _maximumLength;
-
-        public long BytesWritten { get; private set; }
-
-        public override bool CanRead => false;
-
-        public override bool CanSeek => false;
-
-        public override bool CanWrite => true;
-
-        public override long Length => BytesWritten;
-
-        public override long Position
-        {
-            get => BytesWritten;
-            set => throw new NotSupportedException();
-        }
-
-        public MaximumLengthWriteStream(Stream inner, long maximumLength)
-        {
-            _inner = inner;
-            _maximumLength = maximumLength;
-        }
-
-        public override void Flush()
-        {
-            _inner.Flush();
-        }
-
-        public override Task FlushAsync(CancellationToken cancellationToken)
-        {
-            return _inner.FlushAsync(cancellationToken);
-        }
-
-        public override void Write(byte[] buffer, int offset, int count)
-        {
-            EnsureCapacity(count);
-            _inner.Write(buffer, offset, count);
-            BytesWritten += count;
-        }
-
-        public override async ValueTask WriteAsync(
-            ReadOnlyMemory<byte> buffer,
-            CancellationToken cancellationToken = default)
-        {
-            EnsureCapacity(buffer.Length);
-            await _inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-            BytesWritten += buffer.Length;
-        }
-
-        public override Task WriteAsync(
-            byte[] buffer,
-            int offset,
-            int count,
-            CancellationToken cancellationToken)
-        {
-            return WriteLegacyAsync(buffer, offset, count, cancellationToken);
-        }
-
-        public override int Read(byte[] buffer, int offset, int count)
-        {
-            throw new NotSupportedException();
-        }
-
-        public override long Seek(long offset, SeekOrigin origin)
-        {
-            throw new NotSupportedException();
-        }
-
-        public override void SetLength(long value)
-        {
-            throw new NotSupportedException();
-        }
-
-        private void EnsureCapacity(int count)
-        {
-            if (count > _maximumLength - BytesWritten)
-            {
-                throw new InvalidDataException("The decompressed bundle exceeds its declared deterministic tar size.");
-            }
-        }
-
-        private async Task WriteLegacyAsync(
-            byte[] buffer,
-            int offset,
-            int count,
-            CancellationToken cancellationToken)
-        {
-            EnsureCapacity(count);
-            await _inner.WriteAsync(buffer, offset, count, cancellationToken).ConfigureAwait(false);
-            BytesWritten += count;
-        }
     }
 }

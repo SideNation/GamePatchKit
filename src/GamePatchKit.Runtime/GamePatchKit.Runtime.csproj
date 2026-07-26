@@ -10,4 +10,8 @@
     <ProjectReference Include="..\GamePatchKit.Core\GamePatchKit.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" />
+  </ItemGroup>
+
 </Project>

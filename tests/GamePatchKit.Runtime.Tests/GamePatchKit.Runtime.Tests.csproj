@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\GamePatchKit.Compression.NativeCompressions\GamePatchKit.Compression.NativeCompressions.csproj" />
     <ProjectReference Include="..\..\src\GamePatchKit.Runtime\GamePatchKit.Runtime.csproj" />
   </ItemGroup>
 

@@ -17,13 +17,18 @@ public sealed class BundleCompactRequest
 
     public bool WriteCompressedManifest { get; }
 
+    // Decide the compact and report it without publishing. Changed still tells the truth, including the no-op
+    // case, which is the answer an operator usually wants before committing to a new generation.
+    public bool DryRun { get; }
+
     public BundleCompactRequest(
         PackageConfig config,
         string outputRoot,
         PreviousRelease sourceRelease,
         IReadOnlyList<string> targetGroups,
         IReadOnlyList<ArtifactPayloadObject> retainedObjects,
-        bool writeCompressedManifest = false)
+        bool writeCompressedManifest = false,
+        bool dryRun = false)
     {
         Config = config ?? throw new ArgumentNullException(nameof(config));
         OutputRoot = string.IsNullOrWhiteSpace(outputRoot)
@@ -37,5 +42,6 @@ public sealed class BundleCompactRequest
             ? throw new ArgumentNullException(nameof(retainedObjects))
             : retainedObjects.ToArray();
         WriteCompressedManifest = writeCompressedManifest;
+        DryRun = dryRun;
     }
 }
