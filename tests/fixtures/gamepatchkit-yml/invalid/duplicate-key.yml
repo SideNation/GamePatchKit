@@ -1,0 +1,10 @@
+schemaVersion: 1
+packageId: sample-game-client-data
+inputRoot: ./game-data
+include:
+  - "**/*"
+include:
+  - "**/*.json"
+compression:
+  kind: none
+groups: []

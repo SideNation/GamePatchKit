@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "packageId": "sample-game-client-data",
+  "inputRoot": "./game-data",
+  "include": ["**/*"],
+  "exclude": ["**/*.tmp"],
+  "maxArtifactBytes": 10485760,
+  "defaultArtifactMode": "file",
+  "compression": { "kind": "zstd", "codecId": "zstd" },
+  "groups": [
+    { "name": "core", "include": ["core/**/*"], "artifactMode": "file", "required": true },
+    {
+      "name": "maps",
+      "include": ["maps/**/*"],
+      "artifactMode": "bundle",
+      "required": false,
+      "compression": { "kind": "none" }
+    }
+  ]
+}

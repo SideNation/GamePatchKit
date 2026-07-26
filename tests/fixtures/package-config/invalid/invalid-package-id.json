@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "packageId": "Not_Kebab_Case",
+  "inputRoot": "./game-data",
+  "include": ["**/*.json"],
+  "compression": { "kind": "none" },
+  "groups": []
+}

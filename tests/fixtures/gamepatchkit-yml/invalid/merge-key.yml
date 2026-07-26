@@ -1,0 +1,16 @@
+defaults: &defaults
+  artifactMode: file
+  required: false
+
+schemaVersion: 1
+packageId: sample-game-client-data
+inputRoot: ./game-data
+include:
+  - "**/*"
+compression:
+  kind: none
+groups:
+  - name: core
+    <<: *defaults
+    include:
+      - "core/**/*"

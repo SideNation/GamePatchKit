@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "package-config.schema.json",
+  "title": "GamePatchKit package configuration",
+  "description": "Validates the JSON-compatible data produced by parsing a gamepatchkit.yml document (see docs/contracts/gamepatchkit-yml.md for the YAML input contract and processing order). This schema validates the parsed configuration data structure, not the YAML document itself, and is a versioned GamePatchKit deployment artifact, not a per-package generated file. The release manifest is a separate canonical JSON artifact the Packager generates from a validated configuration plus the source tree; see release-manifest.schema.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "packageId", "inputRoot", "include", "compression", "groups"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "packageId": {
+      "$ref": "#/$defs/kebabCaseId",
+      "description": "Lowercase kebab-case package identifier. Used as the artifact and manifest storage namespace."
+    },
+    "inputRoot": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Host filesystem source root. This is a host path, not a Core-normalized relative path, so it is not subject to the relative-path grammar used by include/exclude/group patterns and manifest file paths."
+    },
+    "include": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/globPattern"
+      },
+      "minItems": 1,
+      "description": "Non-empty allowlist of relative glob patterns evaluated against inputRoot. include is the only allowlist mechanism and must never be empty."
+    },
+    "exclude": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/globPattern"
+      },
+      "default": [],
+      "description": "Glob patterns removed from the include allowlist. Always takes priority over include; there is no re-include or negation."
+    },
+    "maxArtifactBytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991,
+      "default": 10485760,
+      "description": "Maximum physical size of a file part or bundle payload. Defaults to 10485760 (10 MiB) when omitted."
+    },
+    "defaultArtifactMode": {
+      "enum": ["file", "bundle"],
+      "default": "file",
+      "description": "Artifact mode used for the reserved 'default' group (files matched by no declared group). Defaults to 'file' when omitted."
+    },
+    "compression": {
+      "$ref": "#/$defs/compressionSetting",
+      "description": "Package-level compression policy applied when new artifacts are created. Required so every configuration states its policy explicitly; it never governs the validity of artifacts already recorded in a prior manifest."
+    },
+    "groups": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/group"
+      },
+      "description": "May be empty: a package with no declared groups places every file in the reserved 'default' group."
+    }
+  },
+  "$defs": {
+    "kebabCaseId": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "globPattern": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Core's own glob dialect only: literal characters, an in-segment '*', and a full-segment '**'. Partial '**', absolute patterns, empty segments, '.', '..', backslash, NUL, '?', character classes, brace expansion, extglob, and negation are rejected by Core's glob parser, not by this schema pattern."
+    },
+    "compressionSetting": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": {
+              "const": "none"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "codecId"],
+          "properties": {
+            "kind": {
+              "const": "zstd"
+            },
+            "codecId": {
+              "const": "zstd",
+              "description": "Fixed to 'zstd' in v1. Compression level and frame options are pinned internally by GamePatchKit.Compression.NativeCompressions (see docs/plan/04-zstd-codec-adapter.md) for deterministic output and are not user-configurable, so they are not exposed as fields here."
+            }
+          }
+        }
+      ]
+    },
+    "group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "include", "artifactMode", "required"],
+      "properties": {
+        "name": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/kebabCaseId"
+            },
+            {
+              "not": {
+                "const": "default"
+              }
+            }
+          ],
+          "description": "Unique within the package. 'default' is reserved for files matched by no declared group and must not be declared explicitly."
+        },
+        "include": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/globPattern"
+          },
+          "minItems": 1
+        },
+        "artifactMode": {
+          "enum": ["file", "bundle"]
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether this group must be ready before activation. Has no default: every group must state this explicitly."
+        },
+        "compression": {
+          "$ref": "#/$defs/compressionSetting",
+          "description": "Optional group-level override of the package-level compression policy. Absent means the package-level compression setting applies to this group."
+        }
+      }
+    }
+  }
+}

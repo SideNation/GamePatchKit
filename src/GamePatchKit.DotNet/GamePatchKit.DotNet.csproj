@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>HttpClient- and filesystem-based .NET adapter for the GamePatchKit Runtime, with default zstd codec configuration</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\GamePatchKit.Core\GamePatchKit.Core.csproj" />
+    <ProjectReference Include="..\GamePatchKit.Runtime\GamePatchKit.Runtime.csproj" />
+    <ProjectReference Include="..\GamePatchKit.Compression.NativeCompressions\GamePatchKit.Compression.NativeCompressions.csproj" />
+  </ItemGroup>
+
+</Project>
