@@ -1,8 +1,8 @@
 namespace GamePatchKit.Core.Diff
 {
-    // A stored object is identified by its path and its own digest together, so there is no "modified" kind:
-    // when a payload is re-split and different bytes land at the same part path, that path shows up once as
-    // Removed and once as Added.
+    // Stored bytes are immutable, so there is no "modified" kind: an object either exists at a path or does
+    // not. A release pair that would need one is rejected by ReleaseStorageCompatibility before it reaches a
+    // diff.
     public enum ArtifactChangeKind
     {
         Added,

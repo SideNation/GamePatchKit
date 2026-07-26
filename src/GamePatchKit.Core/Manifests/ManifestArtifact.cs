@@ -260,7 +260,7 @@ namespace GamePatchKit.Core.Manifests
                 Size = size;
                 ArtifactHash = artifactHash ?? throw new ArgumentNullException(nameof(artifactHash));
                 Compression = compression;
-                Entries = entries ?? throw new ArgumentNullException(nameof(entries));
+                Entries = ReadOnlySnapshot.Of(entries, nameof(entries));
             }
 
             public override string ContentAddressedSortKey(string packageId)

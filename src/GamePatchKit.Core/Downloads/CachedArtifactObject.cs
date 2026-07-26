@@ -5,10 +5,11 @@ namespace GamePatchKit.Core.Downloads
     // One object already in the content-addressed cache: where it sits and the digest its bytes were verified
     // against when it was stored.
     //
-    // The hash is not redundant with the path. A part's path is built from its parent artifactHash and index
-    // (ContentAddressedPath.FilePartPath), not from its own bytes, so re-splitting one payload under a
-    // different maxArtifactBytes produces the same part paths holding different bytes. Matching on path alone
-    // would treat a stale part as present and plan a download that can never join to the right payload.
+    // The hash is what makes a cache entry usable evidence. Published storage is immutable, but a client's
+    // cache is local state that can be stale or damaged, and a part's path does not carry its own digest
+    // (ContentAddressedPath.FilePartPath addresses it by its parent artifactHash and index) - so a path on its
+    // own cannot say which bytes are actually sitting there. Planning against the recorded hash means a bad
+    // entry is simply re-fetched, instead of being skipped into a plan whose parts can never join.
     public sealed class CachedArtifactObject
     {
         public string Path { get; }

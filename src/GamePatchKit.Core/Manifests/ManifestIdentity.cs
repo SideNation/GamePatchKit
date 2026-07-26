@@ -22,8 +22,8 @@ namespace GamePatchKit.Core.Manifests
         public ManifestIdentity(string packageId, IReadOnlyList<ManifestGroupEntry> groups, IReadOnlyList<FileIdentity> files)
         {
             PackageId = packageId ?? throw new ArgumentNullException(nameof(packageId));
-            Groups = groups ?? throw new ArgumentNullException(nameof(groups));
-            Files = files ?? throw new ArgumentNullException(nameof(files));
+            Groups = ReadOnlySnapshot.Of(groups, nameof(groups));
+            Files = ReadOnlySnapshot.Of(files, nameof(files));
         }
 
         public static ManifestIdentity FromManifest(ReleaseManifest manifest)

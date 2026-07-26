@@ -12,6 +12,9 @@ public class TestCompactVersionRule
     private static readonly string _bundleHash = SampleManifests.Hash('c');
     private static readonly string _rebuiltBundleHash = SampleManifests.Hash('d');
 
+    // These cases have no release in storage other than the source, which Resolve always includes itself.
+    private static readonly ArtifactPayloadObject[] _noOtherRetainedObjects = Array.Empty<ArtifactPayloadObject>();
+
     [Fact]
     public void FirstPackageStartsAtZero()
     {
@@ -51,7 +54,7 @@ public class TestCompactVersionRule
         ReleaseManifest source = ReleaseIdentity.Finalize(BundledRelease(_bundleHash), 2).Manifest;
 
         // A compact run that ends up rebuilding exactly the same bundle: rebuilt from scratch, byte-identical.
-        CompactDecision decision = CompactVersionRule.Resolve(source, BundledRelease(_bundleHash));
+        CompactDecision decision = CompactVersionRule.Resolve(source, BundledRelease(_bundleHash), _noOtherRetainedObjects);
 
         Assert.False(decision.Changed);
         Assert.Equal(source.DataVersion, decision.Result.DataVersion);
@@ -66,7 +69,7 @@ public class TestCompactVersionRule
         ReleaseManifest source = ReleaseIdentity.Finalize(BundledRelease(_bundleHash), 2).Manifest;
 
         // Same files, repacked into a differently-hashed bundle.
-        CompactDecision decision = CompactVersionRule.Resolve(source, BundledRelease(_rebuiltBundleHash));
+        CompactDecision decision = CompactVersionRule.Resolve(source, BundledRelease(_rebuiltBundleHash), _noOtherRetainedObjects);
 
         Assert.True(decision.Changed);
         Assert.Equal(source.DataVersion, decision.Result.DataVersion);
@@ -94,7 +97,54 @@ public class TestCompactVersionRule
                 SampleManifests.FileFromArtifact("data/added.bin", "core", 10, _hashA),
             });
 
-        Assert.Throws<ArgumentException>(() => CompactVersionRule.Resolve(source, differentData));
+        Assert.Throws<ArgumentException>(() => CompactVersionRule.Resolve(source, differentData, _noOtherRetainedObjects));
+    }
+
+    [Fact]
+    public void RejectsCandidateThatWouldOverwriteTheSourcesStoredBytes()
+    {
+        // Same payload and same artifactHash, re-split: the candidate's parts land on the source's part paths
+        // with different bytes, and a compact publishes alongside the source rather than replacing it.
+        ReleaseManifest source = ReleaseIdentity.Finalize(PartitionedRelease((20L, SampleManifests.Hash('1')), (10L, SampleManifests.Hash('2'))), 2).Manifest;
+        ReleaseManifest resplit = PartitionedRelease((16L, SampleManifests.Hash('3')), (14L, SampleManifests.Hash('4')));
+
+        Assert.Throws<ArgumentException>(() => CompactVersionRule.Resolve(source, resplit, _noOtherRetainedObjects));
+    }
+
+    [Fact]
+    public void RejectsCandidateThatCollidesWithARetainedReleaseTheSourceDoesNotReference()
+    {
+        // The source stores the payload as one object, so it holds none of the part paths - checking the
+        // candidate against the source alone says nothing about the older release that does.
+        ReleaseManifest olderRelease = PartitionedRelease((20L, SampleManifests.Hash('1')), (10L, SampleManifests.Hash('2')));
+        ReleaseManifest source = ReleaseIdentity.Finalize(SingleObjectRelease(), 2).Manifest;
+        ReleaseManifest resplit = PartitionedRelease((16L, SampleManifests.Hash('3')), (14L, SampleManifests.Hash('4')));
+
+        // Told the source is all that is stored, the compact is accepted.
+        Assert.True(CompactVersionRule.Resolve(source, resplit, _noOtherRetainedObjects).Changed);
+
+        // Told what is actually still there, it is overwriting bytes that release needs for rollback.
+        Assert.Throws<ArgumentException>(() => CompactVersionRule.Resolve(source, resplit, olderRelease.EnumeratePayloadObjects()));
+    }
+
+    private static ReleaseManifest SingleObjectRelease()
+    {
+        string payloadHash = SampleManifests.Hash('9');
+
+        return SampleManifests.Manifest(
+            new List<ManifestGroupEntry> { new ManifestGroupEntry("core", true) },
+            new List<ManifestArtifact> { SampleManifests.SingleArtifact(payloadHash, 30) },
+            new List<ManifestFileEntry> { SampleManifests.FileFromArtifact("data/big.bin", "core", 30, payloadHash) });
+    }
+
+    private static ReleaseManifest PartitionedRelease(params (long Size, string PartHash)[] parts)
+    {
+        string payloadHash = SampleManifests.Hash('9');
+
+        return SampleManifests.Manifest(
+            new List<ManifestGroupEntry> { new ManifestGroupEntry("core", true) },
+            new List<ManifestArtifact> { SampleManifests.PartsArtifact(payloadHash, parts) },
+            new List<ManifestFileEntry> { SampleManifests.FileFromArtifact("data/big.bin", "core", 30, payloadHash) });
     }
 
     private static ReleaseManifest BundledRelease(string bundleHash)

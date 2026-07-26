@@ -84,18 +84,37 @@ contract.
       asynchronous streaming verify API가 모두 async 경로를 요구하므로 sync
       overload는 두지 않는다. codec 식별자는 `CompressionCodecIds.Zstd`로 두고
       `CompressionKindJson`의 wire 값도 이 상수를 참조한다.
-- [x] 물리 diff와 cache 판정의 단위는 artifact가 아니라 **저장된 object의
-      `(경로, objectHash)` 쌍**이다. artifact 단위 비교는 `maxArtifactBytes`가
-      바뀌어 `content` 하나가 part로 재분할되는 경우를 놓친다. 여기서 더 나아가
-      경로만으로 비교하면 안 되는 이유는 part 경로가
-      `files/<artifactHash>/part-#####`, 즉 **자기 byte가 아니라 부모 artifact의
-      hash로 주소화**되기 때문이다. 같은 30 byte payload를 20+10에서 16+14로
+- [x] 물리 diff의 단위는 artifact가 아니라 **저장된 object**다. artifact 단위
+      비교는 `maxArtifactBytes`가 바뀌어 `content` 하나가 part로 재분할되는 경우를
+      놓친다.
+- [x] 같은 저장 경로에 서로 다른 byte를 주장하는 두 release는 **표현하지 않고
+      거부한다**(`ReleaseStorageCompatibility`, `ReleaseDiff.Compute`와
+      `CompactVersionRule.Resolve`가 gate로 호출). 이유: 저장소는 불변이다(PRD
+      "한 artifact 디렉터리에는 payload 한 종류만 존재", "동일 경로에 다시
+      업로드하지 않는다", "hash 경로의 기존 byte 불일치"는 오류). 그런데 part
+      경로는 `files/<artifactHash>/part-#####`, 즉 **자기 byte가 아니라 부모
+      artifact의 hash로 주소화**된다. 같은 30 byte payload를 20+10에서 16+14로
       다시 나누면 `artifactHash`·part 개수·part 경로가 모두 그대로인 채 각 part의
-      크기와 `partHash`만 바뀐다. 경로만 비교하면 diff는 "물리 변경 없음"으로,
-      planner는 옛 part를 cache hit으로 판정해 결합 hash가 절대 맞지 않는 계획을
-      만든다. 그래서 `DownloadPlanner`는 경로와 `objectHash`를 함께 담은
-      `CachedArtifactObject`를 받아 둘 다 일치할 때만 cache hit으로 본다. part
-      경로 규칙 자체는 02에서 고정한 PRD 계약이므로 바꾸지 않는다.
+      크기와 `partHash`만 바뀌므로, 두 세대는 같은 경로를 두고 충돌한다. 이를
+      diff 결과로 "표현"하면 공존할 수 없는 두 release가 공존 가능한 것처럼
+      보이고 rollback·동시 reader가 깨진다. part 경로 규칙 자체는 02에서 고정한
+      PRD 계약이라 바꾸지 않고, 위반 manifest를 거부하는 쪽을 택했다.
+- [x] 게시 가능 여부는 **직전 release가 아니라 package가 아직 보관 중인 전체
+      object 목록**을 기준으로 판정한다(`ReleaseStorageCompatibility.Validate(
+      retainedObjects, candidate)`). 두 manifest만 비교하면 중간 release가 경로를
+      비워주는 순간 우회된다: R1이 payload H를 20+10 part로 저장 → R2가 H를 단일
+      object로 표현(part 경로 미사용) → R3이 H를 16+14로 재분할하면, R2와 R3은
+      공유 경로가 없어 통과하지만 R3은 rollback용으로 남아 있는 R1의 part를
+      덮어쓴다. 그래서 `CompactVersionRule.Resolve`는 `retainedObjects`를 필수
+      인자로 받고(생략 overload를 두지 않는다), source 자신의 object는 항상
+      포함한다. `ReleaseDiff.Compute`는 "이 두 release가 공존 가능한가"만 묻는
+      pairwise 질문이므로 그대로 두되, 게시 안전성을 보장하지 않는다고 명시했다.
+- [x] `DownloadPlanner`는 cache 항목을 경로와 `objectHash`를 함께 담은
+      `CachedArtifactObject`로 받아 둘 다 일치할 때만 cache hit으로 본다. 게시된
+      저장소는 불변이지만 client의 local cache는 오래되거나 손상될 수 있는 로컬
+      상태이고, part 경로는 자기 digest를 담지 않아 경로만으로는 실제 byte를 알 수
+      없다. hash를 함께 보면 잘못된 항목은 그냥 다시 받게 되고, 결합될 수 없는
+      계획을 반복 생성하지 않는다.
 - [x] 내용과 group이 동시에 바뀐 파일은 `ContentChanged`로 분류한다(우선순위:
       Added > Removed > ContentChanged > GroupMoved). 어차피 다시 내려받아야
       하므로 재다운로드가 필요한 분류를 선택하고, `FileChange`가 source·target
@@ -106,12 +125,15 @@ contract.
 - [x] 다운로드가 전혀 필요 없는 artifact도 plan에 남긴다(`ObjectsToDownload`가 빈
       `PlannedArtifact`). part가 모두 cache에 있어도 파일 생성과 결합 hash 검증은
       남아 있으므로, 목록에서 빼면 호출자가 그 작업을 잃는다.
-- [x] `ReleaseIdentity.Finalize`는 draft의 `groups`·`artifacts`·`files`를
-      **복사한 뒤** identity 값을 계산한다. `ReleaseManifest`는 넘겨받은
-      collection을 복사하지 않고 참조로 들고 있어서, draft의 원본 list를 쥔
-      호출자가 나중에 그것을 수정하면 `FinalizedManifest.Manifest`만 바뀌고 이미
-      확정된 canonical byte·`manifestHash`는 그대로 남는다. 즉 서명·게시 대상
-      byte와 모델이 서로 다른 release를 가리키게 된다.
+- [x] manifest 모델은 **생성자에서 collection을 복사**한다
+      (`ReadOnlySnapshot.Of`, 적용 대상: `ReleaseManifest`의 3개,
+      `ManifestArtifact.BundleArtifact.Entries`, `FilePayload.Parts.PartList`,
+      `ManifestIdentity`의 2개). 이전에는 참조로 보관해서, 호출자가 원본 list를
+      나중에 수정하면 `FinalizedManifest.Manifest`만 바뀌고 이미 확정된 canonical
+      byte·`manifestHash`는 그대로 남았다. 즉 서명·게시 대상 byte와 모델이 서로
+      다른 release를 가리켰다. `Finalize`에서만 바깥 list를 복사하는 방식은 part·
+      bundle entry 같은 중첩 list를 그대로 aliasing해 절반만 고치는 셈이라,
+      모델 자체를 불변으로 만드는 쪽을 택했다.
 
 ## 산출물
 
@@ -136,11 +158,15 @@ contract.
 - required group만 선택한 최초 plan과 optional group 하나만 선택한 후속 plan이 다른
   group의 artifact를 포함하지 않는다(검증 기준 22의 Core 수준).
 
-모든 완료 기준은 `dotnet test`(`GamePatchKit.Core.Tests`, 166개 테스트)로 검증했다.
+모든 완료 기준은 `dotnet test`(`GamePatchKit.Core.Tests`, 175개 테스트)로 검증했다.
 02의 golden vector 재현은 별도 계산을 새로 쓰지 않고 `ReleaseIdentity`를 그대로
 통과시켜 확인하므로, fixture가 실제 identity API의 출력을 고정한다.
 
-구현 직후 Codex adversarial review에서 3건을 지적받아 모두 수정했다(part 경로가
-자기 byte로 주소화되지 않아 생기는 cache 오판정과 물리 diff 누락, `Finalize`의
-draft collection aliasing). 각 수정에 회귀 테스트를 붙였고, 수정을 임시로 되돌려
-그 3개 테스트만 실패하는 것을 확인했다.
+구현 직후 Codex adversarial review를 세 차례 받아 6건을 모두 수정했다. 지적은
+매번 같은 뿌리를 한 겹씩 더 파고들었다: (1) part 경로가 자기 byte로 주소화되지
+않아 생기는 cache 오판정·물리 diff 누락과 `Finalize`의 draft collection aliasing,
+(2) 재분할 충돌은 in-memory에서 구분만 할 게 아니라 불변 저장소 규칙 위반으로
+거부해야 하고 collection 복사도 중첩 list까지 내려가야 한다는 것, (3) 그 거부가
+pairwise면 중간 release가 경로를 비워주는 3-release 순서로 우회된다는 것. 각
+수정에 회귀 테스트를 붙였고, 매번 수정을 임시로 되돌려 해당 테스트만 실패하는
+것을 확인했다.

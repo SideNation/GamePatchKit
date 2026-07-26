@@ -113,23 +113,28 @@ public class TestReleaseDiff
     }
 
     [Fact]
-    public void ReportsAResplitPayloadEvenThoughItsPartPathsAreUnchanged()
+    public void RefusesToDiffReleasesThatWouldOverwriteEachOthersStoredBytes()
     {
         // The same 30-byte payload under the same artifactHash, split 20/10 and then 16/14: the part count and
-        // both part paths are identical, and only the stored bytes differ. Comparing paths alone would call
-        // this physically unchanged.
+        // both part paths are identical, and only the stored bytes differ. These two releases cannot both be
+        // published, so there is no diff between them to report.
         ReleaseManifest source = PartitionedRelease(new[] { (20L, SampleManifests.Hash('d')), (10L, SampleManifests.Hash('e')) });
         ReleaseManifest target = PartitionedRelease(new[] { (16L, SampleManifests.Hash('1')), (14L, SampleManifests.Hash('2')) });
+
+        Assert.Throws<ArgumentException>(() => ReleaseDiff.Compute(source, target));
+    }
+
+    [Fact]
+    public void DiffsReleasesThatShareAnUnchangedStoredObject()
+    {
+        // The shared part must not be mistaken for a conflict: same path, same bytes.
+        ReleaseManifest source = PartitionedRelease(new[] { (20L, SampleManifests.Hash('d')), (10L, SampleManifests.Hash('e')) });
+        ReleaseManifest target = PartitionedRelease(new[] { (20L, SampleManifests.Hash('d')), (10L, SampleManifests.Hash('e')) });
 
         ReleaseDiff diff = ReleaseDiff.Compute(source, target);
 
         Assert.Empty(diff.FileChanges);
-        Assert.Equal(2, diff.ArtifactChanges.Count(change => change.Kind == ArtifactChangeKind.Added));
-        Assert.Equal(2, diff.ArtifactChanges.Count(change => change.Kind == ArtifactChangeKind.Removed));
-
-        // Each part path is reported twice: the old bytes leave it and the new bytes take it.
-        Assert.Equal(2, diff.ArtifactChanges.Count(change => change.Payload.Path.EndsWith("part-00000", StringComparison.Ordinal)));
-        Assert.Equal(2, diff.ArtifactChanges.Count(change => change.Payload.Path.EndsWith("part-00001", StringComparison.Ordinal)));
+        Assert.Empty(diff.ArtifactChanges);
     }
 
     [Fact]

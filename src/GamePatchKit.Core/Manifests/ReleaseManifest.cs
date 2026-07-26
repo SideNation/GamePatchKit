@@ -47,9 +47,12 @@ namespace GamePatchKit.Core.Manifests
             PackageId = packageId ?? throw new ArgumentNullException(nameof(packageId));
             DataVersion = dataVersion ?? throw new ArgumentNullException(nameof(dataVersion));
             CompactVersion = compactVersion;
-            Groups = groups ?? throw new ArgumentNullException(nameof(groups));
-            Artifacts = artifacts ?? throw new ArgumentNullException(nameof(artifacts));
-            Files = files ?? throw new ArgumentNullException(nameof(files));
+
+            // Copied, not aliased. A manifest is the thing dataVersion and manifestHash are computed over, so a
+            // caller who kept the list it passed in must not be able to change what those digests describe.
+            Groups = ReadOnlySnapshot.Of(groups, nameof(groups));
+            Artifacts = ReadOnlySnapshot.Of(artifacts, nameof(artifacts));
+            Files = ReadOnlySnapshot.Of(files, nameof(files));
         }
 
         public static bool TryParse(JObject obj, out ReleaseManifest? manifest, out IReadOnlyList<GamePatchKitError> errors)
@@ -104,6 +107,18 @@ namespace GamePatchKit.Core.Manifests
             manifest = new ReleaseManifest((int)schemaVersion, packageId, dataVersion, compactVersion, groups, artifacts, files);
             errors = errorList;
             return true;
+        }
+
+        // Every object this release is physically stored as, in canonical artifact order.
+        public IEnumerable<ArtifactPayloadObject> EnumeratePayloadObjects()
+        {
+            foreach (ManifestArtifact artifact in Artifacts)
+            {
+                foreach (ArtifactPayloadObject payload in artifact.GetPayloadObjects())
+                {
+                    yield return payload;
+                }
+            }
         }
 
         public JObject ToJson()

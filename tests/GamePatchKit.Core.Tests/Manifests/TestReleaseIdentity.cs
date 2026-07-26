@@ -147,27 +147,54 @@ public class TestReleaseIdentity
     }
 
     [Fact]
-    public void FinalizedManifestDoesNotFollowLaterEditsToTheDraftsCollections()
+    public void FinalizedManifestDoesNotFollowLaterEditsToAnyDraftCollection()
     {
-        var groups = new List<ManifestGroupEntry>(Groups());
-        var artifacts = new List<ManifestArtifact>(Artifacts());
-        var files = new List<ManifestFileEntry>(Files());
-        var draft = new ReleaseManifest(1, SampleManifests.PackageId, SampleManifests.PlaceholderDataVersion, 0, groups, artifacts, files);
+        // Every list in the graph, including the two nested ones a copy of the outer lists would leave aliased.
+        var parts = new List<FilePart>
+        {
+            new FilePart(0, ContentAddressedPath.FilePartPath(SampleManifests.PackageId, _hashC, 0), 20, _hashD),
+            new FilePart(1, ContentAddressedPath.FilePartPath(SampleManifests.PackageId, _hashC, 1), 10, SampleManifests.Hash('e')),
+        };
+        var entries = new List<BundleEntry> { new BundleEntry("extra/one.bin") };
 
+        var groups = new List<ManifestGroupEntry> { new ManifestGroupEntry("core", true), new ManifestGroupEntry("extra", false) };
+        var artifacts = new List<ManifestArtifact>
+        {
+            new ManifestArtifact.BundleArtifact(
+                "extra",
+                ContentAddressedPath.BundleArtifactPath(SampleManifests.PackageId, "extra", _hashB, CompressionKind.None),
+                64,
+                _hashB,
+                CompressionKind.None,
+                entries),
+            new ManifestArtifact.FileArtifact(CompressionKind.None, new FilePayload.Parts(30, _hashC, parts)),
+        };
+        var files = new List<ManifestFileEntry>
+        {
+            SampleManifests.FileFromArtifact("data/big.bin", "core", 30, _hashC),
+            SampleManifests.FileFromBundle("extra/one.bin", "extra", 12, _hashA, _hashB),
+        };
+
+        var draft = new ReleaseManifest(1, SampleManifests.PackageId, SampleManifests.PlaceholderDataVersion, 0, groups, artifacts, files);
         FinalizedManifest finalized = ReleaseIdentity.Finalize(draft, CompactVersionRule.Initial);
 
+        parts.Clear();
+        entries.Clear();
         groups.Clear();
         artifacts.Clear();
         files.Clear();
 
         // The published bytes and the signed hash describe the release as it was finalized, so the model has
         // to keep describing that same release.
-        Assert.Equal(2, finalized.Manifest.Groups.Count);
-        Assert.Equal(2, finalized.Manifest.Artifacts.Count);
-        Assert.Equal(2, finalized.Manifest.Files.Count);
         Assert.Equal(CanonicalJsonWriter.Write(finalized.Manifest.ToJson()), finalized.GetCanonicalBytes());
         Assert.Equal(Sha256Hash.ComputeHex(finalized.GetCanonicalBytes()), finalized.ManifestHash);
         Assert.Equal(ReleaseIdentity.ComputeDataVersion(finalized.Manifest), finalized.DataVersion);
+
+        var partsArtifact = (ManifestArtifact.FileArtifact)finalized.Manifest.Artifacts.Single(artifact => artifact is ManifestArtifact.FileArtifact);
+        var bundleArtifact = (ManifestArtifact.BundleArtifact)finalized.Manifest.Artifacts.Single(artifact => artifact is ManifestArtifact.BundleArtifact);
+
+        Assert.Equal(2, ((FilePayload.Parts)partsArtifact.Payload).PartList.Count);
+        Assert.Single(bundleArtifact.Entries);
     }
 
     [Fact]

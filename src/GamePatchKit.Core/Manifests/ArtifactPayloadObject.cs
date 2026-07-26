@@ -6,9 +6,10 @@ namespace GamePatchKit.Core.Manifests
     // multipart file artifact. ObjectHash is the digest of that object's own bytes - artifactHash for whole
     // payloads, partHash for parts - which is what a transfer is verified against before the parts are joined.
     //
-    // Path is content-addressed only for whole payloads. A part's path is built from its parent artifactHash
-    // and index, so two generations of one payload split at different boundaries occupy the same part paths
-    // with different bytes: identify a stored object by Path and ObjectHash together, never by Path alone.
+    // Path is the object's permanent storage key, and it is content-addressed only for whole payloads: a
+    // part's path is built from its parent artifactHash and index. Two generations of one payload split at
+    // different boundaries would therefore claim the same part paths for different bytes, which immutable
+    // storage cannot hold - ReleaseStorageCompatibility rejects that rather than trying to represent it.
     public sealed class ArtifactPayloadObject
     {
         public string Path { get; }

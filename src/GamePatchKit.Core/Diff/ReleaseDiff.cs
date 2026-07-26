@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using GamePatchKit.Core.Errors;
 using GamePatchKit.Core.Manifests;
 using GamePatchKit.Core.Paths;
 
@@ -41,6 +42,19 @@ namespace GamePatchKit.Core.Diff
             {
                 throw new ArgumentException(
                     $"Cannot diff releases of different packages ('{source.PackageId}' and '{target.PackageId}').",
+                    nameof(target));
+            }
+
+            // Two releases that disagree about the bytes at one storage path cannot both exist, so there is no
+            // honest diff to report between them - one of the two manifests is wrong. This is a statement about
+            // these two releases only; whether a release is safe to publish depends on everything the package
+            // still stores, which is ReleaseStorageCompatibility's inventory overload.
+            ValidationResult compatibility = ReleaseStorageCompatibility.Validate(source, target);
+
+            if (!compatibility.IsValid)
+            {
+                throw new ArgumentException(
+                    "Releases cannot be diffed because they disagree about the bytes at a shared storage path: " + string.Join("; ", compatibility.Errors),
                     nameof(target));
             }
 
@@ -95,67 +109,46 @@ namespace GamePatchKit.Core.Diff
             return changes;
         }
 
+        // Path is a sufficient key here only because Compute has already rejected releases that disagree about
+        // the bytes at a shared path: what is left is objects that exist in one release and not the other.
         private static List<ArtifactChange> ComputeArtifactChanges(ReleaseManifest source, ReleaseManifest target)
         {
-            HashSet<(string Path, string ObjectHash)> sourceObjects = CollectPayloadIdentities(source);
-            HashSet<(string Path, string ObjectHash)> targetObjects = CollectPayloadIdentities(target);
+            HashSet<string> sourcePaths = CollectPayloadPaths(source);
+            HashSet<string> targetPaths = CollectPayloadPaths(target);
 
             var changes = new List<ArtifactChange>();
 
-            foreach (ArtifactPayloadObject payload in EnumeratePayloadObjects(target))
+            foreach (ArtifactPayloadObject payload in target.EnumeratePayloadObjects())
             {
-                if (!sourceObjects.Contains((payload.Path, payload.ObjectHash)))
+                if (!sourcePaths.Contains(payload.Path))
                 {
                     changes.Add(new ArtifactChange(ArtifactChangeKind.Added, payload));
                 }
             }
 
-            foreach (ArtifactPayloadObject payload in EnumeratePayloadObjects(source))
+            foreach (ArtifactPayloadObject payload in source.EnumeratePayloadObjects())
             {
-                if (!targetObjects.Contains((payload.Path, payload.ObjectHash)))
+                if (!targetPaths.Contains(payload.Path))
                 {
                     changes.Add(new ArtifactChange(ArtifactChangeKind.Removed, payload));
                 }
             }
 
-            // Path alone is not a total key: a payload re-split under a different maxArtifactBytes puts
-            // different bytes at the same part path, which is reported as that path being both removed and
-            // added. (Path, ObjectHash) is total, because an object present in both releases is in neither list.
-            changes.Sort(CompareByPathThenObjectHash);
+            changes.Sort((left, right) => Utf8OrdinalStringComparer.Instance.Compare(left.Payload.Path, right.Payload.Path));
 
             return changes;
         }
 
-        private static int CompareByPathThenObjectHash(ArtifactChange left, ArtifactChange right)
+        private static HashSet<string> CollectPayloadPaths(ReleaseManifest manifest)
         {
-            int byPath = Utf8OrdinalStringComparer.Instance.Compare(left.Payload.Path, right.Payload.Path);
+            var paths = new HashSet<string>(StringComparer.Ordinal);
 
-            return byPath != 0 ? byPath : string.CompareOrdinal(left.Payload.ObjectHash, right.Payload.ObjectHash);
-        }
-
-        // Identity is path plus the object's own digest. Comparing paths alone would call a release whose parts
-        // were re-split at the same boundaries "physically unchanged" even though every stored byte moved.
-        private static HashSet<(string Path, string ObjectHash)> CollectPayloadIdentities(ReleaseManifest manifest)
-        {
-            var identities = new HashSet<(string Path, string ObjectHash)>();
-
-            foreach (ArtifactPayloadObject payload in EnumeratePayloadObjects(manifest))
+            foreach (ArtifactPayloadObject payload in manifest.EnumeratePayloadObjects())
             {
-                identities.Add((payload.Path, payload.ObjectHash));
+                paths.Add(payload.Path);
             }
 
-            return identities;
-        }
-
-        private static IEnumerable<ArtifactPayloadObject> EnumeratePayloadObjects(ReleaseManifest manifest)
-        {
-            foreach (ManifestArtifact artifact in manifest.Artifacts)
-            {
-                foreach (ArtifactPayloadObject payload in artifact.GetPayloadObjects())
-                {
-                    yield return payload;
-                }
-            }
+            return paths;
         }
     }
 }

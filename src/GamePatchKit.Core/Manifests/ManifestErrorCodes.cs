@@ -60,5 +60,8 @@ namespace GamePatchKit.Core.Manifests
         public const string InvalidManifestHashFormat = "manifest.invalid-manifest-hash-format";
 
         public const string ManifestHashMismatch = "manifest.manifest-hash-mismatch";
+
+        // Cross-release (ReleaseStorageCompatibility).
+        public const string StoragePathConflict = "manifest.storage-path-conflict";
     }
 }

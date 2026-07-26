@@ -1,4 +1,7 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using GamePatchKit.Core.Errors;
 
 namespace GamePatchKit.Core.Manifests
 {
@@ -20,7 +23,13 @@ namespace GamePatchKit.Core.Manifests
         // Both manifests must already have passed ReleaseManifest.TryParse and ManifestValidator: the source's
         // canonical bytes are recomputed from its model, which is only equal to the published bytes for a valid
         // manifest.
-        public static CompactDecision Resolve(ReleaseManifest source, ReleaseManifest candidate)
+        //
+        // retainedObjects is everything the package still stores from releases other than the source - older
+        // releases kept for rollback. The source's own objects are always included, so an empty sequence means
+        // "the source is the only release still in storage"; passing one when older releases exist lets a
+        // candidate overwrite their bytes. There is no overload without it: a compact publishes into shared
+        // storage, and what else lives there is not something this rule can infer.
+        public static CompactDecision Resolve(ReleaseManifest source, ReleaseManifest candidate, IEnumerable<ArtifactPayloadObject> retainedObjects)
         {
             if (source == null)
             {
@@ -32,6 +41,11 @@ namespace GamePatchKit.Core.Manifests
                 throw new ArgumentNullException(nameof(candidate));
             }
 
+            if (retainedObjects == null)
+            {
+                throw new ArgumentNullException(nameof(retainedObjects));
+            }
+
             FinalizedManifest probe = ReleaseIdentity.Finalize(candidate, source.CompactVersion);
 
             // Compact repackages one release; a candidate with a different logical state is a package operation
@@ -40,6 +54,20 @@ namespace GamePatchKit.Core.Manifests
             {
                 throw new ArgumentException(
                     $"Compact candidate has dataVersion '{probe.DataVersion}' but the source release is '{source.DataVersion}'; compact must preserve the logical state.",
+                    nameof(candidate));
+            }
+
+            // A compact publishes alongside everything already stored rather than replacing any of it, so the
+            // candidate must not claim a path that any retained release - not just the source - already filled
+            // with different bytes.
+            ValidationResult compatibility = ReleaseStorageCompatibility.Validate(
+                source.EnumeratePayloadObjects().Concat(retainedObjects),
+                candidate);
+
+            if (!compatibility.IsValid)
+            {
+                throw new ArgumentException(
+                    "Compact candidate cannot be published into the package's existing storage: " + string.Join("; ", compatibility.Errors),
                     nameof(candidate));
             }
 

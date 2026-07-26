@@ -62,25 +62,18 @@ namespace GamePatchKit.Core.Manifests
                 throw new ArgumentOutOfRangeException(nameof(compactVersion), "compactVersion must not be negative.");
             }
 
-            // ReleaseManifest stores the collections it is handed without copying, so finalizing straight off
-            // the draft would leave the caller's own lists aliased by the result: editing one afterwards would
-            // change finalized.Manifest while its canonical bytes and manifestHash - the things that get
-            // published and signed - stayed behind. Both identity values are computed from these snapshots, so
-            // the model and the bytes describe the same release for good.
-            var groups = new List<ManifestGroupEntry>(draft.Groups).AsReadOnly();
-            var artifacts = new List<ManifestArtifact>(draft.Artifacts).AsReadOnly();
-            var files = new List<ManifestFileEntry>(draft.Files).AsReadOnly();
-
-            var snapshot = new ReleaseManifest(draft.SchemaVersion, draft.PackageId, draft.DataVersion, compactVersion, groups, artifacts, files);
-
+            // The result is immutable without any snapshotting here: ReleaseManifest and the artifact models
+            // copy every collection they are handed, all the way down to parts and bundle entries. So the
+            // manifest below keeps describing the release these bytes were hashed and signed for, whatever the
+            // caller does to the lists it built the draft from.
             var manifest = new ReleaseManifest(
-                snapshot.SchemaVersion,
-                snapshot.PackageId,
-                ComputeDataVersion(snapshot),
+                draft.SchemaVersion,
+                draft.PackageId,
+                ComputeDataVersion(draft),
                 compactVersion,
-                groups,
-                artifacts,
-                files);
+                draft.Groups,
+                draft.Artifacts,
+                draft.Files);
 
             byte[] canonicalBytes = ComputeCanonicalBytes(manifest);
 

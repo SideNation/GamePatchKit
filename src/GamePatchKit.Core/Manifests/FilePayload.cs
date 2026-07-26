@@ -182,7 +182,7 @@ namespace GamePatchKit.Core.Manifests
             {
                 Size = size;
                 ArtifactHash = artifactHash ?? throw new ArgumentNullException(nameof(artifactHash));
-                PartList = partList ?? throw new ArgumentNullException(nameof(partList));
+                PartList = ReadOnlySnapshot.Of(partList, nameof(partList));
             }
 
             public override JObject ToJson()
