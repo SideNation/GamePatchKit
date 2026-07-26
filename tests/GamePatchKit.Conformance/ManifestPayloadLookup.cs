@@ -1,9 +1,9 @@
 using GamePatchKit.Core.Manifests;
 using GamePatchKit.Runtime;
 
-namespace GamePatchKit.IntegrationTests;
+namespace GamePatchKit.Conformance;
 
-internal static class ManifestPayloadLookup
+public static class ManifestPayloadLookup
 {
     public static TargetManifestReference Target(FinalizedManifest release)
     {

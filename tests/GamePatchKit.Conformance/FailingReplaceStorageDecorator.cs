@@ -1,17 +1,18 @@
-using GamePatchKit.DotNet;
 using GamePatchKit.Runtime;
 
-namespace GamePatchKit.IntegrationTests;
+namespace GamePatchKit.Conformance;
 
-// Forwards every IRuntimeStorage member to a real FileSystemRuntimeStorage except ReplacePackageStateAsync,
-// which fails a fixed number of times first - the state-commit-fails-keeps-previous-state scenario needs a
-// real storage backing everything else, with just that one step made to fail on demand.
-internal sealed class FailingReplaceStorageDecorator : IRuntimeStorage
+// Forwards every IRuntimeStorage member to any inner storage except ReplacePackageStateAsync, which fails a
+// fixed number of times first - the state-commit-fails-keeps-previous-state scenario needs a real storage
+// backing everything else, with just that one step made to fail on demand. Adapter-agnostic (wraps the
+// IRuntimeStorage interface, not a concrete implementation) so the same decorator drives the scenario for
+// every adapter the conformance suite runs against.
+public sealed class FailingReplaceStorageDecorator : IRuntimeStorage
 {
-    private readonly FileSystemRuntimeStorage _inner;
+    private readonly IRuntimeStorage _inner;
     private int _remainingFailures;
 
-    public FailingReplaceStorageDecorator(FileSystemRuntimeStorage inner, int failuresBeforeSuccess)
+    public FailingReplaceStorageDecorator(IRuntimeStorage inner, int failuresBeforeSuccess)
     {
         _inner = inner;
         _remainingFailures = failuresBeforeSuccess;
@@ -29,13 +30,32 @@ internal sealed class FailingReplaceStorageDecorator : IRuntimeStorage
 
     public Task ReplacePackageStateAsync(string packageId, byte[] canonicalStateBytes, CancellationToken cancellationToken)
     {
-        if (_remainingFailures > 0)
+        if (TryConsumeFailure())
         {
-            _remainingFailures--;
             throw new IOException("injected state replacement failure");
         }
 
         return _inner.ReplacePackageStateAsync(packageId, canonicalStateBytes, cancellationToken);
+    }
+
+    // CAS loop rather than a plain read-decrement-write: concurrent callers racing this decorator must still
+    // consume exactly "failuresBeforeSuccess" tokens in total, not lose or double-spend one to a data race.
+    private bool TryConsumeFailure()
+    {
+        while (true)
+        {
+            int current = Volatile.Read(ref _remainingFailures);
+
+            if (current <= 0)
+            {
+                return false;
+            }
+
+            if (Interlocked.CompareExchange(ref _remainingFailures, current - 1, current) == current)
+            {
+                return true;
+            }
+        }
     }
 
     public Task<Stream?> OpenCachedArtifactAsync(string packageId, string relativePath, CancellationToken cancellationToken)

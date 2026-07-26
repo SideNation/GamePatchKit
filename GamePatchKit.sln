@@ -37,6 +37,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "_build", "_build\_build.csp
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GamePatchKit.Cli.Tests", "tests\GamePatchKit.Cli.Tests\GamePatchKit.Cli.Tests.csproj", "{BB9217F2-B213-4E8C-ACC0-4F8AF5F60126}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GamePatchKit.Conformance", "tests\GamePatchKit.Conformance\GamePatchKit.Conformance.csproj", "{42E6D885-66ED-47F9-8140-680A37A16AC2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -215,6 +217,18 @@ Global
 		{BB9217F2-B213-4E8C-ACC0-4F8AF5F60126}.Release|x64.Build.0 = Release|Any CPU
 		{BB9217F2-B213-4E8C-ACC0-4F8AF5F60126}.Release|x86.ActiveCfg = Release|Any CPU
 		{BB9217F2-B213-4E8C-ACC0-4F8AF5F60126}.Release|x86.Build.0 = Release|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Debug|x64.Build.0 = Debug|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Debug|x86.Build.0 = Debug|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Release|Any CPU.Build.0 = Release|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Release|x64.ActiveCfg = Release|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Release|x64.Build.0 = Release|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Release|x86.ActiveCfg = Release|Any CPU
+		{42E6D885-66ED-47F9-8140-680A37A16AC2}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -234,5 +248,6 @@ Global
 		{5FA29C2F-2BB5-4687-98CD-1943C85D93D1} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{E59E6B05-515F-4129-AC37-4AEDFD36E2A2} = {11C02A59-E5BC-451E-BA61-7C587C4E68FB}
 		{BB9217F2-B213-4E8C-ACC0-4F8AF5F60126} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{42E6D885-66ED-47F9-8140-680A37A16AC2} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal

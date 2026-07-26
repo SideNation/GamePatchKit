@@ -1,4 +1,5 @@
 using System.Text;
+using GamePatchKit.Conformance;
 using GamePatchKit.Core.Manifests;
 using GamePatchKit.DotNet;
 using GamePatchKit.Runtime;

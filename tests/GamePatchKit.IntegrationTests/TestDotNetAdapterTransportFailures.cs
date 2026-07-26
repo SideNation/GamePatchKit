@@ -1,3 +1,4 @@
+using GamePatchKit.Conformance;
 using GamePatchKit.Core.Manifests;
 using GamePatchKit.Runtime;
 

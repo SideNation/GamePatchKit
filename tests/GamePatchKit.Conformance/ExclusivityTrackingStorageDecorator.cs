@@ -1,15 +1,15 @@
 using GamePatchKit.Runtime;
 
-namespace GamePatchKit.IntegrationTests;
+namespace GamePatchKit.Conformance;
 
-// Forwards every IRuntimeStorage member to a real FileSystemRuntimeStorage, but instruments the span between a
-// successful AcquirePackageWriterLockAsync and its handle being disposed via a SharedLockObserver. Runtime's
-// own optimistic-concurrency retry (read state, compare, replace) converges to the same correct end state for
-// two writers racing the same target even with a no-op lock, so asserting on the *outcome* of a concurrent
+// Forwards every IRuntimeStorage member to a real inner storage, but instruments the span between a successful
+// AcquirePackageWriterLockAsync and its handle being disposed via a SharedLockObserver. PackageRuntime's own
+// optimistic-concurrency retry (read state, compare, replace) converges to the same correct end state for two
+// writers racing the same target even with a no-op lock, so asserting on the *outcome* of a concurrent
 // InstallOrUpdateAsync call does not prove the lock is exclusive - only counting overlapping holders does. Two
-// instances of this decorator, wrapping two SEPARATE FileSystemRuntimeStorage instances but sharing one
-// SharedLockObserver, is what makes the proof cross-instance rather than just cross-call.
-internal sealed class ExclusivityTrackingStorageDecorator : IRuntimeStorage
+// instances of this decorator, wrapping two SEPARATE storage instances but sharing one SharedLockObserver, is
+// what makes the proof cross-instance rather than just cross-call.
+public sealed class ExclusivityTrackingStorageDecorator : IRuntimeStorage
 {
     private readonly IRuntimeStorage _inner;
     private readonly SharedLockObserver _observer;
@@ -22,6 +22,7 @@ internal sealed class ExclusivityTrackingStorageDecorator : IRuntimeStorage
 
     public async Task<IAsyncDisposable> AcquirePackageWriterLockAsync(string packageId, CancellationToken cancellationToken)
     {
+        _observer.RecordAttempt();
         IAsyncDisposable handle = await _inner.AcquirePackageWriterLockAsync(packageId, cancellationToken).ConfigureAwait(false);
         await _observer.EnterAsync().ConfigureAwait(false);
         return new TrackedLock(handle, _observer);
@@ -85,8 +86,12 @@ internal sealed class ExclusivityTrackingStorageDecorator : IRuntimeStorage
 
         public async ValueTask DisposeAsync()
         {
-            await _inner.DisposeAsync().ConfigureAwait(false);
+            // Exit() must be recorded before the real lock is released, not after: a fast lock (e.g. an
+            // in-memory SemaphoreSlim) can unblock a waiting second holder - who then calls EnterAsync() -
+            // before this holder's own continuation reaches Exit(), which would count two holders as
+            // concurrent even though the real lock was never actually held by both at once.
             _observer.Exit();
+            await _inner.DisposeAsync().ConfigureAwait(false);
         }
     }
 }

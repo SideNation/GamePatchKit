@@ -21,8 +21,15 @@
     <ProjectReference Include="..\..\src\GamePatchKit.Core\GamePatchKit.Core.csproj" />
     <ProjectReference Include="..\..\src\GamePatchKit.Runtime\GamePatchKit.Runtime.csproj" />
     <ProjectReference Include="..\..\src\GamePatchKit.Packager\GamePatchKit.Packager.csproj" />
-    <ProjectReference Include="..\..\src\GamePatchKit.DotNet\GamePatchKit.DotNet.csproj" />
-    <ProjectReference Include="..\GamePatchKit.Conformance\GamePatchKit.Conformance.csproj" />
+  </ItemGroup>
+
+  <!-- Embedded (not copied) so the suite can reject unsigned negative manifests without depending on the
+       monorepo's tests/fixtures/ layout being present at run time - the point of shipping this project as a
+       source fixture to an external host. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\fixtures\release-manifest\invalid\*.json">
+      <LogicalName>GamePatchKit.Conformance.InvalidManifestFixtures.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>
