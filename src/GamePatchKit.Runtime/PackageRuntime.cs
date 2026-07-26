@@ -10,6 +10,7 @@ using GamePatchKit.Core.Downloads;
 using GamePatchKit.Core.Errors;
 using GamePatchKit.Core.Json;
 using GamePatchKit.Core.Manifests;
+using GamePatchKit.Core.Signatures;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -32,17 +33,25 @@ namespace GamePatchKit.Runtime
         // peak-RSS budget.
         private const int MaximumManifestBytes = 64 * 1024 * 1024;
 
+        // manifest.sig is a handful of short fixed-shape fields (schemaVersion, algorithm, keyId, a base64url
+        // signature); this is generous headroom over that, not a size an honest signature ever approaches.
+        private const int MaximumSignatureBytes = 4 * 1024;
+
         private static readonly UTF8Encoding _strictUtf8 =
             new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
         private readonly IArtifactTransport _transport;
         private readonly IRuntimeStorage _storage;
         private readonly IReadOnlyDictionary<string, ICompressionCodec> _codecs;
+        private readonly TrustedSigningKeys? _trustedSigningKeys;
+        private readonly bool _requireSignature;
 
         public PackageRuntime(
             IArtifactTransport transport,
             IRuntimeStorage storage,
-            IEnumerable<ICompressionCodec>? compressionCodecs = null)
+            IEnumerable<ICompressionCodec>? compressionCodecs = null,
+            TrustedSigningKeys? trustedSigningKeys = null,
+            bool requireSignature = false)
         {
             _transport = transport ?? throw new ArgumentNullException(nameof(transport));
             _storage = storage ?? throw new ArgumentNullException(nameof(storage));
@@ -68,6 +77,19 @@ namespace GamePatchKit.Runtime
             }
 
             _codecs = codecs;
+
+            // Requiring a signature needs trusted keys; without any, verification cannot tell a real signature
+            // from a forged one, so refusing this combination outright is safer than silently downgrading it
+            // to a presence check.
+            if (requireSignature && trustedSigningKeys == null)
+            {
+                throw new ArgumentException(
+                    "Requiring a signature needs trusted signing keys.",
+                    nameof(requireSignature));
+            }
+
+            _trustedSigningKeys = trustedSigningKeys;
+            _requireSignature = requireSignature;
         }
 
         public async Task<PackageState> InstallOrUpdateAsync(
@@ -1319,7 +1341,118 @@ namespace GamePatchKit.Runtime
                     target.PackageId);
             }
 
+            if (_trustedSigningKeys != null)
+            {
+                await VerifySignatureAsync(target, manifestBytes, cancellationToken).ConfigureAwait(false);
+            }
+
             return manifest;
+        }
+
+        // Only reachable once a trust list is configured (see the constructor). Absence is tolerated unless
+        // _requireSignature is set; anything present that is malformed, signed by a key outside the trust
+        // list, or does not cryptographically check out is always rejected, trust list or not.
+        private async Task VerifySignatureAsync(
+            TargetManifestReference target,
+            byte[] manifestBytes,
+            CancellationToken cancellationToken)
+        {
+            byte[]? signatureBytes = await ReadManifestSignatureBytesAsync(target, cancellationToken).ConfigureAwait(false);
+
+            if (signatureBytes == null)
+            {
+                if (_requireSignature)
+                {
+                    throw Failure(
+                        RuntimeErrorCodes.SignatureInvalid,
+                        "The release has no manifest signature, but a signature was required.",
+                        target.PackageId);
+                }
+
+                return;
+            }
+
+            if (!TryReadJsonObject(signatureBytes, out JObject? json)
+                || !ManifestSignature.TryParse(json!, out ManifestSignature? signature, out _)
+                || !signatureBytes.SequenceEqual(CanonicalJsonWriter.Write(signature!.ToJson())))
+            {
+                throw Failure(
+                    RuntimeErrorCodes.SignatureInvalid,
+                    "The manifest signature document is invalid.",
+                    target.PackageId);
+            }
+
+            if (!_trustedSigningKeys!.TryGetPublicKey(signature.KeyId, out byte[] publicKey)
+                || !signature.TryGetSignatureBytes(out byte[] rawSignatureBytes)
+                || !Ed25519Signatures.Verify(publicKey, manifestBytes, rawSignatureBytes))
+            {
+                throw Failure(
+                    RuntimeErrorCodes.SignatureInvalid,
+                    "The manifest signature is missing from the trusted key set or is not valid for the published manifest bytes.",
+                    target.PackageId);
+            }
+        }
+
+        // Only a transport failure the adapter positively confirms is absence (IsNotFound - a real HTTP 404,
+        // say) is tolerated as "no signature was ever published"; _requireSignature is what turns that from
+        // tolerated into a failure. Every other failure - a transient one that exhausts every retry, or a
+        // non-transient one the adapter does not confirm as not-found (401, 403, an unrecognized response) -
+        // is a genuine transport failure and must never be silently treated as evidence of an unsigned
+        // release, regardless of _requireSignature: an adapter or intermediary that can make signature
+        // requests fail for any other reason must not be able to downgrade a signed release to unsigned.
+        private async Task<byte[]?> ReadManifestSignatureBytesAsync(
+            TargetManifestReference target,
+            CancellationToken cancellationToken)
+        {
+            for (int attempt = 0; attempt < MaximumAttempts; attempt++)
+            {
+                try
+                {
+                    await using Stream source = await _transport
+                        .OpenManifestSignatureAsync(target, cancellationToken)
+                        .ConfigureAwait(false);
+
+                    using var destination = new MemoryStream();
+                    var buffer = new byte[StreamBufferSize];
+                    int read;
+
+                    while ((read = await source.ReadAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false)) > 0)
+                    {
+                        if (destination.Length + read > MaximumSignatureBytes)
+                        {
+                            throw Failure(
+                                RuntimeErrorCodes.SignatureInvalid,
+                                $"The manifest signature response exceeds the {MaximumSignatureBytes} byte limit.",
+                                target.PackageId);
+                        }
+
+                        await destination.WriteAsync(buffer, 0, read, cancellationToken).ConfigureAwait(false);
+                    }
+
+                    return destination.ToArray();
+                }
+                catch (ArtifactTransportException exception) when (exception.IsTransient && attempt + 1 < MaximumAttempts)
+                {
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (ArtifactTransportException exception) when (exception.IsNotFound)
+                {
+                    return null;
+                }
+                catch (ArtifactTransportException exception)
+                {
+                    throw Failure(
+                        RuntimeErrorCodes.TransportFailed,
+                        "Manifest signature transport failed and was not confirmed absent.",
+                        target.PackageId,
+                        innerException: exception);
+                }
+            }
+
+            return null;
         }
 
         private async Task<byte[]> ReadManifestBytesAsync(

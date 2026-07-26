@@ -6,10 +6,15 @@ namespace GamePatchKit.Runtime.Tests;
 internal sealed class FakeArtifactTransport : IArtifactTransport
 {
     private readonly Dictionary<string, byte[]> _manifests = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, byte[]> _signatures = new(StringComparer.Ordinal);
     private readonly Dictionary<string, byte[]> _artifacts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _transientFailures = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _signatureTransientFailures = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _signatureUnconfirmedFailures = new(StringComparer.Ordinal);
 
     public Dictionary<string, int> ArtifactOpenCount { get; } = new(StringComparer.Ordinal);
+
+    public Dictionary<string, int> SignatureOpenCount { get; } = new(StringComparer.Ordinal);
 
     public Action<string>? BeforeArtifactOpen { get; set; }
 
@@ -23,6 +28,11 @@ internal sealed class FakeArtifactTransport : IArtifactTransport
         _manifests[manifestHash] = bytes;
     }
 
+    public void AddSignature(string manifestHash, byte[] bytes)
+    {
+        _signatures[manifestHash] = bytes;
+    }
+
     public void AddArtifact(string path, byte[] bytes)
     {
         _artifacts[path] = bytes;
@@ -31,6 +41,18 @@ internal sealed class FakeArtifactTransport : IArtifactTransport
     public void FailTransiently(string path, int count)
     {
         _transientFailures[path] = count;
+    }
+
+    public void FailSignatureTransiently(string manifestHash, int count)
+    {
+        _signatureTransientFailures[manifestHash] = count;
+    }
+
+    // Simulates a non-transient failure that is NOT confirmed absence (e.g. a real transport's 401/403) -
+    // as opposed to "not registered" below, which simulates a confirmed 404.
+    public void FailSignatureWithUnconfirmedError(string manifestHash)
+    {
+        _signatureUnconfirmedFailures.Add(manifestHash);
     }
 
     public Task<Stream> OpenManifestAsync(
@@ -47,7 +69,32 @@ internal sealed class FakeArtifactTransport : IArtifactTransport
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult<Stream>(new MemoryStream(Array.Empty<byte>(), writable: false));
+        SignatureOpenCount.TryGetValue(target.ManifestHash, out int count);
+        SignatureOpenCount[target.ManifestHash] = count + 1;
+
+        if (_signatureTransientFailures.TryGetValue(target.ManifestHash, out int failures) && failures > 0)
+        {
+            _signatureTransientFailures[target.ManifestHash] = failures - 1;
+            throw new ArtifactTransportException("transient signature failure", isTransient: true);
+        }
+
+        if (_signatureUnconfirmedFailures.Contains(target.ManifestHash))
+        {
+            throw new ArtifactTransportException(
+                "simulated unconfirmed non-transient signature failure",
+                isTransient: false,
+                isNotFound: false);
+        }
+
+        if (!_signatures.TryGetValue(target.ManifestHash, out byte[]? bytes))
+        {
+            throw new ArtifactTransportException(
+                $"No manifest signature is registered for manifestHash '{target.ManifestHash}'.",
+                isTransient: false,
+                isNotFound: true);
+        }
+
+        return Task.FromResult<Stream>(new MemoryStream(bytes, writable: false));
     }
 
     public Task<Stream> OpenArtifactAsync(

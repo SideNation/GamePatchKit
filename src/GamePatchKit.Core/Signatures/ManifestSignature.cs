@@ -108,24 +108,68 @@ namespace GamePatchKit.Core.Signatures
             };
         }
 
-        // Convert.FromBase64String rejects non-zero trailing padding bits (FormatException), which is
-        // exactly the canonical-encoding check an unpadded base64url signature needs.
+        // The raw 64 signature bytes Signature encodes, decoded once here instead of by every verifier that
+        // consumes this model. Every instance TryParse produced decodes cleanly, since decodability is one of
+        // the things it checks; an instance built directly (not through TryParse) may not.
+        public bool TryGetSignatureBytes(out byte[] signatureBytes)
+        {
+            if (TryDecodeBase64Url(Signature, out byte[] bytes) && bytes.Length == SignatureByteLength)
+            {
+                signatureBytes = bytes;
+                return true;
+            }
+
+            signatureBytes = Array.Empty<byte>();
+            return false;
+        }
+
+        // Throws only for an instance built directly (not through TryParse) with a signature string that is
+        // not validly-encoded. An IManifestSignatureVerifier must reject rather than throw for bad signature
+        // data (see IManifestSignatureVerifier's contract), so a verifier should call TryGetSignatureBytes
+        // instead of this.
+        public byte[] GetSignatureBytes()
+        {
+            if (!TryGetSignatureBytes(out byte[] bytes))
+            {
+                throw new InvalidOperationException("This ManifestSignature instance does not hold a validly-encoded 64-byte signature.");
+            }
+
+            return bytes;
+        }
+
+        // Convert.FromBase64String does NOT reject non-zero unused bits in the final base64 group - e.g. both
+        // "AA==" and "AP==" decode to the same single zero byte, even though only "AA==" is the canonical
+        // encoding of that byte. Re-encoding the decoded bytes and comparing back to the original string is
+        // what actually enforces "there is exactly one valid encoding for these bytes", the same canonical-
+        // round-trip pattern this codebase already uses for canonical JSON bytes.
         private static bool TryDecodeBase64Url(string value, out byte[] bytes)
         {
             string base64 = value.Replace('-', '+').Replace('_', '/');
             int paddingNeeded = (4 - (base64.Length % 4)) % 4;
             base64 += new string('=', paddingNeeded);
 
+            byte[] decoded;
+
             try
             {
-                bytes = Convert.FromBase64String(base64);
-                return true;
+                decoded = Convert.FromBase64String(base64);
             }
             catch (FormatException)
             {
                 bytes = Array.Empty<byte>();
                 return false;
             }
+
+            string reencoded = Convert.ToBase64String(decoded).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+            if (reencoded != value)
+            {
+                bytes = Array.Empty<byte>();
+                return false;
+            }
+
+            bytes = decoded;
+            return true;
         }
     }
 }

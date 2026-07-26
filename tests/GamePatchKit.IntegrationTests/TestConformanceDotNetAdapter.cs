@@ -53,6 +53,13 @@ public sealed class TestConformanceDotNetAdapter : ConformanceTestBase
         await File.WriteAllBytesAsync(path, manifestBytes);
     }
 
+    protected override async Task RegisterSignatureAsync(string packageId, string manifestHash, byte[] signatureBytes)
+    {
+        string path = Path.Combine(Fixture.PublishRoot, packageId, "manifests", manifestHash, "manifest.sig");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllBytesAsync(path, signatureBytes);
+    }
+
     public override void Dispose()
     {
         foreach (HttpClient client in _httpClients)

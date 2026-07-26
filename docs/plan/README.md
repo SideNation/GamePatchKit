@@ -97,3 +97,4 @@ v1 진행 상태를 보존하며 아래 항목이 같은 단계의 최신 상태
 - [x] 08 Runtime 상태 머신
 - [x] 09 DotNet adapter·통합 테스트
 - [x] 10 adapter conformance
+- [x] 11 서명·key rotation

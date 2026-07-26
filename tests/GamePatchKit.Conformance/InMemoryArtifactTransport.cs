@@ -11,6 +11,7 @@ namespace GamePatchKit.Conformance;
 public sealed class InMemoryArtifactTransport : IArtifactTransport
 {
     private readonly Dictionary<string, byte[]> _manifests = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, byte[]> _signatures = new(StringComparer.Ordinal);
     private readonly Dictionary<string, byte[]> _artifacts = new(StringComparer.Ordinal);
 
     public void AddManifest(FinalizedManifest release)
@@ -21,6 +22,11 @@ public sealed class InMemoryArtifactTransport : IArtifactTransport
     public void AddManifest(string manifestHash, byte[] bytes)
     {
         _manifests[manifestHash] = bytes;
+    }
+
+    public void AddSignature(string manifestHash, byte[] bytes)
+    {
+        _signatures[manifestHash] = bytes;
     }
 
     public void AddArtifact(string relativePath, byte[] bytes)
@@ -48,7 +54,8 @@ public sealed class InMemoryArtifactTransport : IArtifactTransport
         {
             throw new ArtifactTransportException(
                 $"No manifest is registered for hash '{target.ManifestHash}'.",
-                isTransient: false);
+                isTransient: false,
+                isNotFound: true);
         }
 
         return Task.FromResult<Stream>(new MemoryStream(bytes, writable: false));
@@ -57,7 +64,16 @@ public sealed class InMemoryArtifactTransport : IArtifactTransport
     public Task<Stream> OpenManifestSignatureAsync(TargetManifestReference target, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult<Stream>(new MemoryStream(Array.Empty<byte>(), writable: false));
+
+        if (!_signatures.TryGetValue(target.ManifestHash, out byte[]? bytes))
+        {
+            throw new ArtifactTransportException(
+                $"No manifest signature is registered for hash '{target.ManifestHash}'.",
+                isTransient: false,
+                isNotFound: true);
+        }
+
+        return Task.FromResult<Stream>(new MemoryStream(bytes, writable: false));
     }
 
     public Task<Stream> OpenArtifactAsync(string packageId, string relativePath, CancellationToken cancellationToken)
@@ -68,7 +84,8 @@ public sealed class InMemoryArtifactTransport : IArtifactTransport
         {
             throw new ArtifactTransportException(
                 $"No artifact is registered at path '{relativePath}'.",
-                isTransient: false);
+                isTransient: false,
+                isNotFound: true);
         }
 
         return Task.FromResult<Stream>(new MemoryStream(bytes, writable: false));

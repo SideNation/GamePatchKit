@@ -31,6 +31,7 @@ public static class ExitCode
         "packager.package-id-mismatch",
         "packager.manifest-not-found",
         "packager.invalid-signing-key",
+        "packager.invalid-trusted-key",
     };
 
     private static readonly HashSet<string> _integrityErrorCodes = new HashSet<string>(StringComparer.Ordinal)

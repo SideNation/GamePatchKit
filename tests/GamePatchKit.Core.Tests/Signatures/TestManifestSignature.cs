@@ -79,6 +79,25 @@ public class TestManifestSignature
         Assert.Contains(errors, e => e.Code == ManifestSignatureErrorCodes.InvalidSignature);
     }
 
+    // Convert.FromBase64String does not reject non-zero unused bits in the final base64 group: "...PD0-Pw"
+    // (the real, canonical encoding) and "...PD0-Px" both decode to the identical 64 bytes, since only the top
+    // 2 of the last character's 6 bits carry real data and .NET ignores the other 4 rather than requiring them
+    // to be zero. Accepting the "Px" variant would mean two different manifest.sig byte sequences are both
+    // "valid" for the same signature, breaking the immutable-canonical-byte contract this format promises.
+    [Fact]
+    public void RejectsSignatureWithNonZeroUnusedPaddingBits()
+    {
+        const string nonCanonicalVariant = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0-Px";
+        var json = (JObject)JToken.Parse(ValidJson());
+        json["signature"] = nonCanonicalVariant;
+
+        bool ok = ManifestSignature.TryParse(json, out ManifestSignature? signature, out IReadOnlyList<GamePatchKitError> errors);
+
+        Assert.False(ok);
+        Assert.Null(signature);
+        Assert.Contains(errors, e => e.Code == ManifestSignatureErrorCodes.InvalidSignature);
+    }
+
     [Fact]
     public void RejectsUnknownAlgorithm()
     {

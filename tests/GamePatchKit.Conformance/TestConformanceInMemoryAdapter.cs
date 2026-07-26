@@ -39,4 +39,10 @@ public sealed class TestConformanceInMemoryAdapter : ConformanceTestBase
         _transport.AddManifest(manifestHash, manifestBytes);
         return Task.CompletedTask;
     }
+
+    protected override Task RegisterSignatureAsync(string packageId, string manifestHash, byte[] signatureBytes)
+    {
+        _transport.AddSignature(manifestHash, signatureBytes);
+        return Task.CompletedTask;
+    }
 }

@@ -288,6 +288,262 @@ public class TestPackageRuntime
     }
 
     [Fact]
+    public async Task Signature_TrustedAndValid_AllowsInstallWhenRequired()
+    {
+        FinalizedManifest release = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+        AddRelease(transport, release, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        transport.AddSignature(release.ManifestHash, SigningKeys.SignManifest(SigningKeys.PrivateKey(), release.GetCanonicalBytes()));
+        var trustedKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()) });
+        var runtime = new PackageRuntime(transport, storage, trustedSigningKeys: trustedKeys, requireSignature: true);
+
+        PackageState state = await runtime.InstallOrUpdateAsync(RuntimeFixture.Target(release));
+
+        Assert.Equal(PackageGroupStatus.Ready, Group(state, "core").Status);
+    }
+
+    [Fact]
+    public async Task Signature_MissingWithRequireSignature_IsRejected()
+    {
+        FinalizedManifest release = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+        AddRelease(transport, release, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        var trustedKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()) });
+        var runtime = new PackageRuntime(transport, storage, trustedSigningKeys: trustedKeys, requireSignature: true);
+
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => runtime.InstallOrUpdateAsync(RuntimeFixture.Target(release)));
+
+        Assert.Equal(RuntimeErrorCodes.SignatureInvalid, exception.Error.Code);
+        Assert.Null(storage.StateBytes);
+    }
+
+    [Fact]
+    public async Task Signature_MissingWithoutRequireSignature_IsToleratedWhenKeysAreOnlyOpportunisticallyTrusted()
+    {
+        FinalizedManifest release = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+        AddRelease(transport, release, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        var trustedKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()) });
+        var runtime = new PackageRuntime(transport, storage, trustedSigningKeys: trustedKeys, requireSignature: false);
+
+        PackageState state = await runtime.InstallOrUpdateAsync(RuntimeFixture.Target(release));
+
+        Assert.Equal(PackageGroupStatus.Ready, Group(state, "core").Status);
+    }
+
+    [Fact]
+    public async Task Signature_FromAnUntrustedKey_IsRejectedEvenWithoutRequireSignature()
+    {
+        FinalizedManifest release = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+        AddRelease(transport, release, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        // Signed with a key that is never added to the trust set.
+        transport.AddSignature(release.ManifestHash, SigningKeys.SignManifest(SigningKeys.OtherPrivateKey(), release.GetCanonicalBytes()));
+        var trustedKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()) });
+        var runtime = new PackageRuntime(transport, storage, trustedSigningKeys: trustedKeys, requireSignature: false);
+
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => runtime.InstallOrUpdateAsync(RuntimeFixture.Target(release)));
+
+        Assert.Equal(RuntimeErrorCodes.SignatureInvalid, exception.Error.Code);
+        Assert.Null(storage.StateBytes);
+    }
+
+    [Fact]
+    public async Task Signature_BitFlippedSignatureBytes_IsRejected()
+    {
+        FinalizedManifest release = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+        AddRelease(transport, release, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        byte[] signatureBytes = SigningKeys.RawSign(SigningKeys.PrivateKey(), release.GetCanonicalBytes());
+        signatureBytes[0] ^= 0x01;
+        transport.AddSignature(release.ManifestHash, SigningKeys.BuildSignatureDocument(SigningKeys.PrivateKey(), signatureBytes));
+        var trustedKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()) });
+        var runtime = new PackageRuntime(transport, storage, trustedSigningKeys: trustedKeys, requireSignature: true);
+
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => runtime.InstallOrUpdateAsync(RuntimeFixture.Target(release)));
+
+        Assert.Equal(RuntimeErrorCodes.SignatureInvalid, exception.Error.Code);
+    }
+
+    [Fact]
+    public async Task Signature_CorruptedDocumentBytes_IsRejected()
+    {
+        FinalizedManifest release = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+        AddRelease(transport, release, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        transport.AddSignature(release.ManifestHash, System.Text.Encoding.UTF8.GetBytes("{\"schemaVersion\":1}"));
+        var trustedKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()) });
+        var runtime = new PackageRuntime(transport, storage, trustedSigningKeys: trustedKeys, requireSignature: true);
+
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => runtime.InstallOrUpdateAsync(RuntimeFixture.Target(release)));
+
+        Assert.Equal(RuntimeErrorCodes.SignatureInvalid, exception.Error.Code);
+    }
+
+    [Fact]
+    public void Constructor_RequireSignatureWithoutTrustedKeys_Throws()
+    {
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+
+        Assert.Throws<ArgumentException>(() => new PackageRuntime(transport, storage, requireSignature: true));
+    }
+
+    [Fact]
+    public async Task Signature_TransientFailuresThenSuccess_RetriesAndVerifies()
+    {
+        FinalizedManifest release = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+        AddRelease(transport, release, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        transport.AddSignature(release.ManifestHash, SigningKeys.SignManifest(SigningKeys.PrivateKey(), release.GetCanonicalBytes()));
+        transport.FailSignatureTransiently(release.ManifestHash, count: 2);
+        var trustedKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()) });
+        var runtime = new PackageRuntime(transport, storage, trustedSigningKeys: trustedKeys, requireSignature: true);
+
+        PackageState state = await runtime.InstallOrUpdateAsync(RuntimeFixture.Target(release));
+
+        Assert.Equal(PackageGroupStatus.Ready, Group(state, "core").Status);
+        Assert.Equal(3, transport.SignatureOpenCount[release.ManifestHash]);
+    }
+
+    // Documents the current, deliberate behavior rather than leaving it as an untested side effect: a transient
+    // failure fetching the signature that exhausts every retry is treated exactly like "no signature exists"
+    // (tolerated when not required, rejected when required) rather than surfacing as a distinct transport
+    // failure - the same conflation already covered by Signature_MissingWithoutRequireSignature_IsTolerated...
+    // and Signature_MissingWithRequireSignature_IsRejected for a signature that was simply never registered.
+    [Fact]
+    public async Task Signature_TransientFailuresExhausted_IsAHardTransportFailureNotAnAbsence()
+    {
+        FinalizedManifest release = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+        AddRelease(transport, release, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        transport.AddSignature(release.ManifestHash, SigningKeys.SignManifest(SigningKeys.PrivateKey(), release.GetCanonicalBytes()));
+        transport.FailSignatureTransiently(release.ManifestHash, count: 3);
+        var trustedKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()) });
+        // requireSignature: false on purpose - every retryable attempt failed transiently, which is never a
+        // "this release was never signed" signal, so this must be a hard failure even when a signature is not
+        // otherwise required. Only a confirmed-absent failure (IsNotFound) is tolerated.
+        var runtime = new PackageRuntime(transport, storage, trustedSigningKeys: trustedKeys, requireSignature: false);
+
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => runtime.InstallOrUpdateAsync(RuntimeFixture.Target(release)));
+
+        Assert.Equal(RuntimeErrorCodes.TransportFailed, exception.Error.Code);
+        Assert.Equal(3, transport.SignatureOpenCount[release.ManifestHash]);
+    }
+
+    [Fact]
+    public async Task Signature_NonTransientFailureNotConfirmedAbsent_IsAHardFailureEvenWithoutRequireSignature()
+    {
+        FinalizedManifest release = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+        AddRelease(transport, release, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        transport.AddSignature(release.ManifestHash, SigningKeys.SignManifest(SigningKeys.PrivateKey(), release.GetCanonicalBytes()));
+        // Simulates a real transport returning something other than a confirmed 404 (e.g. 401/403) while
+        // fetching manifest.sig - the transport contract does not let this be told apart from "briefly
+        // unreachable", so it must never be silently accepted as "this release was never signed".
+        transport.FailSignatureWithUnconfirmedError(release.ManifestHash);
+        var trustedKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()) });
+        var runtime = new PackageRuntime(transport, storage, trustedSigningKeys: trustedKeys, requireSignature: false);
+
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => runtime.InstallOrUpdateAsync(RuntimeFixture.Target(release)));
+
+        Assert.Equal(RuntimeErrorCodes.TransportFailed, exception.Error.Code);
+    }
+
+    [Fact]
+    public async Task Signature_OversizedResponse_IsRejectedForItsSizeNotJustAsMalformed()
+    {
+        FinalizedManifest release = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+        AddRelease(transport, release, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        transport.AddSignature(release.ManifestHash, new byte[5000]);
+        var trustedKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()) });
+        var runtime = new PackageRuntime(transport, storage, trustedSigningKeys: trustedKeys, requireSignature: true);
+
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => runtime.InstallOrUpdateAsync(RuntimeFixture.Target(release)));
+
+        Assert.Equal(RuntimeErrorCodes.SignatureInvalid, exception.Error.Code);
+        // A 5000-byte array of zero bytes would also fail to parse as JSON, so asserting only the error code
+        // would pass even if the byte-limit check were removed entirely (it would just fail at the "document
+        // is invalid" check instead). Pinning the byte-limit message is what actually proves the size check ran.
+        Assert.Contains("byte limit", exception.Error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Signature_TamperedAfterInitialInstall_IsCaughtOnOptionalGroupReVerification()
+    {
+        FinalizedManifest release = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        var storage = new FakeRuntimeStorage();
+        AddRelease(transport, release, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        transport.AddSignature(release.ManifestHash, SigningKeys.SignManifest(SigningKeys.PrivateKey(), release.GetCanonicalBytes()));
+        var trustedKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()) });
+        var runtime = new PackageRuntime(transport, storage, trustedSigningKeys: trustedKeys, requireSignature: true);
+        await runtime.InstallOrUpdateAsync(RuntimeFixture.Target(release));
+
+        // Replaces the now-active release's signature with a tampered one, as if the key had been compromised
+        // and the trust relationship revoked after this release was already installed. InstallOptionalGroupsAsync
+        // re-fetches and re-validates the currently active manifest (including its signature) before planning,
+        // rather than trusting the locally cached state - proving that path is not a signature-check bypass.
+        byte[] tampered = SigningKeys.RawSign(SigningKeys.PrivateKey(), release.GetCanonicalBytes());
+        tampered[0] ^= 0x01;
+        transport.AddSignature(release.ManifestHash, SigningKeys.BuildSignatureDocument(SigningKeys.PrivateKey(), tampered));
+
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => runtime.InstallOptionalGroupsAsync(release.Manifest.PackageId, new[] { "maps" }));
+
+        Assert.Equal(RuntimeErrorCodes.SignatureInvalid, exception.Error.Code);
+    }
+
+    [Fact]
+    public async Task Signature_KeyRotation_OldKeyReleaseRejectedOnceRemovedFromTrustButNewKeyReleaseAccepted()
+    {
+        FinalizedManifest oldRelease = RuntimeFixture.CreateRelease();
+        var transport = new FakeArtifactTransport();
+        AddRelease(transport, oldRelease, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        transport.AddSignature(oldRelease.ManifestHash, SigningKeys.SignManifest(SigningKeys.PrivateKey(), oldRelease.GetCanonicalBytes()));
+
+        // Rotation window: both old and new key are trusted, and the old-key release still installs.
+        var rotationWindowKeys = new TrustedSigningKeys(
+            new[] { SigningKeys.PublicKey(SigningKeys.PrivateKey()), SigningKeys.PublicKey(SigningKeys.OtherPrivateKey()) });
+        var duringRotation = new PackageRuntime(transport, new FakeRuntimeStorage(), trustedSigningKeys: rotationWindowKeys, requireSignature: true);
+        PackageState duringRotationState = await duringRotation.InstallOrUpdateAsync(RuntimeFixture.Target(oldRelease));
+        Assert.Equal(PackageGroupStatus.Ready, Group(duringRotationState, "core").Status);
+
+        // A new release signed with the new key, after the old key has been removed from the trust list.
+        FinalizedManifest newRelease = RuntimeFixture.CreateRelease(compactVersion: 1);
+        AddRelease(transport, newRelease, RuntimeFixture.CoreBytes, RuntimeFixture.MapsBytes);
+        transport.AddSignature(newRelease.ManifestHash, SigningKeys.SignManifest(SigningKeys.OtherPrivateKey(), newRelease.GetCanonicalBytes()));
+        var afterRotationKeys = new TrustedSigningKeys(new[] { SigningKeys.PublicKey(SigningKeys.OtherPrivateKey()) });
+
+        var afterRotationForOldRelease = new PackageRuntime(transport, new FakeRuntimeStorage(), trustedSigningKeys: afterRotationKeys, requireSignature: true);
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => afterRotationForOldRelease.InstallOrUpdateAsync(RuntimeFixture.Target(oldRelease)));
+        Assert.Equal(RuntimeErrorCodes.SignatureInvalid, exception.Error.Code);
+
+        var afterRotationForNewRelease = new PackageRuntime(transport, new FakeRuntimeStorage(), trustedSigningKeys: afterRotationKeys, requireSignature: true);
+        PackageState afterRotationState = await afterRotationForNewRelease.InstallOrUpdateAsync(RuntimeFixture.Target(newRelease));
+        Assert.Equal(PackageGroupStatus.Ready, Group(afterRotationState, "core").Status);
+    }
+
+    [Fact]
     public async Task CorruptCacheObjectIsDownloadedAgain()
     {
         FinalizedManifest release = RuntimeFixture.CreateRelease();

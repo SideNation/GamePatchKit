@@ -11,11 +11,24 @@ Usage:
     python3 generate_golden_vectors.py --check     # verifies without writing; exits 1 on mismatch
 """
 
+import base64
+import hashlib
 import os
 import sys
 
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
 sys.path.insert(0, os.path.dirname(__file__))
 from jcs import canonical_bytes, sha256_hex
+
+# Fixed test signing key for the golden vectors (step 11): the same private bytes
+# tests/GamePatchKit.Packager.Tests/SigningKeys.cs uses, so the whole test suite shares one
+# canonical Ed25519 test key rather than each fixture set minting its own. Never used to sign
+# anything published - the private bytes being derivable from this script is deliberate.
+SIGNING_PRIVATE_KEY = ed25519.Ed25519PrivateKey.from_private_bytes(bytes(range(1, 33)))
+SIGNING_PUBLIC_KEY = SIGNING_PRIVATE_KEY.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+SIGNING_KEY_ID = "ed25519-" + hashlib.sha256(SIGNING_PUBLIC_KEY).hexdigest()
 
 HASH_A = "30fdb670837e4a2ae265f0ba5bf332a6c80930274f43b7e3cf799b637eaff1c6"
 HASH_B = "cd43d82673a50ede733a204a3db6997dd349fb9963ee34950682433e97b1b512"
@@ -222,6 +235,10 @@ VECTORS = {
 }
 
 
+def base64url_no_pad(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
 def build_vector(builder):
     manifest = builder()
     identity = identity_of(manifest)
@@ -233,11 +250,25 @@ def build_vector(builder):
     manifest_bytes = canonical_bytes(manifest)
     manifest_hash = sha256_hex(manifest_bytes)
 
+    # Signs the same canonical manifest bytes manifestHash is taken over - the step 11 contract
+    # for what a manifest.sig covers.
+    signature = SIGNING_PRIVATE_KEY.sign(manifest_bytes)
+    signature_doc = {
+        "schemaVersion": 1,
+        "algorithm": "Ed25519",
+        "keyId": SIGNING_KEY_ID,
+        "signature": base64url_no_pad(signature),
+    }
+    signature_bytes = canonical_bytes(signature_doc)
+
     return {
         "manifest.canonical.json": manifest_bytes,
         "manifest-hash.txt": manifest_hash.encode("ascii"),
         "identity.canonical.json": identity_bytes,
         "data-version.txt": data_version.encode("ascii"),
+        "public-key.bin": SIGNING_PUBLIC_KEY,
+        "key-id.txt": SIGNING_KEY_ID.encode("ascii"),
+        "manifest-sig.canonical.json": signature_bytes,
     }
 
 

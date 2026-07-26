@@ -52,6 +52,7 @@ public sealed class TestConformanceMyAdapter : ConformanceTestBase
     protected override IRuntimeStorage CreateIsolatedStorage() { /* ... */ }
     protected override void RegisterRelease(FinalizedManifest release) { /* ... */ }
     protected override Task RegisterRawManifestAsync(string packageId, string manifestHash, byte[] manifestBytes) { /* ... */ }
+    protected override Task RegisterSignatureAsync(string packageId, string manifestHash, byte[] signatureBytes) { /* ... */ }
 }
 ```
 
@@ -64,6 +65,10 @@ public sealed class TestConformanceMyAdapter : ConformanceTestBase
   쓰인다.
 - `RegisterRelease`는 방금 publish한 release를 transport가 인식하게 만든다.
   DotNet adapter처럼 매 요청마다 publish tree를 직접 읽는 adapter라면 no-op이다.
+- `RegisterSignatureAsync`는 `manifest.sig` canonical byte를 `OpenManifestSignatureAsync`가
+  찾을 경로에 놓는다(11단계 signed 시나리오 전용). in-memory adapter는
+  `manifestHash` 기준 dictionary에, DotNet adapter는
+  `<packageId>/manifests/<manifestHash>/manifest.sig` 파일로 놓는다.
 
 ## 검증 항목 매핑
 
@@ -79,6 +84,7 @@ public sealed class TestConformanceMyAdapter : ConformanceTestBase
 | package writer 직렬화 | `WriterLock_TwoConcurrentCallers_NeverHeldSimultaneously` |
 | file·bundle·part·압축 조합 | `BundleGroupWithZstdCompression_*`, `MultipartFile_*` |
 | 25 (unsigned 범위: 잘못된 kind·참조·순서·중복·미참조 거부) | `UnsignedInvalidManifestFixture_IsRejected`(theory) |
+| 11, 25 (signed 범위: 신뢰 key 검증·손상 signature·알 수 없는 key ID·서명 필수 모드의 누락 거부) | `SignedRelease_TrustedAndValid_InstallSucceedsWhenRequired`, `SignedRelease_MissingSignatureWithRequireSignature_IsRejected`, `SignedRelease_FromAnUntrustedKey_IsRejectedEvenWithoutRequireSignature`, `SignedRelease_CorruptedSignatureBytes_IsRejected` |
 
 manifestHash 자체의 검증(변조된 hash 거부)은 이 suite에서 별도로 반복하지 않는다
 — adapter와 무관한 Runtime 내부 로직이며 `GamePatchKit.Runtime.Tests`의
@@ -119,8 +125,19 @@ discriminator)는 재직렬화할 `ReleaseManifest`가 없으므로 raw byte 그
 
 ## 서명된 fixture
 
-signed fixture와 signature 검증 case는 11단계(서명·key rotation)에서 이 suite의
-extension으로 추가한다. 지금은 unsigned 범위만 다룬다.
+11단계(서명·key rotation)에서 signed 시나리오 4개를 이 suite의 extension으로
+추가했다: 신뢰 key로 검증되는 유효 서명, `--require-signature` 상당(runtime의
+`requireSignature: true`) 상태에서 서명 누락 거부, 신뢰 목록에 없는 key로 서명된
+release 거부(`requireSignature` 여부와 무관), bit-flip으로 손상된 서명 byte
+거부. 테스트 키는 `ConformanceTestBase`에 고정된 32-byte 값이며(다른 프로젝트의
+`SigningKeys.cs`와 같은 패턴) 실제로 아무것도 서명한 적이 없다.
+
+golden vector의 `manifest-sig.canonical.json`(Python `cryptography`로 서명,
+BouncyCastle이 아닌 다른 구현)까지 재사용하지는 않는다 - Core의
+`Ed25519Signatures.Verify`가 두 adapter의 검증 경로가 공유하는 유일한 구현이므로,
+그 함수 자체의 정확성은 `GamePatchKit.Core.Tests`의 golden vector·RFC 8032 테스트가
+이미 증명하고, 이 suite는 Runtime이 그 함수를 올바른 지점(trusted key 조회, 누락·
+필수 모드 판단)에서 올바르게 호출하는지만 증명하면 된다.
 
 ## 관련 파일
 

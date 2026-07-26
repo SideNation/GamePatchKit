@@ -10,8 +10,17 @@ internal static class VerifyCommand
         string outputRoot = args.GetRequired("output-root");
         string packageId = args.GetRequired("package-id");
         string manifestHash = args.GetRequired("manifest-hash");
+        IReadOnlyList<string> trustedKeys = args.GetAll("trusted-key");
+        bool requireSignature = args.GetFlag("require-signature");
         args.GetFlag("json");
         args.EnsureNoUnreadOptions();
+
+        // No trusted keys means no verifier: the reported signature.state says exactly what was and was not
+        // checked rather than a --require-signature option pretending to gate on signing while only checking
+        // that a file exists.
+        IManifestSignatureVerifier? signatureVerifier = trustedKeys.Count == 0
+            ? null
+            : TrustedKeySignatureVerifier.FromBase64UrlPublicKeys(trustedKeys);
 
         var timings = new StageTimings();
 
@@ -20,14 +29,10 @@ internal static class VerifyCommand
             () => ReleaseManifestReader.ReadPublishedBytesAsync(outputRoot, packageId, manifestHash, cancellationToken))
             .ConfigureAwait(false);
 
-        // No signature verifier and therefore no --require-signature: until step 11 supplies primitive
-        // verification and a trusted-key set, the CLI cannot tell a real signature from a forged one, and an
-        // option that claims to gate on signing while only checking that a file exists is worse than no
-        // option at all. The reported signature.state says exactly what was and was not checked.
         ReleaseVerifyReport report = await timings.MeasureAsync(
             "verify",
             () => new ReleaseVerifier().VerifyAsync(
-                new ReleaseVerifyRequest(outputRoot, packageId, manifestHash, manifestBytes),
+                new ReleaseVerifyRequest(outputRoot, packageId, manifestHash, manifestBytes, signatureVerifier, requireSignature),
                 cancellationToken)).ConfigureAwait(false);
 
         return new CommandOutcome(BuildResult(report, timings), BuildTextLines(report, timings));
@@ -37,9 +42,10 @@ internal static class VerifyCommand
     {
         var signature = new JObject
         {
-            // absent | present. 'present' means a valid signature document was found and nothing more - the
-            // 64 bytes were not checked against any key, so it is not evidence the release was signed by
-            // anyone. 'verified' becomes reachable when step 11 supplies primitive verification.
+            // absent | present | verified. 'present' means a valid signature document was found but no
+            // '--trusted-key' was given, so the 64 bytes were not checked against any key and this is not
+            // evidence the release was signed by anyone. 'verified' means a '--trusted-key' matched the
+            // signature's keyId and the bytes checked out cryptographically.
             ["state"] = report.SignatureState.ToString().ToLowerInvariant(),
         };
 

@@ -31,4 +31,6 @@ public static class PackageErrorCodes
     public const string InvalidSignature = "packager.invalid-signature";
 
     public const string InvalidSigningKey = "packager.invalid-signing-key";
+
+    public const string InvalidTrustedKey = "packager.invalid-trusted-key";
 }

@@ -2,7 +2,10 @@ using System.Security.Cryptography;
 using GamePatchKit.Compression.NativeCompressions;
 using GamePatchKit.Core;
 using GamePatchKit.Core.Configuration;
+using GamePatchKit.Core.Json;
 using GamePatchKit.Core.Manifests;
+using GamePatchKit.Core.Signatures;
+using GamePatchKit.Packager;
 using GamePatchKit.Runtime;
 using Newtonsoft.Json.Linq;
 
@@ -44,14 +47,27 @@ public abstract class ConformanceTestBase : IDisposable
     // scenario, which feeds hand-authored invalid fixtures through the real adapter pipeline.
     protected abstract Task RegisterRawManifestAsync(string packageId, string manifestHash, byte[] manifestBytes);
 
+    // Makes a manifest.sig document reachable at the path OpenManifestSignatureAsync will request for
+    // manifestHash - the signed-extension counterpart to RegisterRawManifestAsync.
+    protected abstract Task RegisterSignatureAsync(string packageId, string manifestHash, byte[] signatureBytes);
+
     public virtual void Dispose()
     {
         Fixture.Dispose();
     }
 
-    protected static PackageRuntime CreateRuntime(IArtifactTransport transport, IRuntimeStorage storage)
+    protected static PackageRuntime CreateRuntime(
+        IArtifactTransport transport,
+        IRuntimeStorage storage,
+        TrustedSigningKeys? trustedSigningKeys = null,
+        bool requireSignature = false)
     {
-        return new PackageRuntime(transport, storage, new[] { ZstdCompressionCodecFactory.Create() });
+        return new PackageRuntime(
+            transport,
+            storage,
+            new[] { ZstdCompressionCodecFactory.Create() },
+            trustedSigningKeys,
+            requireSignature);
     }
 
     protected static TargetManifestReference Target(FinalizedManifest release)
@@ -446,6 +462,99 @@ public abstract class ConformanceTestBase : IDisposable
         RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
             () => runtime.InstallOrUpdateAsync(target));
         Assert.Equal(RuntimeErrorCodes.ManifestInvalid, exception.Error.Code);
+    }
+
+    // Fixed test keys, never used to sign anything published - same pattern as
+    // tests/GamePatchKit.Packager.Tests/SigningKeys.cs, kept local since it is only 32 bytes each.
+    private static readonly byte[] _testPrivateKey = Enumerable.Range(1, 32).Select(value => (byte)value).ToArray();
+    private static readonly byte[] _otherTestPrivateKey = Enumerable.Range(1, 32).Select(value => (byte)(value + 100)).ToArray();
+
+    [Fact]
+    public async Task SignedRelease_TrustedAndValid_InstallSucceedsWhenRequired()
+    {
+        Fixture.WriteSource("core/data.bin", "core-v1");
+        FinalizedManifest release = await Fixture.PublishAsync(new[] { Fixture.Group("core", required: true) });
+        RegisterRelease(release);
+        var signer = new Ed25519ManifestSigner(_testPrivateKey);
+        await RegisterSignatureAsync(
+            release.Manifest.PackageId,
+            release.ManifestHash,
+            BuildSignatureDocument(signer, release.GetCanonicalBytes()));
+        var trustedKeys = new TrustedSigningKeys(new[] { signer.GetPublicKey() });
+        PackageRuntime runtime = CreateRuntime(CreateTransport(), CreateStorage(), trustedKeys, requireSignature: true);
+
+        PackageState state = await runtime.InstallOrUpdateAsync(Target(release));
+
+        Assert.Equal(PackageGroupStatus.Ready, state.Groups.Single(group => group.Name == "core").Status);
+    }
+
+    [Fact]
+    public async Task SignedRelease_MissingSignatureWithRequireSignature_IsRejected()
+    {
+        Fixture.WriteSource("core/data.bin", "core-v1");
+        FinalizedManifest release = await Fixture.PublishAsync(new[] { Fixture.Group("core", required: true) });
+        RegisterRelease(release);
+        var trustedKeys = new TrustedSigningKeys(new[] { new Ed25519ManifestSigner(_testPrivateKey).GetPublicKey() });
+        PackageRuntime runtime = CreateRuntime(CreateTransport(), CreateStorage(), trustedKeys, requireSignature: true);
+
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => runtime.InstallOrUpdateAsync(Target(release)));
+
+        Assert.Equal(RuntimeErrorCodes.SignatureInvalid, exception.Error.Code);
+    }
+
+    [Fact]
+    public async Task SignedRelease_FromAnUntrustedKey_IsRejectedEvenWithoutRequireSignature()
+    {
+        Fixture.WriteSource("core/data.bin", "core-v1");
+        FinalizedManifest release = await Fixture.PublishAsync(new[] { Fixture.Group("core", required: true) });
+        RegisterRelease(release);
+        var untrustedSigner = new Ed25519ManifestSigner(_otherTestPrivateKey);
+        await RegisterSignatureAsync(
+            release.Manifest.PackageId,
+            release.ManifestHash,
+            BuildSignatureDocument(untrustedSigner, release.GetCanonicalBytes()));
+        var trustedKeys = new TrustedSigningKeys(new[] { new Ed25519ManifestSigner(_testPrivateKey).GetPublicKey() });
+        PackageRuntime runtime = CreateRuntime(CreateTransport(), CreateStorage(), trustedKeys, requireSignature: false);
+
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => runtime.InstallOrUpdateAsync(Target(release)));
+
+        Assert.Equal(RuntimeErrorCodes.SignatureInvalid, exception.Error.Code);
+    }
+
+    [Fact]
+    public async Task SignedRelease_CorruptedSignatureBytes_IsRejected()
+    {
+        Fixture.WriteSource("core/data.bin", "core-v1");
+        FinalizedManifest release = await Fixture.PublishAsync(new[] { Fixture.Group("core", required: true) });
+        RegisterRelease(release);
+        var signer = new Ed25519ManifestSigner(_testPrivateKey);
+        byte[] signatureBytes = signer.Sign(release.GetCanonicalBytes());
+        signatureBytes[0] ^= 0x01;
+        await RegisterSignatureAsync(
+            release.Manifest.PackageId,
+            release.ManifestHash,
+            BuildSignatureDocument(signer.KeyId, signatureBytes));
+        var trustedKeys = new TrustedSigningKeys(new[] { signer.GetPublicKey() });
+        PackageRuntime runtime = CreateRuntime(CreateTransport(), CreateStorage(), trustedKeys, requireSignature: true);
+
+        RuntimeException exception = await Assert.ThrowsAsync<RuntimeException>(
+            () => runtime.InstallOrUpdateAsync(Target(release)));
+
+        Assert.Equal(RuntimeErrorCodes.SignatureInvalid, exception.Error.Code);
+    }
+
+    private static byte[] BuildSignatureDocument(Ed25519ManifestSigner signer, byte[] manifestBytes)
+    {
+        return BuildSignatureDocument(signer.KeyId, signer.Sign(manifestBytes));
+    }
+
+    private static byte[] BuildSignatureDocument(string keyId, byte[] signatureBytes)
+    {
+        string base64UrlSignature = Convert.ToBase64String(signatureBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var signature = new ManifestSignature(ManifestSignature.SupportedSchemaVersion, ManifestSignature.SupportedAlgorithm, keyId, base64UrlSignature);
+        return CanonicalJsonWriter.Write(signature.ToJson());
     }
 
     private static byte[] ReadEmbeddedResource(string resourceName)

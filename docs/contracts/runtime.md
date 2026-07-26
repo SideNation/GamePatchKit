@@ -73,6 +73,10 @@ Runtime은 staging 전에 다음 순서로 target을 검증한다.
 4. target `packageId`·`dataVersion`과 manifest 값을 비교하고 `dataVersion`을
    재계산한다.
 5. 선택 group이 요구하는 모든 compression codec이 주입됐는지 확인한다.
+6. `PackageRuntime` 생성자에 `TrustedSigningKeys`를 넘겼으면(11단계)
+   `OpenManifestSignatureAsync`로 `manifest.sig`를 받아 검증한다 — 아래 "서명
+   검증" 참고. 넘기지 않았으면 이 단계는 완전히 건너뛰고 signature stream을
+   열지도 않는다(08단계 기본 동작과 동일).
 
 0단계가 필요한 이유는 manifest만 통째로 메모리에 올라가는 유일한 응답이기 때문이다.
 hash로 거부하려면 먼저 다 읽어야 하므로, 상한이 없으면 고장났거나 악의적인 endpoint가
@@ -81,8 +85,58 @@ hash로 거부하려면 먼저 다 읽어야 하므로, 상한이 없으면 고�
 fixture(1만 파일·1GiB source)의 canonical manifest보다 약 한 자릿수 크고 peak RSS 예산
 512 MiB보다 충분히 작다.
 
-`OpenManifestSignatureAsync`는 11단계 signature/key rotation 연결 지점이다. 현재
-08단계 Runtime은 signature stream을 열거나 검증하지 않는다.
+## 서명 검증 (11단계)
+
+`TrustedSigningKeys`는 신뢰하는 raw Ed25519 public key 집합을 key ID(`ed25519-<hex64>`,
+`GamePatchKit.Core.Signatures.Ed25519Signatures.DeriveKeyId`로 파생)로 색인한다. key
+rotation 기간에는 구·신 key를 동시에 담아 생성자에 넘기면 된다.
+
+```csharp
+var trustedKeys = new TrustedSigningKeys(new[] { oldPublicKey, newPublicKey });
+var runtime = new PackageRuntime(
+    transport,
+    storage,
+    new[] { zstdCodec },
+    trustedSigningKeys: trustedKeys,
+    requireSignature: true);
+```
+
+- `trustedSigningKeys`가 `null`이면(기본값) signature를 아예 확인하지 않는다.
+- `trustedSigningKeys`가 있고 `requireSignature`가 `false`면: signature가 없으면
+  통과시키고(unsigned release 허용), signature가 있으면 반드시 신뢰 key로
+  검증돼야 한다 — 존재하는데 검증 실패하거나 key ID가 신뢰 목록에 없으면 언제나
+  거부한다.
+- `requireSignature`가 `true`면 signature 누락도 거부한다.
+- `requireSignature: true`인데 `trustedSigningKeys`가 없으면 생성자가
+  `ArgumentException`을 던진다 — 검증 수단 없이 "필수"만 요구하면 위조와 진짜
+  서명을 구분할 수 없기 때문이다(Packager `ReleaseVerifyRequest`와 동일한 규칙).
+- signature 응답은 최대 4 KiB까지만 읽는다. 이를 넘거나, 문서가 canonical JSON이
+  아니거나, `keyId`가 신뢰 목록에 없거나, 64-byte 서명이 검증에 실패하면 모두
+  `runtime.signature-invalid`로 거부한다.
+- signature를 가져오는 transport 호출이 실패하면, `ArtifactTransportException.
+  IsNotFound`가 `true`인 경우(adapter가 "확인된 not-found"라고 명시한 경우,
+  예: 실제 HTTP 404)만 "signature 없음"과 동일하게 취급한다 - manifest·artifact의
+  그것과 달리 signature 부재는 정상적인 unsigned release일 수 있으므로,
+  있고-없음의 판단은 전적으로 `requireSignature`가 맡는다. 그 외 모든 실패 —
+  재시도 가능한(transient) 실패가 소진된 경우든, "확인되지 않은" non-transient
+  실패(401·403처럼 서버·프록시가 다른 이유로 4xx/5xx를 돌려주는 경우)든 —
+  는 `requireSignature`와 무관하게 항상 `runtime.transport-failed`로 거부한다.
+  signature 요청에 지속적으로 실패를 돌려줄 수 있는 공격자나 오동작하는 중간
+  장비가 있어도, 그 실패가 진짜 not-found로 확인되지 않는 한 실제로 서명된
+  release를 조용히 unsigned로 넘길 수 없다는 뜻이다.
+
+  `IArtifactTransport`를 구현하는 모든 adapter(외부 host 포함)는 `IsTransient`를
+  정확히 분류해야 하는 것과 같은 수준으로, **`IsNotFound`는 "이 리소스가 존재하지
+  않는다고 확인됐을 때"에만 `true`로 설정해야 한다** — 확실하지 않으면 기본값
+  `false`를 그대로 둬야 한다(잘못 `true`로 설정하면 실제로 서명된 release가
+  unsigned로 취급될 수 있다). `HttpArtifactTransport`는 HTTP 404만 `IsNotFound:
+  true`로 표시하고 401/403/410을 포함한 다른 모든 4xx/5xx는 `false`로 둔다
+  (`TestHttpArtifactTransport.OpenArtifactAsync_NotFound_IsConfirmedAbsence`/
+  `OpenArtifactAsync_OtherPermanentClientErrors_AreNotConfirmedAbsence`).
+- 검증은 `ReleaseIdentity.ComputeCanonicalBytes`로 이미 확인한 canonical manifest
+  byte(= `manifestHash`가 가리키는 그 byte)를 대상으로 하며, Core의
+  `Ed25519Signatures.Verify`(BouncyCastle Ed25519, netstandard2.1)가 Packager의
+  서명(`Ed25519ManifestSigner`, 동일 BouncyCastle 구현)과 같은 primitive를 쓴다.
 
 cache object와 installation 파일 비교도 manifest가 선언한 크기까지만 읽고 한 byte를 더
 확인해 초과 여부를 판단한다. EOF까지 다 읽고 나서 크기를 비교하면, 손상돼 커진 cache 항목이나
@@ -161,6 +215,12 @@ release를 추정하지 않는다.
 - 경로는 검증된 manifest의 content-addressed 상대 경로 그대로 전달된다.
 - 재시도 가능한 전송 실패는 `ArtifactTransportException(IsTransient: true)`로
   보고한다. Runtime은 최대 3회 시도하며 cancellation은 재시도하지 않는다.
+- `OpenManifestSignatureAsync`가 확인된 not-found(리소스가 존재하지 않는다고
+  확실할 때, 예: 실제 HTTP 404)를 보고할 때만 `ArtifactTransportException(
+  IsNotFound: true)`를 쓴다. 확실하지 않으면 기본값 `false`를 유지한다 — 잘못
+  `true`로 설정하면 실제로 서명된 release가 signature 검증 없이 unsigned로
+  넘어갈 수 있다(11단계, "서명 검증" 참고). `OpenManifestAsync`·`OpenArtifactAsync`는
+  이 값을 Runtime이 읽지 않지만, 일관성을 위해 같은 규칙을 따르는 것을 권장한다.
 
 ### `IRuntimeStorage`
 
@@ -226,6 +286,7 @@ installation을 재사용한다.
 | 코드 | 의미 |
 | --- | --- |
 | `runtime.manifest-invalid` | manifest hash, canonical/schema/identity/참조 검증 실패 |
+| `runtime.signature-invalid` | signature 누락(필수 모드)·문서 손상·알 수 없는 key ID·서명 검증 실패 |
 | `runtime.state-invalid` | state schema·불변 조건·installation 참조 또는 revision 상한 위반 |
 | `runtime.state-conflict` | 세 번의 activation 시도 모두 concurrent revision과 충돌 |
 | `runtime.artifact-corrupted` | 전송·cache object, 압축 해제·bundle 또는 복원 file 검증 실패 |
@@ -242,3 +303,4 @@ installation을 재사용한다.
 - [PackageStateValidator.cs](../../src/GamePatchKit.Runtime/PackageStateValidator.cs)
 - [IArtifactTransport.cs](../../src/GamePatchKit.Runtime/IArtifactTransport.cs)
 - [IRuntimeStorage.cs](../../src/GamePatchKit.Runtime/IRuntimeStorage.cs)
+- [TrustedSigningKeys.cs](../../src/GamePatchKit.Runtime/TrustedSigningKeys.cs)

@@ -11,7 +11,7 @@
 | code | 의미 | 예 |
 | --- | --- | --- |
 | `0` | 성공 | compact no-op을 포함한 모든 정상 종료 |
-| `1` | 입력 오류 | 잘못된 인자, `gamepatchkit.yml` 규칙 위반, schema·모델 오류, 없는 `manifestHash`, 잘못된 서명 키 |
+| `1` | 입력 오류 | 잘못된 인자, `gamepatchkit.yml` 규칙 위반, schema·모델 오류, 없는 `manifestHash`, 잘못된 서명 키·신뢰 key |
 | `2` | 무결성 오류 | `manifestHash` 불일치, 손상된 artifact object, 불변 경로 byte 충돌 |
 | `3` | 실행 실패 | 실행 중 source 변경, codec 누락, I/O 실패, 취소 |
 
@@ -72,7 +72,8 @@ gpk diff --output-root publish --package-id <id> --from <manifestHash> --to <man
 ### `verify`
 
 ```bash
-gpk verify --output-root publish --package-id <id> --manifest-hash <hex64> [--json]
+gpk verify --output-root publish --package-id <id> --manifest-hash <hex64> \
+  [--trusted-key <base64url-public-key> ...] [--require-signature] [--json]
 ```
 
 schema → Core 의미·참조 무결성 → 실제 artifact byte → signature document 순서로 검증한다.
@@ -81,14 +82,19 @@ schema → Core 의미·참조 무결성 → 실제 artifact byte → signature 
 | 값 | 의미 |
 | --- | --- |
 | `absent` | `manifest.sig`가 없다 |
-| `present` | `manifest.sig`가 schema·모델·canonical byte 검증을 통과했다. signature byte는 어떤 key와도 대조하지 않았다 |
-| `verified` | 주입된 verifier가 서명을 검증했다(11 단계) |
+| `present` | `manifest.sig`가 schema·모델·canonical byte 검증을 통과했지만 `--trusted-key`가 없어 signature byte를 어떤 key와도 대조하지 않았다 |
+| `verified` | `--trusted-key`로 준 raw public key 중 하나가 signature의 `keyId`와 일치하고 서명이 실제로 검증됐다(11 단계, `TrustedKeySignatureVerifier`) |
 
 **`present`는 서명 증거가 아니다.** 형식만 맞는 `keyId`와 아무 64 byte면 이 상태에 도달하므로
-"서명된 release만 배포" 게이트로 쓸 수 없다. 07의 CLI가 서명 필수 option을 제공하지 않는
-이유도 같다. 신뢰 키 집합과 signature primitive 검증이 들어오는 11 단계에서 `verified`를
-요구하는 option과 함께 추가한다. Packager API의
-`ReleaseVerifyRequest.RequireSignature`는 `SignatureVerifier` 없이 지정하면 거부한다.
+"서명된 release만 배포" 게이트로 쓸 수 없다. `--trusted-key`를 하나 이상 주면 이 명령은
+`Ed25519Signatures.Verify`(Core, BouncyCastle Ed25519)로 실제 서명 byte를 검증한다.
+`--trusted-key`는 반복 가능해 key rotation 기간에 구·신 key를 동시에 줄 수 있다.
+
+`--require-signature`는 signature 누락도 실패로 만든다. `--trusted-key` 없이 주면
+`cli.invalid-arguments`로 거부한다 — 검증 수단 없이 "필수"만 요구하면 위조된
+`manifest.sig`와 진짜 서명을 구분할 수 없기 때문이다. `--trusted-key`가 있으면
+signature가 있는데 알 수 없는 `keyId`이거나 서명이 검증되지 않아도 항상 실패한다
+(`--require-signature` 여부와 무관).
 
 ### `compact`
 

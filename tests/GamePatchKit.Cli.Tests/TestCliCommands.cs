@@ -8,6 +8,13 @@ public class TestCliCommands
     // Any 32 bytes are a valid Ed25519 private key; this one is fixed so the derived keyId is stable.
     private const string TestPrivateKeyBase64Url = "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA";
 
+    // The raw public key paired with TestPrivateKeyBase64Url, unpadded base64url - what a '--trusted-key'
+    // argument looks like.
+    private const string TestPublicKeyBase64Url = "ebVWLo_mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ";
+
+    // The raw public key paired with OtherPrivateKey() - a key that never signed anything in these tests.
+    private const string OtherPublicKeyBase64Url = "2inpWwLgD_oVZFd1-x0roiKhlDOV7qBrlOLAV7e-adA";
+
     [Fact]
     public void Package_ReportsIdentityTotalsAndMetrics()
     {
@@ -141,6 +148,73 @@ public class TestCliCommands
             fixture.Run(
                 "verify", "--output-root", fixture.OutputRoot, "--package-id", fixture.PackageId,
                 "--manifest-hash", manifestHash, "--require-signature", "--json").ExitCode);
+    }
+
+    [Fact]
+    public void Verify_TrustedKeyMatchesSignature_ReportsVerified()
+    {
+        using var fixture = NewPackage();
+        string manifestHash = ManifestHash(Package(fixture));
+        fixture.RunExpectingSuccess(
+            "sign", "--output-root", fixture.OutputRoot, "--package-id", fixture.PackageId,
+            "--manifest-hash", manifestHash, "--key-file", WriteKeyFile(fixture), "--json");
+
+        CliRun run = fixture.RunExpectingSuccess(
+            "verify", "--output-root", fixture.OutputRoot, "--package-id", fixture.PackageId,
+            "--manifest-hash", manifestHash, "--trusted-key", TestPublicKeyBase64Url,
+            "--require-signature", "--json");
+
+        Assert.Equal("verified", (string?)run.Result()["signature"]!["state"]);
+        Assert.Matches("^ed25519-[0-9a-f]{64}$", (string?)run.Result()["signature"]!["keyId"]);
+    }
+
+    [Fact]
+    public void Verify_TrustedKeyDoesNotMatchSignature_IsAnIntegrityError()
+    {
+        using var fixture = NewPackage();
+        string manifestHash = ManifestHash(Package(fixture));
+        fixture.RunExpectingSuccess(
+            "sign", "--output-root", fixture.OutputRoot, "--package-id", fixture.PackageId,
+            "--manifest-hash", manifestHash, "--key-file", WriteKeyFile(fixture), "--json");
+
+        // A trusted key that never signed this release: the signature's keyId is unknown to the verifier, so
+        // it must be rejected outright, not silently downgraded to 'present'.
+        CliRun run = fixture.Run(
+            "verify", "--output-root", fixture.OutputRoot, "--package-id", fixture.PackageId,
+            "--manifest-hash", manifestHash, "--trusted-key", OtherPublicKeyBase64Url, "--json");
+
+        Assert.Equal(ExitCode.IntegrityError, run.ExitCode);
+        Assert.Equal(PackageErrorCodes.InvalidSignature, run.FirstErrorCode());
+    }
+
+    [Fact]
+    public void Verify_RequireSignatureWithTrustedKeyButNoSignaturePublished_IsAnIntegrityError()
+    {
+        using var fixture = NewPackage();
+        string manifestHash = ManifestHash(Package(fixture));
+
+        CliRun run = fixture.Run(
+            "verify", "--output-root", fixture.OutputRoot, "--package-id", fixture.PackageId,
+            "--manifest-hash", manifestHash, "--trusted-key", TestPublicKeyBase64Url,
+            "--require-signature", "--json");
+
+        Assert.Equal(ExitCode.IntegrityError, run.ExitCode);
+        Assert.Equal(PackageErrorCodes.InvalidSignature, run.FirstErrorCode());
+    }
+
+    [Fact]
+    public void Verify_MalformedTrustedKeyArgument_IsAnInputError()
+    {
+        using var fixture = NewPackage();
+        string manifestHash = ManifestHash(Package(fixture));
+        const string malformed = "not-a-valid-public-key";
+
+        CliRun run = fixture.Run(
+            "verify", "--output-root", fixture.OutputRoot, "--package-id", fixture.PackageId,
+            "--manifest-hash", manifestHash, "--trusted-key", malformed, "--json");
+
+        Assert.Equal(ExitCode.InputError, run.ExitCode);
+        Assert.Equal(PackageErrorCodes.InvalidTrustedKey, run.FirstErrorCode());
     }
 
     [Fact]

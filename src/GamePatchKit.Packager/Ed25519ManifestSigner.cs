@@ -1,4 +1,3 @@
-using GamePatchKit.Core;
 using GamePatchKit.Core.Errors;
 using GamePatchKit.Core.Signatures;
 using Org.BouncyCastle.Crypto.Parameters;
@@ -79,7 +78,7 @@ public sealed class Ed25519ManifestSigner : IManifestSigner
             throw KeyFailure($"An Ed25519 public key must be exactly {PublicKeyByteLength} bytes.");
         }
 
-        return "ed25519-" + Sha256Hash.ComputeHex(publicKey);
+        return Ed25519Signatures.DeriveKeyId(publicKey);
     }
 
     public byte[] Sign(byte[] canonicalManifestBytes)

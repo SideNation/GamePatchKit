@@ -88,6 +88,36 @@ public class TestHttpArtifactTransport
         Assert.False(exception.IsTransient);
     }
 
+    [Fact]
+    public async Task OpenArtifactAsync_NotFound_IsConfirmedAbsence()
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)));
+        var transport = new HttpArtifactTransport(CreateClient(handler));
+
+        ArtifactTransportException exception = await Assert.ThrowsAsync<ArtifactTransportException>(
+            () => transport.OpenArtifactAsync("game-data", "game-data/artifacts/files/aa11/content", CancellationToken.None));
+
+        Assert.True(exception.IsNotFound);
+    }
+
+    // A 401/403/410 could mean the resource is gone, or it could mean an auth problem, a misconfigured proxy,
+    // or something actively suppressing the response - unlike a 404, none of that positively confirms absence,
+    // so IsNotFound must stay false for anything but a real 404.
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.Gone)]
+    public async Task OpenArtifactAsync_OtherPermanentClientErrors_AreNotConfirmedAbsence(HttpStatusCode statusCode)
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(statusCode)));
+        var transport = new HttpArtifactTransport(CreateClient(handler));
+
+        ArtifactTransportException exception = await Assert.ThrowsAsync<ArtifactTransportException>(
+            () => transport.OpenArtifactAsync("game-data", "game-data/artifacts/files/aa11/content", CancellationToken.None));
+
+        Assert.False(exception.IsNotFound);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.RequestTimeout)]
     [InlineData(HttpStatusCode.TooManyRequests)]

@@ -74,7 +74,8 @@ public sealed class HttpArtifactTransport : IArtifactTransport
             {
                 throw new ArtifactTransportException(
                     $"The artifact request returned HTTP {(int)response.StatusCode}.",
-                    IsTransientStatusCode(response.StatusCode));
+                    IsTransientStatusCode(response.StatusCode),
+                    isNotFound: response.StatusCode == HttpStatusCode.NotFound);
             }
 
             Stream body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);

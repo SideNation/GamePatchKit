@@ -3,6 +3,7 @@ namespace GamePatchKit.Runtime
     public static class RuntimeErrorCodes
     {
         public const string ManifestInvalid = "runtime.manifest-invalid";
+        public const string SignatureInvalid = "runtime.signature-invalid";
         public const string StateInvalid = "runtime.state-invalid";
         public const string StateConflict = "runtime.state-conflict";
         public const string ArtifactCorrupted = "runtime.artifact-corrupted";
