@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using GamePatchKit.Core;
 using GamePatchKit.Core.Errors;
 using GamePatchKit.Core.Manifests;
@@ -45,7 +44,7 @@ internal static class FileArtifactWriter
 
             var information = new FileInfo(temporaryPayloadPath);
             long payloadSize = information.Length;
-            string artifactHash = await ComputeFileHashAsync(temporaryPayloadPath, cancellationToken).ConfigureAwait(false);
+            string artifactHash = await Sha256File.ComputeAsync(temporaryPayloadPath, cancellationToken).ConfigureAwait(false);
             ManifestArtifact.FileArtifact artifact = payloadSize <= maxArtifactBytes
                 ? await CreateSingleAsync(
                     packageId,
@@ -212,7 +211,7 @@ internal static class FileArtifactWriter
                 await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
 
-            string partHash = await ComputeFileHashAsync(stagedPath, cancellationToken).ConfigureAwait(false);
+            string partHash = await Sha256File.ComputeAsync(stagedPath, cancellationToken).ConfigureAwait(false);
             parts.Add(new FilePart(partIndex, canonicalPath, targetSize, partHash));
             remaining -= targetSize;
             partIndex++;
@@ -260,38 +259,12 @@ internal static class FileArtifactWriter
         CancellationToken cancellationToken)
     {
         var information = new FileInfo(path);
-        string actualHash = await ComputeFileHashAsync(path, cancellationToken).ConfigureAwait(false);
+        string actualHash = await Sha256File.ComputeAsync(path, cancellationToken).ConfigureAwait(false);
 
         if (information.Length != expectedSize || actualHash != expectedHash)
         {
             throw Failure(PackageErrorCodes.ArtifactCorrupted, "A staged artifact object failed verification.", packageId);
         }
-    }
-
-    private static async Task<string> ComputeFileHashAsync(string path, CancellationToken cancellationToken)
-    {
-        await using var stream = new FileStream(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            StreamBufferSize,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        byte[] buffer = new byte[StreamBufferSize];
-
-        while (true)
-        {
-            int read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false);
-            if (read == 0)
-            {
-                break;
-            }
-
-            hash.AppendData(buffer, 0, read);
-        }
-
-        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
 
     private static void DeleteDirectoryIfExists(string path)

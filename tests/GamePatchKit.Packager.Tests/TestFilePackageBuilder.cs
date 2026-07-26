@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using GamePatchKit.Core;
 using GamePatchKit.Core.Configuration;
-using GamePatchKit.Core.Globbing;
 using GamePatchKit.Core.Manifests;
 
 namespace GamePatchKit.Packager.Tests;
@@ -14,7 +13,7 @@ public class TestFilePackageBuilder
         using var fixture = new PackageFixture();
         fixture.WriteSource("data/config.json", "configuration");
         PackageConfig config = fixture.Config(compression: CompressionKind.None);
-        var builder = new FilePackageBuilder();
+        var builder = new FilePackageBuilder(zstdCodec: null);
 
         FilePackageResult first = await builder.BuildAsync(new FilePackageRequest(config, fixture.OutputRoot));
         FilePackageResult second = await builder.BuildAsync(new FilePackageRequest(config, fixture.OutputRoot));
@@ -187,13 +186,17 @@ public class TestFilePackageBuilder
         using var fixture = new PackageFixture();
         byte[] sourceBytes = "map-data"u8.ToArray();
         fixture.WriteSource("maps/level.bin", sourceBytes);
-        FinalizedManifest previous = fixture.CreateBundleRelease("maps/level.bin", sourceBytes, required: false);
-        PackageConfig config = fixture.Config(
+        PackageConfig firstConfig = fixture.Config(
+            compression: CompressionKind.None,
+            groups: new[] { fixture.Group("maps", "maps/**/*", ArtifactMode.Bundle, required: false) });
+        var builder = new FilePackageBuilder(zstdCodec: null);
+        FilePackageResult first = await builder.BuildAsync(new FilePackageRequest(firstConfig, fixture.OutputRoot));
+        PackageConfig secondConfig = fixture.Config(
             compression: CompressionKind.Zstd,
             groups: new[] { fixture.Group("maps", "maps/**/*", ArtifactMode.Bundle, required: false) });
 
-        FilePackageResult result = await new FilePackageBuilder().BuildAsync(
-            new FilePackageRequest(config, fixture.OutputRoot, fixture.Previous(previous)));
+        FilePackageResult result = await builder.BuildAsync(
+            new FilePackageRequest(secondConfig, fixture.OutputRoot, fixture.Previous(first)));
 
         Assert.True(result.ReusedManifest);
         Assert.IsType<ManifestArtifact.BundleArtifact>(Assert.Single(result.Release.Manifest.Artifacts));
@@ -207,23 +210,27 @@ public class TestFilePackageBuilder
         using var fixture = new PackageFixture();
         byte[] sourceBytes = "map-data"u8.ToArray();
         fixture.WriteSource("maps/level.bin", sourceBytes);
-        FinalizedManifest previous = fixture.CreateBundleRelease("maps/level.bin", sourceBytes, required: false);
-        PackageConfig config = fixture.Config(
+        PackageConfig bundleConfig = fixture.Config(
+            compression: CompressionKind.None,
+            groups: new[] { fixture.Group("maps", "maps/**/*", ArtifactMode.Bundle, required: false) });
+        var builder = new FilePackageBuilder();
+        FilePackageResult previous = await builder.BuildAsync(new FilePackageRequest(bundleConfig, fixture.OutputRoot));
+        PackageConfig fileConfig = fixture.Config(
             compression: CompressionKind.None,
             groups: new[] { fixture.Group("maps", "maps/**/*", ArtifactMode.File, required: false) });
 
-        FilePackageResult result = await new FilePackageBuilder().BuildAsync(
-            new FilePackageRequest(config, fixture.OutputRoot, fixture.Previous(previous)));
+        FilePackageResult result = await builder.BuildAsync(
+            new FilePackageRequest(fileConfig, fixture.OutputRoot, fixture.Previous(previous)));
 
         ManifestArtifact.FileArtifact artifact = Assert.IsType<ManifestArtifact.FileArtifact>(Assert.Single(result.Release.Manifest.Artifacts));
         Assert.IsType<FileSource.FileReference>(Assert.Single(result.Release.Manifest.Files).Source);
         Assert.Equal(Sha256(sourceBytes), artifact.PrimaryArtifactHash);
         Assert.Equal(1, result.Report.CreatedFileArtifactCount);
-        Assert.Equal(previous.CompactVersion, result.Release.CompactVersion);
+        Assert.Equal(previous.Release.CompactVersion, result.Release.CompactVersion);
     }
 
     [Fact]
-    public async Task BuildAsync_NewFileInBundleMode_CreatesFileOverrideUntilCompact()
+    public async Task BuildAsync_InitialBundleMode_CreatesBundleBaseline()
     {
         using var fixture = new PackageFixture();
         fixture.WriteSource("maps/level.bin", "map-data");
@@ -234,8 +241,31 @@ public class TestFilePackageBuilder
         FilePackageResult result = await new FilePackageBuilder().BuildAsync(
             new FilePackageRequest(config, fixture.OutputRoot));
 
-        Assert.IsType<ManifestArtifact.FileArtifact>(Assert.Single(result.Release.Manifest.Artifacts));
-        Assert.IsType<FileSource.FileReference>(Assert.Single(result.Release.Manifest.Files).Source);
+        Assert.IsType<ManifestArtifact.BundleArtifact>(Assert.Single(result.Release.Manifest.Artifacts));
+        Assert.IsType<FileSource.BundleEntryReference>(Assert.Single(result.Release.Manifest.Files).Source);
+    }
+
+    [Fact]
+    public async Task BuildAsync_NewFileInExistingBundleGroup_CreatesFileOverride()
+    {
+        using var fixture = new PackageFixture();
+        fixture.WriteSource("maps/a.bin", "alpha");
+        PackageConfig config = fixture.Config(
+            compression: CompressionKind.None,
+            groups: new[] { fixture.Group("maps", "maps/**/*", ArtifactMode.Bundle, required: false) });
+        var builder = new FilePackageBuilder();
+        FilePackageResult baseline = await builder.BuildAsync(new FilePackageRequest(config, fixture.OutputRoot));
+        fixture.WriteSource("maps/b.bin", "beta");
+
+        FilePackageResult incremental = await builder.BuildAsync(
+            new FilePackageRequest(config, fixture.OutputRoot, fixture.Previous(baseline)));
+
+        ManifestFileEntry existing = Assert.Single(incremental.Release.Manifest.Files, file => file.Path == "maps/a.bin");
+        ManifestFileEntry added = Assert.Single(incremental.Release.Manifest.Files, file => file.Path == "maps/b.bin");
+        Assert.IsType<FileSource.BundleEntryReference>(existing.Source);
+        Assert.IsType<FileSource.FileReference>(added.Source);
+        Assert.Contains(incremental.Release.Manifest.Artifacts, artifact => artifact is ManifestArtifact.BundleArtifact);
+        Assert.Contains(incremental.Release.Manifest.Artifacts, artifact => artifact is ManifestArtifact.FileArtifact);
     }
 
     [Fact]
@@ -246,16 +276,14 @@ public class TestFilePackageBuilder
         byte[] secondBytes = "second-map"u8.ToArray();
         fixture.WriteSource("maps/first.bin", firstBytes);
         fixture.WriteSource("maps/second.bin", secondBytes);
-        FinalizedManifest previous = fixture.CreateBundleRelease(
-            required: false,
-            ("maps/first.bin", firstBytes),
-            ("maps/second.bin", secondBytes));
-        fixture.WriteSource("maps/second.bin", "changed-map");
         PackageConfig config = fixture.Config(
             compression: CompressionKind.None,
             groups: new[] { fixture.Group("maps", "maps/**/*", ArtifactMode.Bundle, required: false) });
+        var builder = new FilePackageBuilder();
+        FilePackageResult previous = await builder.BuildAsync(new FilePackageRequest(config, fixture.OutputRoot));
+        fixture.WriteSource("maps/second.bin", "changed-map");
 
-        FilePackageResult result = await new FilePackageBuilder().BuildAsync(
+        FilePackageResult result = await builder.BuildAsync(
             new FilePackageRequest(config, fixture.OutputRoot, fixture.Previous(previous)));
 
         Assert.Equal(2, result.Release.Manifest.Artifacts.Count);
@@ -484,142 +512,5 @@ public class TestFilePackageBuilder
     private static string Sha256(byte[] bytes)
     {
         return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
-    }
-
-    private sealed class PackageFixture : IDisposable
-    {
-        private readonly string _root = Path.Combine(Path.GetTempPath(), $"gamepatchkit-tests-{Guid.NewGuid():N}");
-
-        public string PackageId { get; } = "test-package";
-
-        public string SourceRoot => Path.Combine(_root, "source");
-
-        public string OutputRoot => Path.Combine(_root, "output");
-
-        public PackageFixture()
-        {
-            Directory.CreateDirectory(SourceRoot);
-            Directory.CreateDirectory(OutputRoot);
-        }
-
-        public PackageConfig Config(
-            CompressionKind compression,
-            long maxArtifactBytes = PackageConfig.DefaultMaxArtifactBytes,
-            IReadOnlyList<PackageConfigGroup>? groups = null,
-            string includePattern = "**/*")
-        {
-            return new PackageConfig(
-                schemaVersion: 1,
-                PackageId,
-                SourceRoot,
-                new[] { Pattern(includePattern) },
-                Array.Empty<GlobPattern>(),
-                maxArtifactBytes,
-                ArtifactMode.File,
-                compression,
-                groups ?? new[] { Group("core", "**/*", ArtifactMode.File, required: true) });
-        }
-
-        public PackageConfigGroup Group(
-            string name,
-            string includePattern,
-            ArtifactMode artifactMode,
-            bool required,
-            CompressionKind? compression = null)
-        {
-            return new PackageConfigGroup(
-                name,
-                new[] { Pattern(includePattern) },
-                artifactMode,
-                required,
-                compression);
-        }
-
-        public void WriteSource(string relativePath, string content)
-        {
-            WriteSource(relativePath, System.Text.Encoding.UTF8.GetBytes(content));
-        }
-
-        public void WriteSource(string relativePath, byte[] content)
-        {
-            string path = SourcePath(relativePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllBytes(path, content);
-        }
-
-        public string SourcePath(string relativePath)
-        {
-            return Path.Combine(SourceRoot, relativePath.Replace('/', Path.DirectorySeparatorChar));
-        }
-
-        public string OutputPath(string canonicalPath)
-        {
-            return Path.Combine(OutputRoot, canonicalPath.Replace('/', Path.DirectorySeparatorChar));
-        }
-
-        public PreviousRelease Previous(FilePackageResult result)
-        {
-            return Previous(result.Release);
-        }
-
-        public PreviousRelease Previous(FinalizedManifest release)
-        {
-            return new PreviousRelease(release.GetCanonicalBytes(), release.ManifestHash);
-        }
-
-        public FinalizedManifest CreateBundleRelease(string relativePath, byte[] sourceBytes, bool required)
-        {
-            return CreateBundleRelease(required, (relativePath, sourceBytes));
-        }
-
-        public FinalizedManifest CreateBundleRelease(bool required, params (string RelativePath, byte[] SourceBytes)[] files)
-        {
-            byte[] bundleBytes = "bundle-payload"u8.ToArray();
-            string bundleHash = Sha256(bundleBytes);
-            string bundlePath = ContentAddressedPath.BundleArtifactPath(PackageId, "maps", bundleHash, CompressionKind.None);
-            string nativeBundlePath = OutputPath(bundlePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(nativeBundlePath)!);
-            File.WriteAllBytes(nativeBundlePath, bundleBytes);
-
-            var artifact = new ManifestArtifact.BundleArtifact(
-                "maps",
-                bundlePath,
-                bundleBytes.Length,
-                bundleHash,
-                CompressionKind.None,
-                files.Select(file => new BundleEntry(file.RelativePath)).ToList());
-            List<ManifestFileEntry> manifestFiles = files
-                .Select(file => new ManifestFileEntry(
-                    file.RelativePath,
-                    "maps",
-                    file.SourceBytes.Length,
-                    Sha256(file.SourceBytes),
-                    new FileSource.BundleEntryReference(bundleHash, file.RelativePath)))
-                .ToList();
-            var draft = new ReleaseManifest(
-                1,
-                PackageId,
-                DataVersionFormat.Prefix + new string('0', 64),
-                0,
-                new[] { new ManifestGroupEntry("maps", required) },
-                new ManifestArtifact[] { artifact },
-                manifestFiles);
-            return ReleaseIdentity.Finalize(draft, 0);
-        }
-
-        public void Dispose()
-        {
-            if (Directory.Exists(_root))
-            {
-                Directory.Delete(_root, recursive: true);
-            }
-        }
-
-        private static GlobPattern Pattern(string source)
-        {
-            bool parsed = GlobPattern.TryParse(source, out GlobPattern? pattern, out string errorCode);
-            Assert.True(parsed, errorCode);
-            return pattern!;
-        }
     }
 }

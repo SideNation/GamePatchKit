@@ -5,6 +5,7 @@ namespace GamePatchKit.Packager;
 internal sealed class HashingReadStream : Stream
 {
     private readonly Stream _inner;
+    private readonly Stream? _copyDestination;
     private readonly IncrementalHash _hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
     private bool _isHashFinalized;
 
@@ -24,9 +25,10 @@ internal sealed class HashingReadStream : Stream
         set => throw new NotSupportedException();
     }
 
-    public HashingReadStream(Stream inner)
+    public HashingReadStream(Stream inner, Stream? copyDestination = null)
     {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        _copyDestination = copyDestination;
     }
 
     public string FinalizeHash()
@@ -43,6 +45,7 @@ internal sealed class HashingReadStream : Stream
     public override int Read(byte[] buffer, int offset, int count)
     {
         int read = _inner.Read(buffer, offset, count);
+        _copyDestination?.Write(buffer, offset, read);
         Append(buffer.AsSpan(offset, read));
         return read;
     }
@@ -50,6 +53,12 @@ internal sealed class HashingReadStream : Stream
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         int read = await _inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+
+        if (_copyDestination != null)
+        {
+            await _copyDestination.WriteAsync(buffer[..read], cancellationToken).ConfigureAwait(false);
+        }
+
         Append(buffer.Span[..read]);
         return read;
     }
@@ -107,6 +116,12 @@ internal sealed class HashingReadStream : Stream
     private async Task<int> ReadLegacyAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
         int read = await _inner.ReadAsync(buffer, offset, count, cancellationToken).ConfigureAwait(false);
+
+        if (_copyDestination != null)
+        {
+            await _copyDestination.WriteAsync(buffer, offset, read, cancellationToken).ConfigureAwait(false);
+        }
+
         Append(buffer.AsSpan(offset, read));
         return read;
     }

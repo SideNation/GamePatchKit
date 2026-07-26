@@ -134,6 +134,7 @@ public sealed class FilePackageBuilder
             previous?.FileArtifactsByContent.ToDictionary(pair => pair.Key, pair => pair.Value)
             ?? new Dictionary<(long Size, string FileHash), ManifestArtifact.FileArtifact>();
         HashSet<string> reusableBundleHashes = FindReusableBundles(source, request.Config, previous, configuredGroups);
+        var initialBundleFilesByGroup = new Dictionary<string, List<SourceFileSnapshot>>(StringComparer.Ordinal);
 
         foreach (SourceFileSnapshot file in source.Files)
         {
@@ -141,6 +142,18 @@ public sealed class FilePackageBuilder
             ManifestFileEntry? previousFile = null;
             previous?.FilesByPath.TryGetValue(file.RelativePath, out previousFile);
             ClassifyChange(file, previousFile, state);
+
+            if (previous == null && ResolveArtifactMode(request.Config, configuredGroups, file.Group) == ArtifactMode.Bundle)
+            {
+                if (!initialBundleFilesByGroup.TryGetValue(file.Group, out List<SourceFileSnapshot>? groupFiles))
+                {
+                    groupFiles = new List<SourceFileSnapshot>();
+                    initialBundleFilesByGroup[file.Group] = groupFiles;
+                }
+
+                groupFiles.Add(file);
+                continue;
+            }
 
             FileSource sourceReference;
 
@@ -182,6 +195,70 @@ public sealed class FilePackageBuilder
 
             state.Files.Add(new ManifestFileEntry(file.RelativePath, file.Group, file.Size, file.FileHash, sourceReference));
         }
+
+        foreach (KeyValuePair<string, List<SourceFileSnapshot>> pair in initialBundleFilesByGroup
+            .OrderBy(item => item.Key, Utf8OrdinalStringComparer.Instance))
+        {
+            CompressionKind compression = ResolveCompression(request.Config, configuredGroups, pair.Key);
+            BundleGroupWriteResult writeResult = await BundleArtifactWriter.WriteAsync(
+                pair.Value,
+                request.Config.PackageId,
+                pair.Key,
+                compression,
+                request.Config.MaxArtifactBytes,
+                outputRoot,
+                stagingRoot,
+                _zstdCodec,
+                reusableFileArtifacts,
+                cancellationToken).ConfigureAwait(false);
+            var sourcesByPath = new Dictionary<string, FileSource>(StringComparer.Ordinal);
+
+            foreach (BundleArtifactWriteResult bundle in writeResult.Bundles)
+            {
+                state.ArtifactsByKey.TryAdd(bundle.Artifact.ContentAddressedSortKey(request.Config.PackageId), bundle.Artifact);
+
+                if (bundle.WasCreated)
+                {
+                    state.CreatedBundleHashes.Add(bundle.Artifact.ArtifactHash);
+                    state.CreatedBundleBytes += bundle.PayloadBytes;
+                }
+                else
+                {
+                    state.ReusedBundleHashes.Add(bundle.Artifact.ArtifactHash);
+                }
+
+                foreach (BundleEntry entry in bundle.Artifact.Entries)
+                {
+                    sourcesByPath.Add(
+                        entry.Path,
+                        new FileSource.BundleEntryReference(bundle.Artifact.ArtifactHash, entry.Path));
+                }
+            }
+
+            foreach (BundleFallbackWriteResult fallback in writeResult.Fallbacks)
+            {
+                sourcesByPath.Add(
+                    fallback.File.RelativePath,
+                    AddFileArtifact(state, fallback.ArtifactResult.Artifact, fallback.ArtifactResult.WasCreated));
+
+                if (fallback.ArtifactResult.WasCreated)
+                {
+                    state.CreatedFileArtifactBytes += fallback.ArtifactResult.PayloadBytes;
+                }
+            }
+
+            foreach (SourceFileSnapshot file in pair.Value)
+            {
+                state.Files.Add(new ManifestFileEntry(
+                    file.RelativePath,
+                    file.Group,
+                    file.Size,
+                    file.FileHash,
+                    sourcesByPath[file.RelativePath]));
+            }
+        }
+
+        state.Files.Sort((left, right) => Utf8OrdinalStringComparer.Instance.Compare(left.Path, right.Path));
 
         if (previous != null)
         {
@@ -353,7 +430,7 @@ public sealed class FilePackageBuilder
         return groups;
     }
 
-    private static CompressionKind ResolveCompression(
+    internal static CompressionKind ResolveCompression(
         PackageConfig config,
         IReadOnlyDictionary<string, PackageConfigGroup> configuredGroups,
         string group)
@@ -363,7 +440,7 @@ public sealed class FilePackageBuilder
             : config.Compression;
     }
 
-    private static ArtifactMode ResolveArtifactMode(
+    internal static ArtifactMode ResolveArtifactMode(
         PackageConfig config,
         IReadOnlyDictionary<string, PackageConfigGroup> configuredGroups,
         string group)
@@ -373,7 +450,7 @@ public sealed class FilePackageBuilder
             : config.DefaultArtifactMode;
     }
 
-    private static async Task PublishArtifactsAsync(
+    internal static async Task PublishArtifactsAsync(
         ReleaseManifest manifest,
         string outputRoot,
         string stagingRoot,
@@ -407,9 +484,36 @@ public sealed class FilePackageBuilder
 
             Directory.Move(stagedDirectory, destinationDirectory);
         }
+
+        foreach (ManifestArtifact.BundleArtifact artifact in manifest.Artifacts.OfType<ManifestArtifact.BundleArtifact>())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string stagedPath = PackagePath.Resolve(stagingRoot, artifact.Path);
+
+            if (!File.Exists(stagedPath))
+            {
+                continue;
+            }
+
+            string destinationPath = PackagePath.Resolve(outputRoot, artifact.Path);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+
+            if (File.Exists(destinationPath))
+            {
+                await PackagePayloadVerifier.VerifyStoredObjectsAsync(
+                    outputRoot,
+                    artifact.GetPayloadObjects(),
+                    packageId,
+                    cancellationToken).ConfigureAwait(false);
+                File.Delete(stagedPath);
+                continue;
+            }
+
+            File.Move(stagedPath, destinationPath);
+        }
     }
 
-    private async Task PublishManifestAsync(
+    internal async Task PublishManifestAsync(
         FinalizedManifest finalized,
         bool writeCompressedManifest,
         string outputRoot,
@@ -621,6 +725,8 @@ public sealed class FilePackageBuilder
             state.CreatedFileArtifactHashes.Count,
             state.CreatedFileArtifactBytes,
             state.ReusedFileArtifactHashes.Count,
+            state.CreatedBundleHashes.Count,
+            state.CreatedBundleBytes,
             state.ReusedBundleHashes.Count,
             policies);
     }
@@ -630,7 +736,7 @@ public sealed class FilePackageBuilder
         return compression == CompressionKind.Zstd ? CompressionCodecIds.Zstd : "none";
     }
 
-    private static void ValidateConfiguration(PackageConfig config)
+    internal static void ValidateConfiguration(PackageConfig config)
     {
         GamePatchKitSchemaValidator.ValidatePackageConfig(config);
 
@@ -723,7 +829,11 @@ public sealed class FilePackageBuilder
 
         public HashSet<string> ReusedBundleHashes { get; } = new HashSet<string>(StringComparer.Ordinal);
 
+        public HashSet<string> CreatedBundleHashes { get; } = new HashSet<string>(StringComparer.Ordinal);
+
         public long CreatedFileArtifactBytes { get; set; }
+
+        public long CreatedBundleBytes { get; set; }
 
         public FinalizedManifest Finalized { get; set; } = null!;
     }

@@ -82,3 +82,53 @@ incremental override가 누적된 bundle group을 새 baseline으로 통합할 �
 - 손상된 bundle payload를 재사용·package 검증에서 거부한다(검증 기준 11, bundle
   범위).
 - 실패한 compact가 기존 artifact·manifest를 변경하지 않는다(검증 기준 18).
+
+## 개발 v2
+
+v1 계획 본문은 보존하며 아래 내용이 현재 구현 상태를 나타낸다.
+
+### 구현 결과
+
+- [x] 실행별 값을 포함하지 않는 직접 구현 PAX writer로 entry header와 record byte를
+      고정했다
+- [x] entry 경로·순서, UID/GID `0`, 빈 user/group name, mode `0644`, Unix epoch
+      mtime과 정확히 두 개의 tar end block을 검증한다
+- [x] 최초 package의 bundle group baseline 생성, 실제 payload 크기 기준 entry 경계
+      분할과 큰 단일 entry의 file part fallback을 연결했다
+- [x] 무압축 tar와 고정 `ICompressionCodec` zstd bundle을 content-addressed 불변
+      경로에 게시하고 기존 byte를 검증해 재사용한다
+- [x] `PackagePayloadVerifier`가 bundle object hash뿐 아니라 PAX metadata, entry
+      순서·경로와 각 파일 크기·`fileHash`까지 검증한다
+- [x] `BundleCompactor`가 source artifact에서 선택 group을 복원하고 file override를
+      새 bundle로 통합하며 비선택 group과 file artifact를 재사용한다
+- [x] 전체 retained object inventory를 `CompactVersionRule`에 전달해 과거 release의
+      part 경로와 충돌하는 candidate를 거부한다
+- [x] 동일 물리 배치는 `Changed: false` no-op으로 게시하지 않고, 변경 시에만
+      `compactVersion`을 1 증가시킨다
+
+### 확정 결정
+
+- tar 형식은 긴 UTF-8 경로를 보존할 수 있는 POSIX PAX로 고정한다.
+- 플랫폼·process에 따라 달라지는 framework 기본 PAX extended-header 이름을 사용하지
+  않고 `PaxHeaders/<8자리 index>`와 `PaxEntry/<8자리 index>`를 직접 기록한다.
+- PAX record는 `path`, `size`, `mtime`만 허용하며 순서와 값 표현을 고정한다.
+- bundle 경계는 원본 tar 크기의 보수적 상한으로 먼저 나눈 뒤 실제 압축 payload가
+  제한을 넘을 때 마지막 entry를 이동해 재생성한다. 단일 entry는 실제 zstd payload가
+  제한 안에 들 수 있으므로 반드시 실제 byte를 만든 뒤 fallback 여부를 결정한다.
+- `maxArtifactBytes`는 새로 생성하는 payload에 적용한다. content-addressed 불변 경로의
+  검증된 기존 file artifact를 fallback에서 재사용할 때는 현재 제한보다 크더라도 기존
+  표현과 compression metadata를 유지한다.
+- compact의 `retainedObjects`는 선택 인자가 아니다. 빈 목록은 source만 보관하는
+  저장소에만 사용할 수 있다.
+
+### 검증
+
+- 고정 2-entry PAX fixture의 bundle SHA-256을
+  `ec4d4fa68091291c8ea847f1c21acbaa59a4f7b61af6d9d39ee12425e0182aa0`으로
+  고정했다.
+- 별도 process 재실행 결정성, 긴 UTF-8 경로, group 격리, size 분할, file part
+  fallback, zstd round-trip, 손상 payload·비정상 metadata·PAX header 이름·추가
+  end block 거부와 zstd 해제 출력 상한을 테스트한다.
+- compact의 no-op, override 통합, file group 재사용, 선택 group만 재압축,
+  retained object 충돌, `compactVersion` 안전 정수 상한과 손상 source 실패를
+  테스트한다.

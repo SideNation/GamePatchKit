@@ -1,4 +1,3 @@
-using System.Security.Cryptography;
 using GamePatchKit.Compression.NativeCompressions;
 using GamePatchKit.Core;
 using GamePatchKit.Core.Errors;
@@ -59,6 +58,15 @@ public static class PackagePayloadVerifier
                     await VerifyCombinedPayloadHashAsync(outputRoot, manifest.PackageId, fileArtifact, cancellationToken).ConfigureAwait(false);
                     await VerifyFileArtifactAsync(outputRoot, manifest, fileArtifact, zstdCodec, cancellationToken).ConfigureAwait(false);
                 }
+                else
+                {
+                    await BundleArchiveReader.VerifyAsync(
+                        outputRoot,
+                        manifest,
+                        (ManifestArtifact.BundleArtifact)artifact,
+                        zstdCodec,
+                        cancellationToken).ConfigureAwait(false);
+                }
             }
             catch (PackageException)
             {
@@ -95,7 +103,7 @@ public static class PackagePayloadVerifier
                     packageId);
             }
 
-            string actualHash = await ComputeFileHashAsync(path, cancellationToken).ConfigureAwait(false);
+            string actualHash = await Sha256File.ComputeAsync(path, cancellationToken).ConfigureAwait(false);
             if (actualHash != payloadObject.ObjectHash)
             {
                 throw Failure(
@@ -104,6 +112,33 @@ public static class PackagePayloadVerifier
                     packageId);
             }
         }
+    }
+
+    internal static async Task WriteDecodedFileArtifactAsync(
+        string outputRoot,
+        ManifestArtifact.FileArtifact artifact,
+        ICompressionCodec? zstdCodec,
+        Stream destination,
+        string packageId,
+        CancellationToken cancellationToken)
+    {
+        await using var payload = new ArtifactObjectReadStream(outputRoot, artifact.GetPayloadObjects());
+
+        if (artifact.Compression == CompressionKind.None)
+        {
+            await payload.CopyToAsync(destination, StreamBufferSize, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (zstdCodec == null || zstdCodec.CodecId != CompressionCodecIds.Zstd)
+        {
+            throw Failure(
+                PackageErrorCodes.MissingCompressionCodec,
+                "The manifest requires the zstd codec, but no compatible codec was supplied.",
+                packageId);
+        }
+
+        await zstdCodec.DecompressAsync(payload, destination, cancellationToken).ConfigureAwait(false);
     }
 
     private static void VerifyFileArtifactDirectoryShape(
@@ -150,25 +185,14 @@ public static class PackagePayloadVerifier
             throw Failure(PackageErrorCodes.ManifestInvalid, "A file artifact is not referenced by a file.", manifest.PackageId);
         }
 
-        await using var payload = new ArtifactObjectReadStream(outputRoot, artifact.GetPayloadObjects());
         using var verifiedOutput = new HashingWriteStream();
-
-        if (artifact.Compression == CompressionKind.None)
-        {
-            await payload.CopyToAsync(verifiedOutput, StreamBufferSize, cancellationToken).ConfigureAwait(false);
-        }
-        else
-        {
-            if (zstdCodec == null || zstdCodec.CodecId != CompressionCodecIds.Zstd)
-            {
-                throw Failure(
-                    PackageErrorCodes.MissingCompressionCodec,
-                    "The manifest requires the zstd codec, but no compatible codec was supplied.",
-                    manifest.PackageId);
-            }
-
-            await zstdCodec.DecompressAsync(payload, verifiedOutput, cancellationToken).ConfigureAwait(false);
-        }
+        await WriteDecodedFileArtifactAsync(
+            outputRoot,
+            artifact,
+            zstdCodec,
+            verifiedOutput,
+            manifest.PackageId,
+            cancellationToken).ConfigureAwait(false);
 
         string fileHash = verifiedOutput.FinalizeHash();
         if (verifiedOutput.BytesWritten != referencedFile.Size || fileHash != referencedFile.FileHash)
@@ -204,32 +228,6 @@ public static class PackagePayloadVerifier
                 "The ordered file parts do not reconstruct the declared artifact payload.",
                 packageId);
         }
-    }
-
-    private static async Task<string> ComputeFileHashAsync(string path, CancellationToken cancellationToken)
-    {
-        await using var stream = new FileStream(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            StreamBufferSize,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        using IncrementalHash hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        byte[] buffer = new byte[StreamBufferSize];
-
-        while (true)
-        {
-            int read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken).ConfigureAwait(false);
-            if (read == 0)
-            {
-                break;
-            }
-
-            hash.AppendData(buffer, 0, read);
-        }
-
-        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
     }
 
     private static PackageException Failure(string code, string message, string packageId, string? relativePath = null)

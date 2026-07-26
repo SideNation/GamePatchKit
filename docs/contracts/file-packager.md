@@ -5,7 +5,7 @@
 `GamePatchKit.Packager`는 검증된 `PackageConfig`와 source directory에서 file
 artifact와 canonical release manifest를 생성한다. 이전 release를 함께 전달하면
 경로·원본 hash·group 정책을 비교해 incremental package를 만들며, 새 bundle 생성과
-compact는 06단계의 책임이다.
+compact 계약은 [deterministic bundle과 compact](bundle-compact.md)에 설명한다.
 
 ## 사용법
 
@@ -75,6 +75,10 @@ FilePackageResult result = await new FilePackageBuilder().BuildAsync(
 `default.required` 필드가 없으므로 Packager는 이 group을 `required: true`로
 manifest에 기록한다.
 
+최초 package의 `bundle` group은 deterministic PAX tar baseline으로 생성된다.
+incremental에서 새 파일·변경분은 계속 file override를 사용하며, 운영자가
+`BundleCompactor`를 호출할 때만 선택 group의 새 baseline으로 통합된다.
+
 ## 산출물과 report
 
 불변 게시 경로는 다음과 같다.
@@ -85,6 +89,8 @@ manifest에 기록한다.
     ├── artifacts/files/<artifactHash>/
     │   ├── content 또는 content.zst
     │   └── part-#####
+    ├── artifacts/bundles/<groupName>/
+    │   └── <bundleHash>.tar 또는 <bundleHash>.tar.zst
     └── manifests/<manifestHash>/
         ├── manifest.json
         └── manifest.json.zst  # 선택
@@ -93,6 +99,8 @@ manifest에 기록한다.
 `PackageBuildReport`는 생성 시각·machine·source revision, 추가·변경·삭제·group 이동,
 생성·재사용 artifact 수와 적용 compression 정책을 반환한다. 이 값들은 재현 가능한
 manifest identity가 아니므로 불변 publish tree에는 파일로 기록하지 않는다.
+bundle 생성 수·byte는 `CreatedBundleArtifactCount`와
+`CreatedBundleArtifactBytes`로 구분한다.
 
 ## 검증과 에러 처리
 
