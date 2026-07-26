@@ -42,17 +42,29 @@ Invoke Codex when a change matches one of the triggers below. Pick the mode from
 
 New-feature note: file count is not the gate. Any net-new behavior beyond a trivial helper/typo/comment counts as a new feature and must trigger at least `standard`. If the new feature also introduces public surface or persisted state, escalate to `adversarial`.
 
-## Commands
+## Workflow entry
 
-Pick the mode from the table, then run the matching command. For background runs, retrieve the result with `/codex:status` and `/codex:result`.
+Invoke the `codex-collab-workflow` skill and let it delegate only to `/codex:rescue`.
 
-| Mode        | Command                                    |
-| ----------- | ------------------------------------------ |
-| standard    | `/codex:review --background`             |
-| adversarial | `/codex:adversarial-review --background` |
-| rescue      | `/codex:rescue`                          |
+| Mode        | Action                                                                 |
+| ----------- | ---------------------------------------------------------------------- |
+| standard    | Run the bounded review loop with the standard read-only review prompt. |
+| adversarial | Run the bounded review loop with the adversarial read-only prompt.     |
+| rescue      | Run write-capable rescue, validate changes, then enter the review loop. |
 
 Claude must not blindly apply Codex output. Verify the patch, run relevant tests, and explain what was accepted or rejected — especially for `rescue`, where Codex may have produced a second implementation rather than a review.
+
+## Bounded review loop
+
+For standard, adversarial, and PR reviews:
+
+1. Run a read-only review through `/codex:rescue`.
+2. Triage every finding.
+3. Apply verified, in-scope fixes and run focused validation.
+4. Re-run review only if the diff changed.
+5. Stop when the review is clean and validation passes, or after 3 passes.
+
+Stop early and report remaining risks when no safe progress is possible, the same finding repeats without new evidence, validation remains blocked, or user input is required.
 
 ## Codex findings triage policy
 
@@ -72,11 +84,13 @@ When a Codex finding conflicts with Claude's implementation decision:
 1. Re-read the relevant code and tests before deciding.
 2. If the conflict is factual (e.g., Codex misread the code), classify as `Reject` and record the reason.
 3. If the conflict is judgment-based (e.g., trade-off between approaches), surface both views to the user and let the user decide. Do not silently override Codex.
-4. Do not re-invoke Codex on the same change to argue against a previous finding. One additional pass is allowed only when new information (a new commit, new failing test) is available.
+4. Do not re-invoke Codex on an unchanged diff to argue against a previous finding. Re-review a changed diff after an applied fix or validation-related change only within the bounded loop.
 
 ## Reporting language
 
-Match the user's language. If the user writes in Korean, write the final report and findings summary in Korean. Keep code, command names, and severity labels (`Blocker`, `High`, etc.) in English.
+Determine the user's language before invoking Codex and add `Response language: <user language>` to every review prompt and rescue handoff. Do not rely on Codex inferring the language from prior conversation context.
+
+Match the user's language for findings, explanations, verification steps, suggested fixes, summaries, and the final report. If the user writes in Korean, write that prose in Korean. Keep code identifiers, file paths, commands, `Severity` / `Confidence` field names, and their enum values (`Blocker`, `High`, `Confirmed`, etc.) in English.
 
 ## Review acceptance criteria
 
@@ -87,26 +101,31 @@ A change is done only when:
 - new behavior is covered by tests when practical
 - no secrets or generated files were modified accidentally
 - Codex review findings have been triaged when Codex was invoked
+- the final review pass has no `Apply` or unresolved `Investigate` finding, or the stopping reason is documented
 
 ## Report format to user
 
-Use this structure at the end of work:
+Localize the heading and human-facing field labels. For a Korean user, use:
 
 ```text
-Summary
+요약
 - ...
 
-Changed files
+변경 파일
 - ...
 
-Validation
+검증
 - ...
 
-Codex review
-- Mode: standard | adversarial | rescue | not run
-- Applied:
-- Rejected:
-- Remaining risks:
+Codex 검토
+- 모드: standard | adversarial | rescue | not run
+- 경로: rescue review-loop | rescue fix
+- 모델:
+- 검토 횟수: <completed>/3
+- 적용:
+- 거부:
+- 보류:
+- 남은 위험:
 ```
 
 ## Repository-specific commands
@@ -121,4 +140,4 @@ Claude-specific additions:
 
 - Do not use Codex as an excuse to skip Claude's own verification.
 - Do not merge or commit unless explicitly requested.
-- Do not re-invoke Codex on the same change just to overturn a prior finding.
+- Do not re-invoke Codex on an unchanged diff just to overturn a prior finding.

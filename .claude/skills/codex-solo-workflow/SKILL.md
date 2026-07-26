@@ -1,6 +1,6 @@
 ---
 name: codex-solo-workflow
-description: Discipline for using Codex as the sole agent, without a separate Claude Code orchestrator. Codex reviews, rescues, and PR-checks its own work. Covers standard self-review, adversarial self-review, rescue (stuck/failing), and PR-readiness review. Triggers when Codex has just modified code, is stuck on a bug, or is preparing a PR.
+description: Discipline for using Codex as the sole agent, without a separate Claude Code orchestrator. Run standard, adversarial, and PR self-reviews as a bounded review-fix-validation loop, rescue stuck work, and report in the user's language. Triggers after Codex modifies code, gets stuck on a bug, or prepares a PR.
 ---
 
 # Codex solo workflow
@@ -17,21 +17,42 @@ Review-and-rescue discipline for when **Codex is the only agent** — there is n
 4. **Ordinary change worth a second pass** → Standard self-review.
 5. **No code changed and user did not ask** → do not review.
 
-## Standard self-review
+## Response language
+
+Match the user's language for findings, explanations, verification steps, suggested fixes, summaries, and the final report.
+
+- For a Korean user, write that prose in Korean.
+- Keep code identifiers, file paths, commands, `Severity` / `Confidence` field names, and their enum values in English.
+- Localize human-facing report headings and field labels.
+
+## Review pass
+
+For a standard self-review:
 
 1. Re-read the diff (`git diff`, or the diff against the base branch) in the reviewer role.
 2. Walk the What-to-check lists (Correctness / Security / Tests / Maintainability) below.
 3. Record findings in the Findings format below (Severity / Confidence / File / Issue / Why it matters / How to verify / Suggested fix).
-4. Triage (below), apply only the safe fixes, then run the relevant tests.
 
-## Adversarial self-review
-
-Same as standard, but adopt a stance of **trying to break your own change**:
+For an adversarial self-review, use the same pass and adopt a stance of **trying to break your own change**:
 
 - Ask "if this change is wrong, where does it break first?" before reading line by line.
 - Actively hunt edge cases, boundary values, concurrency, and failure paths.
 - For every optimistic assumption, try to construct a counterexample.
 - Mark anything you cannot reproduce as `Confidence: Speculative`.
+
+## Self-review loop
+
+Run standard, adversarial, and PR self-reviews with at most **3 passes**:
+
+1. Start at pass 1. Record the diff being reviewed, deliberately reset into the reviewer role, and run the selected review pass.
+2. Classify every finding as `Apply`, `Investigate`, `Reject`, or `Defer`.
+3. Verify `Investigate` findings. Apply only confirmed, in-scope fixes; record reasons for `Reject` and `Defer`.
+4. Run focused tests, lint, typecheck, or build checks appropriate to the changed code. Treat a validation failure as an issue to investigate before deciding whether another pass is possible.
+5. Stop successfully when no `Apply` or unresolved `Investigate` finding remains and relevant validation passes.
+6. When the diff changed and the pass count is below 3, increment the count and return to step 1.
+7. Otherwise stop and report remaining risks: pass 3 was exhausted, the diff did not change, the same finding repeated without new evidence, validation cannot pass, or a user decision is required.
+
+Do not re-review an unchanged diff merely to obtain a different opinion.
 
 ## Rescue mode
 
@@ -53,13 +74,14 @@ Then:
 2. Write the smallest test that reproduces the failure first.
 3. Make it pass with the smallest safe change; avoid broad rewrites.
 4. Re-read the patch before applying — check for broad rewrites, secrets, generated files, and silenced tests/lint/types.
+5. If rescue changes code, enter the self-review loop before reporting completion.
 
 ## PR review mode
 
 1. **Self-review the diff first.** What changed, what behavior is affected, which tests cover it, riskiest files, and whether secrets / generated files / lockfiles / migrations are involved.
 2. **Pick the review depth** based on risk: standard for normal, adversarial for risky.
-3. Run the chosen self-review above.
-4. Triage findings (below). Verify by reading code, reproduce when possible, run focused tests after changes.
+3. Run the bounded self-review loop.
+4. Report unresolved findings and validation results.
 
 ## Review severity
 
@@ -81,6 +103,8 @@ Why it matters:
 How to verify:
 Suggested fix:
 ```
+
+Write `Issue`, `Why it matters`, `How to verify`, and `Suggested fix` prose in the user's language.
 
 `Confidence` lets you triage findings as `Apply` / `Investigate` / `Reject` / `Defer` without re-deriving certainty:
 
@@ -155,29 +179,33 @@ When a finding conflicts with your own implementation decision:
 1. Re-read the relevant code and tests before deciding.
 2. If the finding is factually wrong (you misread the code), classify it `Reject` and record why.
 3. If it is a judgment-based trade-off, surface both views to the user and let the user decide — do not silently override.
-4. Do not re-review the same change just to argue against a previous finding; re-review only when new information (a new commit, a new failing test) appears.
+4. Do not re-review an unchanged diff to argue against a previous finding. Re-review a changed diff after an applied fix or validation-related change only within the bounded loop.
 
 ## Final report section
 
-Include in the response back to the user:
+Localize the heading and human-facing field labels. For a Korean user, use:
 
 ```text
-Codex solo review
-- Mode: standard | adversarial | rescue | pr-review
-- Applied:
-- Rejected:
-- Remaining risks:
+Codex 단독 검토
+- 모드: standard | adversarial | rescue | pr-review
+- 검토 횟수: <completed>/3
+- 적용:
+- 거부:
+- 보류:
+- 남은 위험:
 ```
 
-For PR mode, use this fuller form instead:
+For a Korean PR report, use:
 
 ```text
-PR readiness
-- Summary:
-- Risk level:
-- Tests:
-- Mode:
-- Findings applied:
-- Findings rejected:
-- Remaining risks:
+PR 준비 상태
+- 요약:
+- 위험 수준:
+- 테스트:
+- 모드:
+- 검토 횟수: <completed>/3
+- 적용한 findings:
+- 거부한 findings:
+- 보류한 findings:
+- 남은 위험:
 ```
