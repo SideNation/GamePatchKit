@@ -18,8 +18,9 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
-    <!-- Test-only: validates fixtures against schemas/*.schema.json. System.Text.Json-based so it never
-         contends with the Newtonsoft.Json pin above (NJsonSchema would have forced Newtonsoft.Json 13.0.3+). -->
+    <!-- Validates Packager input/output and schema fixtures against schemas/*.schema.json.
+         System.Text.Json-based so it never contends with the Newtonsoft.Json pin above
+         (NJsonSchema would have forced Newtonsoft.Json 13.0.3+). -->
     <PackageVersion Include="JsonSchema.Net" Version="9.3.0" />
   </ItemGroup>
 

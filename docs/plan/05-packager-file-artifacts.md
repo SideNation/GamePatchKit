@@ -129,3 +129,53 @@ pipeline은 bundle 생성 단계를 끼울 수 있는 구조로 만든다.
   manifest 생성 전에 실패하고 기존 결과를 변경하지 않는다(검증 기준 18, 26).
 - hash 경로 충돌을 포함한 나머지 PRD 입력 오류도 실패하고 기존 결과를 변경하지
   않는다(검증 기준 18).
+
+## 개발 v2
+
+v1 계획은 보존하며, 아래 내용으로 05단계 구현 결과와 확정 계약을 추가한다.
+
+### 구현 결정
+
+- 공개 진입점은 `FilePackageBuilder.BuildAsync(FilePackageRequest,
+  CancellationToken)`이며 이전 canonical manifest byte와 `manifestHash`의 유무로
+  최초·incremental package를 구분한다.
+- `package-config.schema.json`과 `release-manifest.schema.json`은 Packager assembly에
+  embedded resource로 포함한다. config와 생성·이전 manifest는 JSON Schema →
+  Core parser·의미 검증 → 실제 payload 검증 순서로 확인한다.
+- source 탐색은 Windows의 volume/file ID, Unix 계열의 device/inode를 snapshot
+  identity로 사용한다. source root와 모든 발견 entry를 기록하고, 선택 파일은 열린
+  no-follow handle의 identity·크기·수정 시각을 hash 전후에 비교한다.
+- output은 source root 밖이어야 한다. staging은 output과 같은 filesystem에 만들고
+  final source 재열거가 최초 snapshot과 같을 때만 게시한다.
+- 이 단계에서는 bundle을 새로 만들지 않는다. 최초 package의 bundle-mode 파일과
+  incremental의 새·변경 파일은 file override로 만들며 06의 bundle 단계가 이후
+  baseline 생성을 연결한다.
+- 기존 bundle은 모든 entry가 현재도 같은 경로·크기·`fileHash`·group이고 target
+  mode가 `bundle`일 때만 전체를 재사용한다. entry 일부만 달라지면 02의 미참조
+  bundle entry 금지 계약을 지키기 위해 그 bundle의 현재 파일 전체를 file
+  override로 전환한다.
+- `default` group의 `required` 설정 필드가 없으므로, 실제 default 파일이 있으면
+  manifest에 `required: true`로 기록한다.
+- build report는 `PackageBuildReport` typed 결과로 반환하며 생성 시각·machine·source
+  revision처럼 비결정적인 값을 불변 publish tree에 기록하지 않는다.
+- `PackagePayloadVerifier`는 실제 object 크기·hash, part 결합과 압축 해제 후 원본
+  크기·`fileHash`를 streaming으로 검증한다. signature를 포함한 통합 verify API는
+  07·11단계에서 이 API를 조합한다.
+
+자세한 호출·오류 계약은 [file package 생성 문서](../contracts/file-packager.md)에
+기록한다.
+
+### 완료 상태
+
+- [x] no-follow source 탐색, canonical 경로 변환, Core glob 선별·정렬
+- [x] stable identity·크기·수정 시각 snapshot과 hash 전후·최종 재검증
+- [x] 무압축·zstd file artifact, 고정 크기 part와 content-addressed 불변 배치
+- [x] 기존 hash 경로 byte 검증·재사용과 충돌 거부
+- [x] 최초 package와 `compactVersion = 0` canonical manifest
+- [x] incremental 추가·변경·삭제·group 이동 분류와 file·bundle 재사용 정책
+- [x] compression 정책 변경 시 기존 metadata·manifest 재사용
+- [x] config·manifest schema, Core 참조와 실제 payload 검증
+- [x] 선택적 `manifest.json.zst`, typed build report와 source revision 기록
+- [x] same-input 결정성, single·parts, default file mode, mode 전환, bundle 전체
+  재사용·fallback, 삭제, 손상 object·part, hash 충돌, symlink와 source
+  추가·삭제·교체·변경 회귀 테스트

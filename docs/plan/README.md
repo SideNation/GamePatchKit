@@ -91,3 +91,4 @@ Packager와 Runtime은 Core 계약(03)으로만 연결되므로 03 이후 두 �
 v1 진행 상태를 보존하며 아래 항목이 같은 단계의 최신 상태를 덮어쓴다.
 
 - [x] 04 zstd codec adapter
+- [x] 05 Packager file artifact·package
