@@ -1,5 +1,4 @@
 using System;
-using System.Security.Cryptography;
 using System.Text;
 using GamePatchKit.Core.Errors;
 using GamePatchKit.Core.Json;
@@ -28,26 +27,34 @@ public class TestGoldenVectors
         }
     }
 
+    // Runs the vectors through the identity API the rest of the system uses, so the fixtures pin
+    // ReleaseIdentity's real output rather than a computation written alongside them.
     [Theory]
     [MemberData(nameof(Vectors))]
     public void ProducesExpectedCanonicalBytesAndHashes(string vectorName, Func<string, ReleaseManifest> build)
     {
         ReleaseManifest draft = build(PlaceholderDataVersion);
-        ManifestIdentity identity = ManifestIdentity.FromManifest(draft);
-        byte[] identityBytes = CanonicalJsonWriter.Write(identity.ToCanonicalValue());
-        string dataVersion = "v1-" + Sha256Hex(identityBytes);
 
-        ReleaseManifest manifest = build(dataVersion);
-        byte[] manifestBytes = CanonicalJsonWriter.Write(manifest.ToJson());
-        string manifestHash = Sha256Hex(manifestBytes);
+        byte[] identityBytes = ReleaseIdentity.ComputeIdentityBytes(draft);
+        FinalizedManifest finalized = ReleaseIdentity.Finalize(draft, CompactVersionRule.Initial);
 
-        ValidationResult validation = ManifestValidator.Validate(manifest);
+        ValidationResult validation = ManifestValidator.Validate(finalized.Manifest);
         Assert.True(validation.IsValid, string.Join("; ", validation.Errors));
 
         Assert.Equal(GoldenVectorFixtures.ReadBytes(vectorName, "identity.canonical.json"), identityBytes);
-        Assert.Equal(GoldenVectorFixtures.ReadText(vectorName, "data-version.txt"), dataVersion);
-        Assert.Equal(GoldenVectorFixtures.ReadBytes(vectorName, "manifest.canonical.json"), manifestBytes);
-        Assert.Equal(GoldenVectorFixtures.ReadText(vectorName, "manifest-hash.txt"), manifestHash);
+        Assert.Equal(GoldenVectorFixtures.ReadText(vectorName, "data-version.txt"), finalized.DataVersion);
+        Assert.Equal(GoldenVectorFixtures.ReadBytes(vectorName, "manifest.canonical.json"), finalized.GetCanonicalBytes());
+        Assert.Equal(GoldenVectorFixtures.ReadText(vectorName, "manifest-hash.txt"), finalized.ManifestHash);
+    }
+
+    [Theory]
+    [MemberData(nameof(VectorNames))]
+    public void VerifiesFixtureBytesAgainstTheFixtureManifestHash(string vectorName)
+    {
+        byte[] manifestBytes = GoldenVectorFixtures.ReadBytes(vectorName, "manifest.canonical.json");
+        string manifestHash = GoldenVectorFixtures.ReadText(vectorName, "manifest-hash.txt");
+
+        Assert.True(ReleaseIdentity.VerifyManifestHash(manifestBytes, manifestHash).IsValid);
     }
 
     [Theory]
@@ -137,18 +144,5 @@ public class TestGoldenVectors
 
         Assert.False(result.IsValid);
         Assert.Contains(result.Errors, e => e.Code == ManifestErrorCodes.NonCanonicalPath);
-    }
-
-    private static string Sha256Hex(byte[] data)
-    {
-        byte[] hash = SHA256.HashData(data);
-        var builder = new StringBuilder(hash.Length * 2);
-
-        foreach (byte b in hash)
-        {
-            builder.Append(b.ToString("x2"));
-        }
-
-        return builder.ToString();
     }
 }

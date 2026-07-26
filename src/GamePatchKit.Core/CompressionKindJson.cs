@@ -13,7 +13,7 @@ namespace GamePatchKit.Core
         private const string CodecIdPropertyName = "codecId";
         private const string NoneKindValue = "none";
         private const string ZstdKindValue = "zstd";
-        private const string ZstdCodecIdValue = "zstd";
+        private const string ZstdCodecIdValue = CompressionCodecIds.Zstd;
 
         private static readonly HashSet<string> _noneProperties = new HashSet<string> { KindPropertyName };
         private static readonly HashSet<string> _zstdProperties = new HashSet<string> { KindPropertyName, CodecIdPropertyName };

@@ -74,7 +74,7 @@ Packager와 Runtime은 Core 계약(03)으로만 연결되므로 03 이후 두 �
 
 - [ ] 01 solution·프로젝트 구성
 - [x] 02 JSON Schema·canonical 규칙 고정
-- [ ] 03 Core identity·manifest hash·diff·download plan
+- [x] 03 Core identity·manifest hash·diff·download plan
 - [ ] 04 zstd codec adapter
 - [ ] 05 Packager file artifact·package
 - [ ] 06 deterministic bundle·compact

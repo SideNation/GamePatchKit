@@ -28,6 +28,11 @@ namespace GamePatchKit.Core.Manifests
         // bundle artifacts it is the artifact's own recorded path.
         public abstract string ContentAddressedSortKey(string packageId);
 
+        // The objects this artifact is actually stored as, in canonical order: one per whole payload, one per
+        // part. Diff and download planning work on these rather than on the artifact as a unit, because a
+        // multipart artifact can be partially present locally.
+        public abstract IReadOnlyList<ArtifactPayloadObject> GetPayloadObjects();
+
         public static bool TryParse(JObject obj, out ManifestArtifact? artifact, out IReadOnlyList<GamePatchKitError> errors)
         {
             if (obj == null)
@@ -209,6 +214,20 @@ namespace GamePatchKit.Core.Manifests
                 return ContentAddressedPath.FileArtifactDirectory(packageId, PrimaryArtifactHash);
             }
 
+            public override IReadOnlyList<ArtifactPayloadObject> GetPayloadObjects()
+            {
+                if (Payload is FilePayload.Single single)
+                {
+                    return new List<ArtifactPayloadObject> { new ArtifactPayloadObject(single.Path, single.Size, single.ArtifactHash) };
+                }
+
+                var parts = (FilePayload.Parts)Payload;
+
+                return parts.PartList
+                    .Select(part => new ArtifactPayloadObject(part.Path, part.Size, part.PartHash))
+                    .ToList();
+            }
+
             public override JObject ToJson()
             {
                 return new JObject
@@ -247,6 +266,11 @@ namespace GamePatchKit.Core.Manifests
             public override string ContentAddressedSortKey(string packageId)
             {
                 return Path;
+            }
+
+            public override IReadOnlyList<ArtifactPayloadObject> GetPayloadObjects()
+            {
+                return new List<ArtifactPayloadObject> { new ArtifactPayloadObject(Path, Size, ArtifactHash) };
             }
 
             public override JObject ToJson()

@@ -55,5 +55,10 @@ namespace GamePatchKit.Core.Manifests
         public const string DuplicateBundleEntryPath = "manifest.duplicate-bundle-entry-path";
 
         public const string BundleEntryPathMismatch = "manifest.bundle-entry-path-mismatch";
+
+        // Identity (ReleaseIdentity).
+        public const string InvalidManifestHashFormat = "manifest.invalid-manifest-hash-format";
+
+        public const string ManifestHashMismatch = "manifest.manifest-hash-mismatch";
     }
 }
