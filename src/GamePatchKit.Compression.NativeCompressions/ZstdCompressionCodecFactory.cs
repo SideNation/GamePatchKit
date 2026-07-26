@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,6 +21,9 @@ namespace GamePatchKit.Compression.NativeCompressions
         private const int CompressionLevel = 3;
         private const int CompressionWorkerCount = 0;
         private const int StreamBufferSize = 65_536;
+        private const string InvalidFrameMessage = "The zstd frame is invalid.";
+        private const string StalledDecoderMessage = "The zstd decoder made no progress.";
+        private const string TruncatedFrameMessage = "The zstd frame ended before completion.";
 
         private static readonly ZstandardCompressionOptions _compressionOptions = new ZstandardCompressionOptions
         {
@@ -47,12 +51,67 @@ namespace GamePatchKit.Compression.NativeCompressions
 
         public async Task DecompressAsync(Stream source, Stream destination, CancellationToken cancellationToken)
         {
-            await using (var decompressionStream = new ZstandardStream(source, _decompressionOptions, leaveOpen: true))
-            {
-                await decompressionStream.CopyToAsync(destination, StreamBufferSize, cancellationToken).ConfigureAwait(false);
-            }
+            byte[] sourceBuffer = ArrayPool<byte>.Shared.Rent(StreamBufferSize);
+            byte[] destinationBuffer = ArrayPool<byte>.Shared.Rent(StreamBufferSize);
 
-            await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                using var decoder = new ZstandardDecoder(_decompressionOptions);
+                int sourceOffset = 0;
+                int sourceCount = 0;
+                OperationStatus status = OperationStatus.NeedMoreData;
+
+                while (status != OperationStatus.Done)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    if (sourceOffset == sourceCount && status != OperationStatus.DestinationTooSmall)
+                    {
+                        sourceCount = await source.ReadAsync(
+                            sourceBuffer.AsMemory(0, StreamBufferSize),
+                            cancellationToken).ConfigureAwait(false);
+                        sourceOffset = 0;
+
+                        if (sourceCount == 0)
+                        {
+                            throw new InvalidDataException(TruncatedFrameMessage);
+                        }
+                    }
+
+                    status = decoder.Decompress(
+                        sourceBuffer.AsSpan(sourceOffset, sourceCount - sourceOffset),
+                        destinationBuffer.AsSpan(0, StreamBufferSize),
+                        out int bytesConsumed,
+                        out int bytesWritten);
+
+                    if (status == OperationStatus.InvalidData)
+                    {
+                        throw new InvalidDataException(InvalidFrameMessage);
+                    }
+
+                    sourceOffset += bytesConsumed;
+
+                    if (bytesWritten > 0)
+                    {
+                        await destination.WriteAsync(
+                            destinationBuffer.AsMemory(0, bytesWritten),
+                            cancellationToken).ConfigureAwait(false);
+                    }
+
+                    if (status != OperationStatus.Done && bytesConsumed == 0 && bytesWritten == 0 &&
+                        !(status == OperationStatus.NeedMoreData && sourceOffset == sourceCount))
+                    {
+                        throw new InvalidDataException(StalledDecoderMessage);
+                    }
+                }
+
+                await destination.FlushAsync(cancellationToken).ConfigureAwait(false);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(sourceBuffer, clearArray: false);
+                ArrayPool<byte>.Shared.Return(destinationBuffer, clearArray: false);
+            }
         }
     }
 }

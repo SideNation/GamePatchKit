@@ -44,9 +44,12 @@ artifact 생성 정책으로 별도 version 변경을 검토해야 한다.
 
 ## 에러 처리
 
-codec은 upstream zstd 오류, stream 읽기·쓰기 오류와 `OperationCanceledException`을
-변환하지 않고 호출자에게 전달한다. Packager와 Runtime은 실패한 출력 stream을
-완성된 artifact로 사용하지 않아야 한다.
+codec은 잘못된 zstd magic·frame, content checksum 불일치, 빈 압축 입력과 EOF 전에
+끝난 frame을 `InvalidDataException`으로 거부한다. stream 읽기·쓰기 오류와
+`OperationCanceledException`은 변환하지 않고 호출자에게 전달한다.
+
+해제 실패 전에 일부 byte가 출력 stream에 기록됐을 수 있다. Packager와 Runtime은
+예외가 발생한 출력 stream을 완성된 artifact로 사용하지 않고 전체를 폐기해야 한다.
 
 ## 지원 플랫폼과 smoke test
 

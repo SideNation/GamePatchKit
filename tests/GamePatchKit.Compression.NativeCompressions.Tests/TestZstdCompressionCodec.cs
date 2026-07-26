@@ -6,6 +6,8 @@ namespace GamePatchKit.Compression.NativeCompressions.Tests;
 
 public class TestZstdCompressionCodec
 {
+    private static readonly TimeSpan _invalidFrameRejectionTimeout = TimeSpan.FromSeconds(5);
+
     [Fact]
     public void FactoryCreatesZstdCodec()
     {
@@ -44,7 +46,7 @@ public class TestZstdCompressionCodec
         byte[] sourceBytes = CreateSourceBytes(2_097_152);
         byte[] compressedBytes = await CompressAsync(sourceBytes, 257);
         ICompressionCodec codec = ZstdCompressionCodecFactory.Create();
-        await using var compressedStream = new MemoryStream(compressedBytes);
+        await using var compressedStream = new ChunkedReadStream(compressedBytes, 13);
         await using var restoredStream = new MemoryStream();
 
         await codec.DecompressAsync(compressedStream, restoredStream, CancellationToken.None);
@@ -66,6 +68,54 @@ public class TestZstdCompressionCodec
 
         Assert.NotEmpty(compressedBytes);
         Assert.Empty(restoredStream.ToArray());
+    }
+
+    [Fact]
+    public async Task DecompressAsync_MalformedFrame_ThrowsWithoutHanging()
+    {
+        byte[] malformedFrame = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
+
+        await AssertInvalidFrameRejectedAsync(malformedFrame);
+    }
+
+    [Fact]
+    public async Task DecompressAsync_ChecksumMismatch_ThrowsWithoutHanging()
+    {
+        byte[] compressedBytes = await CompressAsync(CreateSourceBytes(16_384), 257);
+        compressedBytes[^1] ^= 0xff;
+
+        await AssertInvalidFrameRejectedAsync(compressedBytes);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public async Task DecompressAsync_TruncatedFrame_ThrowsInvalidDataException(int removedByteCount)
+    {
+        byte[] compressedBytes = await CompressAsync(CreateSourceBytes(16_384), 257);
+        byte[] truncatedFrame = compressedBytes[..^removedByteCount];
+
+        await AssertInvalidFrameRejectedAsync(truncatedFrame);
+    }
+
+    [Fact]
+    public async Task DecompressAsync_EmptyCompressedStream_ThrowsInvalidDataException()
+    {
+        await AssertInvalidFrameRejectedAsync(Array.Empty<byte>());
+    }
+
+    private static async Task AssertInvalidFrameRejectedAsync(byte[] compressedBytes)
+    {
+        ICompressionCodec codec = ZstdCompressionCodecFactory.Create();
+        await using var compressedStream = new MemoryStream(compressedBytes);
+        await using var restoredStream = new MemoryStream();
+        Task decompressionTask = Task.Run(
+            () => codec.DecompressAsync(compressedStream, restoredStream, CancellationToken.None));
+
+        Task<InvalidDataException> assertionTask = Assert.ThrowsAsync<InvalidDataException>(() => decompressionTask);
+        await assertionTask.WaitAsync(_invalidFrameRejectionTimeout);
     }
 
     private static async Task<byte[]> CompressAsync(byte[] sourceBytes, int maximumReadSize)

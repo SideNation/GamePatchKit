@@ -49,7 +49,11 @@ v1 계획은 보존하며, 아래 내용으로 04단계 구현 결과와 고정 
   명시하되 target framework는 `netstandard2.1`을 유지한다.
 - `ZstdCompressionCodecFactory.Create()`는 `ICompressionCodec`을 반환하며
   upstream type을 public signature에 노출하지 않는다.
-- 압축과 해제는 64 KiB buffer로 stream 간 복사하고 입력·출력 stream을 닫지 않는다.
+- 압축은 64 KiB buffer로 stream 간 복사한다. 해제는 pool에서 빌린 64 KiB
+  입력·출력 buffer와 low-level `ZstandardDecoder`를 사용하며 입력·출력 stream을
+  닫지 않는다.
+- 해제 loop는 `OperationStatus.InvalidData`, 무진행 상태와 frame 완료 전 EOF를
+  `InvalidDataException`으로 거부한다.
 - 압축 설정을 다음 값으로 고정한다.
   - compression level: `3`
   - content size flag: `false`
@@ -85,4 +89,5 @@ dotnet test tests/GamePatchKit.Compression.NativeCompressions.Tests \
 - [x] Runtime 주입용 `ICompressionCodec` factory
 - [x] upstream type public API 격리 architecture test
 - [x] 결정성·streaming SHA-256 round-trip test
+- [x] malformed·checksum mismatch·빈 입력·1~4 byte truncated frame 거부 test
 - [x] 지원 platform 목록과 platform smoke test·수동 실행 절차
