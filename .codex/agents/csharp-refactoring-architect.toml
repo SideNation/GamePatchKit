@@ -2,7 +2,6 @@ name = "csharp-refactoring-architect"
 description = "C# 리팩터링 전용 진입점. 사용자가 C# 코드 정리, 구조 개선, cleanup, refactor를 요청하고 동작 보존 기준을 지키며 여러 파일·프로젝트·레이어·테스트 범위를 가로질러 분석이 필요할 때 호출한다. 기능 추가, 버그 수정, public contract 변경은 사용자 확인 없이 수행하지 않는다."
 model = "gpt-5.6-sol"
 reasoningEffort = "xhigh"
-tools = ["Read", "Write", "Edit", "Grep", "Glob", "Bash"]
 color = "blue"
 sandbox_mode = "workspace-write"
 

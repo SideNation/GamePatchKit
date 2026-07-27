@@ -2,7 +2,6 @@ name = "csharp-feature-architect"
 description = "C# 신규 기능 설계 전용 진입점. 사용자가 코드 작성 전 합의용 설계 문서를 요청하거나, 요구사항이 여러 bounded context·프로젝트·레이어를 가로질러 분석이 필요할 때 호출한다. 가장 단순한 구조(단일 클래스/서비스/기존 폴더)를 먼저 검토하고, 단순 구조로 요구사항을 만족하지 못할 때만 책임 분리·도메인 분해·인터페이스·패턴을 추가한다. 구현·리팩터링·테스트 코드는 작성하지 않는다."
 model = "gpt-5.6-sol"
 reasoningEffort = "xhigh"
-tools = ["Read", "Write", "Edit", "Grep", "Glob"]
 color = "cyan"
 sandbox_mode = "workspace-write"
 
