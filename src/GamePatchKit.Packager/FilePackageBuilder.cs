@@ -168,7 +168,11 @@ public sealed class FilePackageBuilder
             else if (CanReusePreviousBundle(file, previousFile, previous, reusableBundleHashes, out ManifestArtifact.BundleArtifact? bundleArtifact))
             {
                 state.ArtifactsByKey.TryAdd(bundleArtifact!.ContentAddressedSortKey(request.Config.PackageId), bundleArtifact);
-                state.ReusedBundleHashes.Add(bundleArtifact.ArtifactHash);
+
+                if (state.ReusedBundleHashes.Add(bundleArtifact.ArtifactHash))
+                {
+                    state.ReusedBundleBytes += bundleArtifact.Size;
+                }
                 var bundleReference = (FileSource.BundleEntryReference)previousFile!.Source;
                 sourceReference = new FileSource.BundleEntryReference(bundleReference.ArtifactHash, bundleReference.EntryPath);
             }
@@ -226,9 +230,9 @@ public sealed class FilePackageBuilder
                     state.CreatedBundleHashes.Add(bundle.Artifact.ArtifactHash);
                     state.CreatedBundleBytes += bundle.PayloadBytes;
                 }
-                else
+                else if (state.ReusedBundleHashes.Add(bundle.Artifact.ArtifactHash))
                 {
-                    state.ReusedBundleHashes.Add(bundle.Artifact.ArtifactHash);
+                    state.ReusedBundleBytes += bundle.Artifact.Size;
                 }
 
                 foreach (BundleEntry entry in bundle.Artifact.Entries)
@@ -391,7 +395,13 @@ public sealed class FilePackageBuilder
         }
         else if (!state.CreatedFileArtifactHashes.Contains(artifact.PrimaryArtifactHash))
         {
-            state.ReusedFileArtifactHashes.Add(artifact.PrimaryArtifactHash);
+            // HashSet.Add's return value is what keeps a content-addressed artifact referenced by several
+            // files from having its bytes counted once per file - only the first time this hash is newly
+            // reused in this build does it contribute to the total.
+            if (state.ReusedFileArtifactHashes.Add(artifact.PrimaryArtifactHash))
+            {
+                state.ReusedFileArtifactBytes += artifact.GetPayloadObjects().Sum(payload => payload.Size);
+            }
         }
 
         return new FileSource.FileReference(artifact.PrimaryArtifactHash);
@@ -729,9 +739,11 @@ public sealed class FilePackageBuilder
             state.CreatedFileArtifactHashes.Count,
             state.CreatedFileArtifactBytes,
             state.ReusedFileArtifactHashes.Count,
+            state.ReusedFileArtifactBytes,
             state.CreatedBundleHashes.Count,
             state.CreatedBundleBytes,
             state.ReusedBundleHashes.Count,
+            state.ReusedBundleBytes,
             policies);
     }
 
@@ -838,6 +850,10 @@ public sealed class FilePackageBuilder
         public long CreatedFileArtifactBytes { get; set; }
 
         public long CreatedBundleBytes { get; set; }
+
+        public long ReusedFileArtifactBytes { get; set; }
+
+        public long ReusedBundleBytes { get; set; }
 
         public FinalizedManifest Finalized { get; set; } = null!;
     }

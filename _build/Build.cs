@@ -73,6 +73,22 @@ class Build : NukeBuild
             DotNetTest(s => s
                 .SetProjectFile(_solution)
                 .SetConfiguration(_configuration)
+                .SetFilter("Category!=Performance")
+                .EnableNoRestore()
+                .EnableNoBuild());
+        });
+
+    // Step 12 (docs/plan/12-performance-validation.md): the 10,000-file/1GiB performance suite is excluded
+    // from Test above and run through this separate target instead, since it is far slower than the rest of
+    // the suite and its real blocking-gate assertions only apply on Linux (see docs/perf/README.md).
+    Target Performance => _ => _
+        .DependsOn(Compile)
+        .Executes(() =>
+        {
+            DotNetTest(s => s
+                .SetProjectFile(TestsDirectory / "GamePatchKit.PerformanceTests" / "GamePatchKit.PerformanceTests.csproj")
+                .SetConfiguration(_configuration)
+                .SetFilter("Category=Performance")
                 .EnableNoRestore()
                 .EnableNoBuild());
         });

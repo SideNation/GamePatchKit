@@ -88,9 +88,11 @@ internal static class PackageCommand
                 ["createdFileArtifactCount"] = report.CreatedFileArtifactCount,
                 ["createdFileArtifactBytes"] = report.CreatedFileArtifactBytes,
                 ["reusedFileArtifactCount"] = report.ReusedFileArtifactCount,
+                ["reusedFileArtifactBytes"] = report.ReusedFileArtifactBytes,
                 ["createdBundleArtifactCount"] = report.CreatedBundleArtifactCount,
                 ["createdBundleArtifactBytes"] = report.CreatedBundleArtifactBytes,
                 ["reusedBundleArtifactCount"] = report.ReusedBundleArtifactCount,
+                ["reusedBundleArtifactBytes"] = report.ReusedBundleArtifactBytes,
             },
             ["estimatedFirstInstall"] = ReleaseReporting.DownloadEstimate(firstInstall),
             ["durationsMs"] = timings.ToJson(),
@@ -120,9 +122,11 @@ internal static class PackageCommand
         lines.Add($"  changes: {report.AddedFiles.Count} added, {report.ChangedFiles.Count} changed, "
             + $"{report.DeletedFiles.Count} deleted, {report.MovedGroupFiles.Count} group-moved");
         lines.Add($"  file artifacts:   {report.CreatedFileArtifactCount} created "
-            + $"({report.CreatedFileArtifactBytes} bytes), {report.ReusedFileArtifactCount} reused");
+            + $"({report.CreatedFileArtifactBytes} bytes), {report.ReusedFileArtifactCount} reused "
+            + $"({report.ReusedFileArtifactBytes} bytes)");
         lines.Add($"  bundle artifacts: {report.CreatedBundleArtifactCount} created "
-            + $"({report.CreatedBundleArtifactBytes} bytes), {report.ReusedBundleArtifactCount} reused");
+            + $"({report.CreatedBundleArtifactBytes} bytes), {report.ReusedBundleArtifactCount} reused "
+            + $"({report.ReusedBundleArtifactBytes} bytes)");
         lines.Add("  estimated first install (required groups):");
         lines.AddRange(ReleaseReporting.DownloadEstimateLines(firstInstall).Select(line => "  " + line));
         lines.Add("  durations:");

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Referenced only so their build output (GamePatchKit.Cli.dll, GamePatchKit.PerformanceTests.Harness.dll)
+         lands next to this project's own output and can be located via AppContext.BaseDirectory - these
+         scenarios are driven as subprocesses, not called in-process. -->
+    <ProjectReference Include="..\..\src\GamePatchKit.Cli\GamePatchKit.Cli.csproj" />
+    <ProjectReference Include="..\GamePatchKit.PerformanceTests.Harness\GamePatchKit.PerformanceTests.Harness.csproj" />
+    <ProjectReference Include="..\..\src\GamePatchKit.Core\GamePatchKit.Core.csproj" />
+    <ProjectReference Include="..\..\src\GamePatchKit.Packager\GamePatchKit.Packager.csproj" />
+  </ItemGroup>
+
+</Project>

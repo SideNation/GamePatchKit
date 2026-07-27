@@ -30,11 +30,15 @@ public sealed class PackageBuildReport
 
     public int ReusedFileArtifactCount { get; }
 
+    public long ReusedFileArtifactBytes { get; }
+
     public int CreatedBundleArtifactCount { get; }
 
     public long CreatedBundleArtifactBytes { get; }
 
     public int ReusedBundleArtifactCount { get; }
+
+    public long ReusedBundleArtifactBytes { get; }
 
     public IReadOnlyDictionary<string, string> CompressionPolicies { get; }
 
@@ -52,9 +56,11 @@ public sealed class PackageBuildReport
         int createdFileArtifactCount,
         long createdFileArtifactBytes,
         int reusedFileArtifactCount,
+        long reusedFileArtifactBytes,
         int createdBundleArtifactCount,
         long createdBundleArtifactBytes,
         int reusedBundleArtifactCount,
+        long reusedBundleArtifactBytes,
         IReadOnlyDictionary<string, string> compressionPolicies)
     {
         CreatedAtUtc = createdAtUtc;
@@ -70,9 +76,11 @@ public sealed class PackageBuildReport
         CreatedFileArtifactCount = createdFileArtifactCount;
         CreatedFileArtifactBytes = createdFileArtifactBytes;
         ReusedFileArtifactCount = reusedFileArtifactCount;
+        ReusedFileArtifactBytes = reusedFileArtifactBytes;
         CreatedBundleArtifactCount = createdBundleArtifactCount;
         CreatedBundleArtifactBytes = createdBundleArtifactBytes;
         ReusedBundleArtifactCount = reusedBundleArtifactCount;
+        ReusedBundleArtifactBytes = reusedBundleArtifactBytes;
         CompressionPolicies = new ReadOnlyDictionary<string, string>(
             new Dictionary<string, string>(compressionPolicies, StringComparer.Ordinal));
     }

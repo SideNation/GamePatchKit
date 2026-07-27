@@ -25,6 +25,7 @@ public class TestFilePackageBuilder
         Assert.Equal(File.ReadAllBytes(fixture.SourcePath("data/config.json")), File.ReadAllBytes(fixture.OutputPath(payload.Path)));
         Assert.Equal(0, second.Report.CreatedFileArtifactCount);
         Assert.Equal(1, second.Report.ReusedFileArtifactCount);
+        Assert.Equal(File.ReadAllBytes(fixture.SourcePath("data/config.json")).Length, second.Report.ReusedFileArtifactBytes);
     }
 
     [Fact]
@@ -199,9 +200,10 @@ public class TestFilePackageBuilder
             new FilePackageRequest(secondConfig, fixture.OutputRoot, fixture.Previous(first)));
 
         Assert.True(result.ReusedManifest);
-        Assert.IsType<ManifestArtifact.BundleArtifact>(Assert.Single(result.Release.Manifest.Artifacts));
+        var bundle = Assert.IsType<ManifestArtifact.BundleArtifact>(Assert.Single(result.Release.Manifest.Artifacts));
         Assert.Equal(1, result.Report.ReusedBundleArtifactCount);
         Assert.Equal(0, result.Report.CreatedFileArtifactCount);
+        Assert.Equal(bundle.Size, result.Report.ReusedBundleArtifactBytes);
     }
 
     [Fact]
