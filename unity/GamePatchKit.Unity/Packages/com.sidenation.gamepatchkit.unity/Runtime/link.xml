@@ -1,0 +1,7 @@
+<linker>
+  <assembly fullname="BouncyCastle.Cryptography" preserve="all" />
+  <assembly fullname="GamePatchKit.Core" preserve="all" />
+  <assembly fullname="GamePatchKit.Runtime" preserve="all" />
+  <assembly fullname="GamePatchKit.Unity" preserve="all" />
+</linker>
+

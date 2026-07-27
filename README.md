@@ -5,6 +5,7 @@
 
 - PRD: [docs/prd/game-patch-kit-prd.md](docs/prd/game-patch-kit-prd.md)
 - 개발 계획: [docs/plan/README.md](docs/plan/README.md)
+- Unity Runtime adapter: [docs/contracts/unity-adapter.md](docs/contracts/unity-adapter.md)
 
 ## Build
 
@@ -37,3 +38,13 @@
 
 > **Note:** `Push`는 내부적으로 `Pack`을 실행하므로, `Pack`과 `Push`를 따로 실행하면
 > 버전이 두 번 증가한다. Pack과 Push를 한 번에 하려면 `Push`만 실행한다.
+
+## Unity
+
+```bash
+./unity/GamePatchKit.Unity/scripts/test.sh
+./unity/GamePatchKit.Unity/scripts/build-macos-il2cpp.sh
+```
+
+기준 환경과 사용법은 [Unity Runtime adapter 문서](docs/contracts/unity-adapter.md)를
+참고한다.
