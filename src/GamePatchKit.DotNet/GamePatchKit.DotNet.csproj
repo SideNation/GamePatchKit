@@ -13,4 +13,10 @@
     <ProjectReference Include="..\GamePatchKit.Compression.NativeCompressions\GamePatchKit.Compression.NativeCompressions.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>GamePatchKit.DotNet.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

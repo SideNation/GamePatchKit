@@ -38,6 +38,42 @@ fixture만 제공한다.
    (packageId·group 이름 규칙, group 중복 일치, 예약 group `default` 처리 등은
    `GamePatchKit.Core`의 `PackageConfig`/`PackageConfigValidator` 책임).
 
+1~2는 CLI의 `YamlConfigDocument`, 3~4는 Packager의 `PackageConfigReader`가 수행한다.
+CLI가 아닌 host도 JSON-compatible 데이터를 만들었다면 `PackageConfigReader`로 같은
+schema·모델 검증을 재사용할 수 있다.
+
+## scalar 해석
+
+tag가 없는 plain scalar는 다음만 typed 값으로 해석한다.
+
+| 입력 | 결과 |
+| --- | --- |
+| 빈 값, `~`, `null`/`Null`/`NULL` | null |
+| `true`/`True`/`TRUE`, `false`/`False`/`FALSE` | boolean |
+| `[-+]?[0-9]+` 중 I-JSON 안전 정수 범위(±(2^53-1)) | 정수 |
+| 그 외 | 문자열 |
+
+인용된 scalar는 언제나 문자열이다. hex·octal 정수, 부동소수점과 안전 범위를 넘는 정수는
+문자열이 되어 schema의 type 오류로 거부된다. canonical JSON이 표현할 수 없는 값이 설정에서
+만들어지지 않게 하기 위한 규칙이다.
+
+## 허용하는 tag
+
+명시적 tag는 이 계약이 값 모델로 정의한 것만 허용한다.
+
+| node | 허용 tag |
+| --- | --- |
+| scalar | `!!str`, `!!int`, `!!bool`, `!!null` |
+| mapping | `!!map` |
+| sequence | `!!seq` |
+
+명시적 tag가 있으면 **철자와 인용보다 tag가 우선**한다. `!!str 1`은 정수 1이 아니라 문자열
+`"1"`이다. tag가 선언한 타입으로 읽을 수 없는 값(`!!int abc`, 안전 범위를 넘는 `!!int`)은
+거부한다.
+
+위 표에 없는 tag는 모두 거부한다. `!Foo` 같은 application tag뿐 아니라 `!!float`·`!!binary`
+같은 내장 tag도 canonical JSON이 표현할 수 없으므로 이 계약이 정의하지 않는 tag다.
+
 release manifest는 사용자가 작성하는 설정 파일이 아니라 검증된 설정과 source로
 Packager가 생성하는 별도의 canonical JSON 산출물이다(`release-manifest.schema.json`
 참조).

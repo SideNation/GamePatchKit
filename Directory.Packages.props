@@ -12,14 +12,22 @@
          package (e.g. Microsoft.NET.Test.Sdk requires >= 13.0.3 transitively) and hard-pinning it would
          conflict with those transitive requirements instead of just floating up to satisfy them. -->
     <PackageVersion Include="Newtonsoft.Json" Version="13.0.2" />
+    <!-- Ed25519 for manifest signing (docs/plan/07-cli.md decision). Pure managed with a netstandard2.0
+         target, so the same implementation covers Packager signing on net10.0 and Core verification on
+         netstandard2.1 in step 11 - .NET 10 itself has no Ed25519 in System.Security.Cryptography. -->
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.6.2" />
+    <!-- gamepatchkit.yml parsing (docs/plan/07-cli.md decision). Used through its low-level event parser,
+         which is what makes anchor/alias/merge-key/custom-tag/duplicate-key rejection possible. -->
+    <PackageVersion Include="YamlDotNet" Version="16.3.0" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
-    <!-- Test-only: validates fixtures against schemas/*.schema.json. System.Text.Json-based so it never
-         contends with the Newtonsoft.Json pin above (NJsonSchema would have forced Newtonsoft.Json 13.0.3+). -->
+    <!-- Validates Packager input/output and schema fixtures against schemas/*.schema.json.
+         System.Text.Json-based so it never contends with the Newtonsoft.Json pin above
+         (NJsonSchema would have forced Newtonsoft.Json 13.0.3+). -->
     <PackageVersion Include="JsonSchema.Net" Version="9.3.0" />
   </ItemGroup>
 

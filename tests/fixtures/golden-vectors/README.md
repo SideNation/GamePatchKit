@@ -15,20 +15,22 @@ scenario built and cross-checked in `TestGoldenVectors` (see
 - `data-version.txt` — expected `dataVersion`: `v1-` + lowercase hex64, no
   trailing newline.
 
-## Reserved for 11 (signing/key rotation)
+## Signing (11 — signing/key rotation)
 
-Step 11 extends these same vectors with signing data. To keep one vector
-self-contained per scenario rather than introducing a parallel directory
-tree, add:
+Each vector directory also carries the same test Ed25519 key's signature over
+its own `manifest.canonical.json`, kept in the same self-contained directory
+rather than a parallel tree:
 
-- `public-key.bin` — raw 32-byte test Ed25519 public key.
+- `public-key.bin` — raw 32-byte test Ed25519 public key (the seed is
+  `SigningKeys.PrivateKey()` in `tests/GamePatchKit.Packager.Tests/SigningKeys.cs`
+  - bytes `0x01..0x20` - so the whole test suite shares one canonical test key).
 - `key-id.txt` — expected `keyId` (`ed25519-` + lowercase hex64 SHA-256 of
   `public-key.bin`), no trailing newline.
-- `manifest-sig.canonical.json` — expected canonical `manifest.sig` bytes
-  (signing the vector's own `manifest.canonical.json` bytes with the private
-  key paired to `public-key.bin`).
+- `manifest-sig.canonical.json` — canonical `manifest.sig` bytes signing this
+  vector's own `manifest.canonical.json` bytes with the private key paired to
+  `public-key.bin`.
 
-None of the existing 02 files change shape or meaning when these are added.
+None of the existing 02 files change shape or meaning because of these.
 
 ## Independent cross-check (`tools/`)
 
@@ -36,8 +38,11 @@ None of the existing 02 files change shape or meaning when these are added.
 in Python (`tools/jcs.py`) and either (re)writes these fixtures or, with `--check`,
 verifies the committed files still match it byte-for-byte without writing anything. This
 is deliberately independent of `GamePatchKit.Core.Json.CanonicalJsonWriter` so the
-fixtures are not solely self-validated by the C# implementation they exist to test. It is
-not run by `dotnet test` or CI - re-run it by hand after changing a vector's input model:
+fixtures are not solely self-validated by the C# implementation they exist to test. The
+same independence motivates signing with Python's `cryptography` library (OpenSSL's
+Ed25519) rather than the BouncyCastle implementation `GamePatchKit.Core`/`Packager` use.
+It requires the `cryptography` package (`pip install cryptography`) and is not run by
+`dotnet test` or CI - re-run it by hand after changing a vector's input model:
 
 ```bash
 python3 tests/fixtures/golden-vectors/tools/generate_golden_vectors.py           # regenerate

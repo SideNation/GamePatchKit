@@ -11,4 +11,22 @@
     <ProjectReference Include="..\GamePatchKit.Compression.NativeCompressions\GamePatchKit.Compression.NativeCompressions.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" />
+    <PackageReference Include="JsonSchema.Net" />
+    <PackageReference Include="Newtonsoft.Json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\schemas\package-config.schema.json" Link="Schemas\package-config.schema.json" />
+    <EmbeddedResource Include="..\..\schemas\release-manifest.schema.json" Link="Schemas\release-manifest.schema.json" />
+    <EmbeddedResource Include="..\..\schemas\manifest-signature.schema.json" Link="Schemas\manifest-signature.schema.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>GamePatchKit.Packager.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
 </Project>

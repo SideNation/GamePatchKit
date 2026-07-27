@@ -18,6 +18,10 @@ obj/
 /artifacts/
 .nuke/temp/
 
+# Generated performance-test fixtures (docs/plan/12-performance-validation.md) - large, deterministic, and
+# regenerated on demand, never committed.
+/tests/GamePatchKit.PerformanceTests/.fixtures/
+
 ### Unity ###
 # This .gitignore file should be placed at the root of your Unity project directory
 #

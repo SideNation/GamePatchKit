@@ -20,6 +20,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\GamePatchKit.Core\GamePatchKit.Core.csproj" />
     <ProjectReference Include="..\..\src\GamePatchKit.Runtime\GamePatchKit.Runtime.csproj" />
+    <ProjectReference Include="..\..\src\GamePatchKit.Packager\GamePatchKit.Packager.csproj" />
+    <ProjectReference Include="..\..\src\GamePatchKit.DotNet\GamePatchKit.DotNet.csproj" />
+    <ProjectReference Include="..\GamePatchKit.Conformance\GamePatchKit.Conformance.csproj" />
   </ItemGroup>
 
 </Project>

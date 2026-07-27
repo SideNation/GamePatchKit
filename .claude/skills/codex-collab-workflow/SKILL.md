@@ -1,27 +1,32 @@
 ---
 name: codex-collab-workflow
-description: Coordinate Claude Code with Codex via the Codex Claude Code plugin. Claude runs standard/adversarial reviews and rescue itself by delegating to /codex:rescue (review-only reviews run read-only; rescue runs write-capable); the dedicated /codex:review reviewer is user-triggered. Covers review, adversarial review, rescue, and PR-readiness. Triggers when Claude has just modified code, is stuck on a bug, or is preparing a PR.
+description: Coordinate Claude Code with Codex via the Codex Claude Code plugin. Run standard, adversarial, and PR reviews as a bounded review-fix-validation loop through /codex:rescue, or use rescue for stuck and repeated-failure cases. Return review and rescue prose in the user's language. Triggers after Claude modifies code, gets stuck on a bug, or prepares a PR.
 allowed-tools:
   - Skill(codex:rescue *)
 ---
 # Codex collaboration skill
 
-Single entry point for invoking Codex from Claude Code. Pick a mode, run it, then triage findings using `packages/plugins/workflow/rules/claude-codex-workflow.md`.
+Use `/codex:rescue` as the only Codex entry point. Pick a mode, run the workflow, and triage findings using [claude-codex-workflow.md](../../rules/claude-codex-workflow.md).
 
-## Codex review paths
+## Codex paths
 
-`/codex:rescue` is the only Codex command Claude can invoke. It forwards a free-form task to Codex, and its behavior follows the prompt:
-
-- **Review via rescue (Claude-invocable).** Prompt it to **"review only — do not edit"** and Codex runs **read-only** and returns findings (per codex-rescue, review/diagnosis tasks run without `--write`). This is how Claude runs reviews itself.
-- **Rescue / fix via rescue (Claude-invocable).** Describe the problem and Codex runs **write-capable**, returning a patch or diagnosis.
-
-The **dedicated reviewer** — `/codex:review` and `/codex:adversarial-review` — uses Codex's purpose-built review harness (review-gate, `/codex:status`, `/codex:result`). These are `disable-model-invocation: true`, so **Claude cannot run them**; present the command for the **user** to run when the full review pipeline is wanted.
+- **Review:** Prompt `/codex:rescue` with **"Review only — do not edit"**. Keep this path read-only and let Claude apply accepted findings.
+- **Fix or diagnosis:** Describe the failure without the review-only instruction. This path may write code; verify every resulting change.
 
 ## Model
 
 - model: `gpt-5.6-terra`
-- Pass `--model <model>` on `/codex:rescue` (the dedicated review commands take no `--model` — their model comes from Codex config).
+- Pass `--model <model>` on every `/codex:rescue` invocation.
 - If the user requests a different model, use that value instead.
+
+## Response language
+
+Determine the user's language before every Codex invocation and include it explicitly in the prompt. Do not rely on Codex inferring it from prior conversation context.
+
+- Write findings, explanations, verification steps, suggested fixes, and summaries in the user's language.
+- For a Korean user, write that prose in Korean.
+- Keep code identifiers, file paths, commands, `Severity` / `Confidence` field names, and their enum values in English.
+- Repeat the language instruction on every review pass and rescue call.
 
 ## Mode selection
 
@@ -31,23 +36,37 @@ The **dedicated reviewer** — `/codex:review` and `/codex:adversarial-review` �
 4. **Ordinary change worth a second pair of eyes** → Standard review.
 5. **No code changed and user did not ask** → do not invoke.
 
-## Standard review
+## Review prompts
 
-Claude runs it via rescue (read-only):
+For a standard review, invoke:
 
 ```text
 /codex:rescue --model <model>
 ```
 
-Rescue prompt: *"Review only — do not edit. Review the current diff (working tree, or vs the base branch) for correctness, security, tests, and maintainability. Report each finding as Severity / Confidence / File / Issue / Why it matters / How to verify / Suggested fix."*
+Prompt:
 
-Full dedicated reviewer (user runs): `/codex:review --background`, then `/codex:status`, `/codex:result`.
+> Review only — do not edit. Review the current diff against the base branch, or the working-tree diff when no base is available, for correctness, security, tests, and maintainability. Report each finding as Severity / Confidence / File / Issue / Why it matters / How to verify / Suggested fix.
+>
+> Response language: `<user language>`. Write all finding explanations, verification steps, suggested fixes, and the summary in that language. Keep code identifiers, file paths, commands, and Severity / Confidence labels and values in English.
 
-## Adversarial review
+For an adversarial review, append:
 
-Same as standard, but the rescue prompt takes an adversarial stance: *"Review only — do not edit. Try to break this change: hunt edge cases, boundary values, concurrency, and failure paths; for every optimistic assumption construct a counterexample; mark anything you cannot reproduce as Speculative."*
+> Try to break this change. Hunt edge cases, boundary values, concurrency, and failure paths. Construct a counterexample for every optimistic assumption. Mark anything you cannot reproduce as Speculative.
 
-Full dedicated reviewer (user runs): `/codex:adversarial-review --background`, then `/codex:status`, `/codex:result`.
+## Review loop
+
+Run standard, adversarial, and PR reviews with at most **3 passes**:
+
+1. Start at pass 1. Record the diff being reviewed and run the selected review prompt through `/codex:rescue`.
+2. Classify every finding as `Apply`, `Investigate`, `Reject`, or `Defer`.
+3. Verify `Investigate` findings. Apply only confirmed, in-scope fixes; record reasons for `Reject` and `Defer`.
+4. Run focused tests, lint, typecheck, or build checks appropriate to the changed code. Treat a validation failure as an issue to investigate before deciding whether another pass is possible.
+5. Stop successfully when no `Apply` or unresolved `Investigate` finding remains and relevant validation passes.
+6. When the diff changed and the pass count is below 3, increment the count and return to step 1.
+7. Otherwise stop and report remaining risks: pass 3 was exhausted, the diff did not change, the same finding repeated without new evidence, validation cannot pass, or a user decision is required.
+
+Never use write-capable rescue inside this review loop. Do not re-review an unchanged diff merely to obtain a different opinion.
 
 ## Rescue
 
@@ -61,6 +80,7 @@ Attempts already made:
 Tests run:
 Constraints:
 What I need from Codex:
+Response language: <user language>
 ```
 
 Then Claude invokes directly (foreground — output returns directly):
@@ -69,14 +89,14 @@ Then Claude invokes directly (foreground — output returns directly):
 /codex:rescue --model <model>
 ```
 
-Verify the patch before applying — read it, check for broad rewrites, check tests, check secrets, run focused validation. Apply only the safe parts.
+Read the resulting diff, check for broad rewrites, secrets, and generated files, then run focused validation. If rescue changes code, enter the review loop before reporting completion.
 
 ## PR review mode
 
 1. **Self-review the diff first.** What changed, what behavior is affected, which tests cover it, riskiest files, and whether secrets / generated files / lockfiles / migrations are involved.
 2. **Pick depth** based on risk: standard or adversarial.
-3. Run the chosen review via rescue (read-only), or present the dedicated `/codex:review` command for the user.
-4. Triage findings (below). Verify by reading code, reproduce when possible, run focused tests after changes.
+3. Run the bounded review loop.
+4. Report unresolved findings and validation results.
 
 ## Triage
 
@@ -90,12 +110,16 @@ Decisions: `Apply` · `Investigate` · `Reject` · `Defer`. Reject style-only or
 
 ## Final report
 
+Localize the heading and human-facing field labels to the user's language. For a Korean user, use:
+
 ```text
-Codex review
-- Mode: standard | adversarial | rescue | pr-review
-- Path: rescue (read-only) | rescue (fix) | dedicated /codex:review (user-run)
-- Model: <model>   (rescue path only)
-- Applied:
-- Rejected:
-- Remaining risks:
+Codex 검토
+- 모드: standard | adversarial | rescue | pr-review
+- 경로: rescue review-loop | rescue fix
+- 모델: <model>
+- 검토 횟수: <completed>/3
+- 적용:
+- 거부:
+- 보류:
+- 남은 위험:
 ```
