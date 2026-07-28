@@ -10,8 +10,8 @@
 
 - [빠른 시작](#빠른-시작) · [핵심 개념](#핵심-개념) · [CLI](#cli) · [문서](#문서)
 - 바로 돌려보려면: `./samples/quickstart/run.sh` ([샘플 설명](samples/quickstart/README.md))
-- 바로 붙이려면: [5분 QuickStart 가이드](docs/guide/quickstart.md) ·
-  [Unity 통합 가이드](docs/guide/unity.md)
+- 바로 붙이려면: [5분 QuickStart 가이드](docs/guide/quickstart.md) · Unity라면
+  [Unity 10분 QuickStart](docs/guide/unity-quickstart.md)
 - PRD: [docs/prd/game-patch-kit-prd.md](docs/prd/game-patch-kit-prd.md)
 - 개발 계획: [docs/plan/README.md](docs/plan/README.md)
 
@@ -332,6 +332,7 @@ hash를 알 수 있으므로 실제 identity를 그대로 보고하고 게시만
 | [package 설정과 파일 선택](docs/guide/package-config.md) | `gamepatchkit.yml` 전체 필드, YAML 제약, v1 glob dialect, 선택 순서, group 설계, compression 정책 |
 | [release identity와 canonical JSON](docs/guide/identity.md) | `dataVersion`·`compactVersion`·`manifestHash`, manifest union과 참조 무결성, RFC 8785 JCS, golden vector |
 | [Runtime 통합 가이드](docs/guide/runtime-integration.md) | DotNet adapter, 외부 host 구현, `PackageState`, activation batch, codec 제약 |
+| [Unity 10분 QuickStart](docs/guide/unity-quickstart.md) | Unity에서 로컬 release를 받아 설치하는 최단 경로 |
 | [Unity 통합 가이드](docs/guide/unity.md) | managed plugin 준비, Unity 프로젝트에 붙이는 절차, 지원 범위, IL2CPP 주의사항 |
 | [publish와 서명 운영](docs/guide/publishing.md) | publisher 순서, target 선택 책임 경계, Ed25519 서명과 key rotation |
 | [배포 산출물과 버전 정책](docs/guide/distribution.md) | 패키징 메타데이터, JSON Schema 버전 정책, conformance suite, 성능 gate |
@@ -341,6 +342,7 @@ hash를 알 수 있으므로 실제 identity를 그대로 보고하고 게시만
 | 샘플 | 내용 |
 | --- | --- |
 | [quickstart](samples/quickstart) | `./samples/quickstart/run.sh` 한 번으로 package → verify → sign → Runtime 설치 → incremental → compact 전체 실행 |
+| [unity-quickstart](samples/unity-quickstart) | `./samples/unity-quickstart/serve.sh`로 `compression: none` release를 만들고 Unity client에 로컬 서빙 |
 
 ### 구현 계약
 

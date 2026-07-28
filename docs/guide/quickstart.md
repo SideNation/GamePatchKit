@@ -137,8 +137,8 @@ state = await runtime.InstallOptionalGroupsAsync(packageId, new[] { "maps" }); /
 - [ ] `runtimeRoot`가 앱이 쓸 수 있는 영구 저장 경로인가
 - [ ] 앱 종료·화면 전환에 `CancellationToken`을 연결했는가
 
-자세히: [Runtime 통합 가이드](runtime-integration.md) · Unity라면 [Unity 통합
-가이드](unity.md)
+자세히: [Runtime 통합 가이드](runtime-integration.md) · Unity라면 [Unity 10분
+QuickStart](unity-quickstart.md)
 
 ## 6. 데이터를 바꿨을 때
 
@@ -174,5 +174,5 @@ object를 덮어쓰는 candidate가 통과할 수 있다.
 | 버전 값과 manifest 구조 이해하기 | [release identity와 canonical JSON](identity.md) |
 | client 동작·복구 규칙 이해하기 | [Runtime 통합 가이드](runtime-integration.md) |
 | 배포·서명 운영하기 | [publish와 서명 운영](publishing.md) |
-| Unity에 붙이기 | [Unity 통합 가이드](unity.md) |
+| Unity에 붙이기 | [Unity 10분 QuickStart](unity-quickstart.md) → [Unity 통합 가이드](unity.md) |
 | 패키지·schema 버전 정책 | [배포 산출물과 버전 정책](distribution.md) |

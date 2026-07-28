@@ -4,6 +4,9 @@ Unity 프로젝트에서 GamePatchKit Runtime으로 게임 데이터를 받아 �
 무엇을 보장하는지는 [Unity Runtime adapter 계약](../contracts/unity-adapter.md)에 있고,
 이 문서는 **내 프로젝트에 붙이는 순서**를 다룬다.
 
+일단 동작하는 것부터 보고 싶다면 [Unity 10분 QuickStart](unity-quickstart.md)가 더
+빠르다.
+
 ## 먼저 알아야 할 것
 
 **GamePatchKit 저장소는 Unity 전용 assembly나 UPM 패키지를 배포하지 않는다.** PRD가

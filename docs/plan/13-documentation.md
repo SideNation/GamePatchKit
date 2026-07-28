@@ -15,7 +15,7 @@ Runtime 통합, publisher 계약을 적용할 수 있게 한다.
 ## 문서 구성
 
 항목 수가 많아 [README.md](../../README.md)는 개요·설치·전체 시나리오·CLI 요약·문서
-지도를 담고, 세부 계약은 `docs/guide/` 다섯 문서로 나눴다. 아래 체크박스의 "→"는 그
+지도를 담고, 세부 계약은 `docs/guide/` 아래로 나눴다. 아래 체크박스의 "→"는 그
 항목이 실제로 어디에 있는지를 가리킨다.
 
 | 문서 | 범위 |
@@ -25,10 +25,12 @@ Runtime 통합, publisher 계약을 적용할 수 있게 한다.
 | [guide/package-config.md](../guide/package-config.md) | `gamepatchkit.yml`, YAML 제약, glob dialect, 선택 순서, group 설계, compression 정책, Core·Packager 책임 경계 |
 | [guide/identity.md](../guide/identity.md) | 세 version 값, publish tree, manifest union·참조 무결성·3계층 검증, canonical JSON, golden vector, Packager API 경계 |
 | [guide/runtime-integration.md](../guide/runtime-integration.md) | DotNet adapter, 네 상태 개념, activation batch, `package-state.json`, 외부 host 구현, 오류 코드 |
+| [guide/unity-quickstart.md](../guide/unity-quickstart.md) | Unity에서 로컬 release를 받아 설치하는 최단 경로, Console 확인, Unity 전용 실패 표 |
 | [guide/unity.md](../guide/unity.md) | managed plugin 준비, Unity 프로젝트에 붙이는 절차, 지원 범위 표, IL2CPP·link.xml 주의사항 |
 | [guide/publishing.md](../guide/publishing.md) | publisher 순서, immutable cache·rollback, target 선택 책임 경계, 서명 운영·key rotation, 보안 경계 |
 | [guide/distribution.md](../guide/distribution.md) | 배포 산출물, 패키징 메타데이터, 빌드·배포 명령, schema 버전 정책, conformance suite, 성능 gate |
 | [samples/quickstart](../../samples/quickstart) | 실행 가능한 샘플. `run.sh`가 전체 흐름을 한 번에 돌리고 README가 출력을 해설한다 |
+| [samples/unity-quickstart](../../samples/unity-quickstart) | Unity client용 `compression: none` release를 만들고 `serve.sh`가 로컬 HTTP로 서빙한다 |
 
 ## 작업 항목
 
@@ -136,13 +138,13 @@ Runtime 통합, publisher 계약을 적용할 수 있게 한다.
 
 ## 산출물
 
-- README, `docs/guide/` 7종(quickstart·package-config·identity·runtime-integration·
-  unity·publishing·distribution), 5개 패키지의 package README와 패키징 메타데이터,
-  실행 가능한 `samples/quickstart`
+- README, `docs/guide/` 8종(quickstart·package-config·identity·runtime-integration·
+  unity-quickstart·unity·publishing·distribution), 5개 패키지의 package README와 패키징
+  메타데이터, 실행 가능한 `samples/quickstart`·`samples/unity-quickstart`
 
 ## 추가 요청 반영
 
-작업 중 사용자가 세 가지를 추가로 요청해 함께 만들었다.
+작업 중 사용자가 추가로 요청한 것들을 함께 만들었다.
 
 - **[guide/unity.md](../guide/unity.md)** — 기존 `contracts/unity-adapter.md`는 adapter가
   무엇을 보장하는지의 계약이라, "내 Unity 프로젝트에 붙이는 순서"를 따로 정리했다.
@@ -158,6 +160,14 @@ Runtime 통합, publisher 계약을 적용할 수 있게 한다.
   보여준다. 샘플이 조용히 낡지 않도록 `QuickStartClient`를 solution에 넣어
   `./build.sh Compile`에서 함께 빌드되게 했고, 실행 산출물 `.work/`는 gitignore에
   추가했다.
+- **[guide/unity-quickstart.md](../guide/unity-quickstart.md)와
+  [samples/unity-quickstart](../../samples/unity-quickstart)** — `guide/unity.md`는
+  프로젝트에 제대로 붙이는 절차라, "일단 Play를 눌러 데이터가 설치되는 것까지"만 보는
+  최단 경로를 따로 만들었다. 서버 쪽은 `serve.sh`가 `compression: none` release를 만들고
+  Inspector에 넣을 네 값을 출력한다. client 쪽 `PatchQuickStart.cs`는 Unity 검증
+  프로젝트의 `Assets/`에 두어 `scripts/test.sh`가 돌 때 함께 컴파일되게 했다 — 문서
+  코드가 조용히 낡지 않게 하려는 것으로, `QuickStartClient`를 solution에 넣은 것과 같은
+  이유다.
 
 ## 완료 기준
 
@@ -225,6 +235,16 @@ macOS arm64, .NET 10.0.302에서 실행했다.
   동일한 것도 확인했다(결정성).
 - 저장소 markdown 48개의 상대 링크와 cross-file anchor가 전부 유효하다.
 - `QuickStartClient`를 solution에 추가한 뒤 `./build.sh Test` 재실행 — 여전히 537개 통과.
+- `./samples/unity-quickstart/serve.sh` — `compression: none` release 생성, Inspector에
+  넣을 네 값 출력, publish tree 서빙까지 성공.
+  `http://127.0.0.1:8080/unity-sample-data/manifests/<hash>/manifest.json`(Unity
+  transport가 만드는 바로 그 경로)이 200을 반환한다.
+- **codec을 하나도 주입하지 않은** client로 같은 서버에서 설치 — required 후
+  `stateRevision: 1`, optional `maps` 후 2, `OpenInstallationFileAsync(installationKey,
+  "core/config.json")`가 원본과 같은 내용을 돌려줬다. Unity 구성(codec 없음)이 실제로
+  성립하는지 확인한 것이다.
+- `PatchQuickStart.cs`를 Unity 검증 프로젝트에서 컴파일 — `6000.4.4f1` batchmode에서
+  `Assembly-CSharp.dll` 빌드 성공, `error CS` 없음.
 
 Ubuntu 24.04 x64 공식 성능 gate는 12단계와 마찬가지로 **여전히 미실행**이다. 이 단계는
 그 기준과 실행 절차를 문서로 고정했을 뿐 수치를 만들지 않는다.
