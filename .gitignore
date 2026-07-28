@@ -22,6 +22,9 @@ obj/
 # regenerated on demand, never committed.
 /tests/GamePatchKit.PerformanceTests/.fixtures/
 
+# Quickstart sample run output (samples/quickstart/run.sh) - regenerated on every run.
+/samples/quickstart/.work/
+
 ### Unity ###
 # This .gitignore file should be placed at the root of your Unity project directory
 #

@@ -1,0 +1,23 @@
+schemaVersion: 1
+packageId: sample-game-client-data
+inputRoot: ./game-data
+include:
+  - "**/*"
+exclude:
+  - "**/*.tmp"
+compression:
+  kind: zstd
+  codecId: zstd
+groups:
+  # 로그인·첫 화면에 필요한 최소 데이터. 활성화 전에 반드시 준비된다.
+  - name: core
+    include:
+      - "core/**/*"
+    artifactMode: file
+    required: true
+  # 필요한 시점에 따로 받는 optional group. 작은 파일이 많아 bundle로 묶는다.
+  - name: maps
+    include:
+      - "maps/**/*"
+    artifactMode: bundle
+    required: false

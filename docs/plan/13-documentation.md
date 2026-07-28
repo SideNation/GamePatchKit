@@ -21,11 +21,14 @@ Runtime 통합, publisher 계약을 적용할 수 있게 한다.
 | 문서 | 범위 |
 | --- | --- |
 | [README.md](../../README.md) | 개요, 설치, 빠른 시작(package → publish → verify → sign → Runtime 설치 → incremental·compact), 핵심 개념, CLI 요약, 문서 지도, 빌드 |
+| [guide/quickstart.md](../guide/quickstart.md) | 최소 설정으로 바로 붙이는 절차, 단계별 체크리스트, 자주 막히는 곳 |
 | [guide/package-config.md](../guide/package-config.md) | `gamepatchkit.yml`, YAML 제약, glob dialect, 선택 순서, group 설계, compression 정책, Core·Packager 책임 경계 |
 | [guide/identity.md](../guide/identity.md) | 세 version 값, publish tree, manifest union·참조 무결성·3계층 검증, canonical JSON, golden vector, Packager API 경계 |
-| [guide/runtime-integration.md](../guide/runtime-integration.md) | DotNet adapter, 네 상태 개념, activation batch, `package-state.json`, 외부 host 구현, Unity, 오류 코드 |
+| [guide/runtime-integration.md](../guide/runtime-integration.md) | DotNet adapter, 네 상태 개념, activation batch, `package-state.json`, 외부 host 구현, 오류 코드 |
+| [guide/unity.md](../guide/unity.md) | managed plugin 준비, Unity 프로젝트에 붙이는 절차, 지원 범위 표, IL2CPP·link.xml 주의사항 |
 | [guide/publishing.md](../guide/publishing.md) | publisher 순서, immutable cache·rollback, target 선택 책임 경계, 서명 운영·key rotation, 보안 경계 |
 | [guide/distribution.md](../guide/distribution.md) | 배포 산출물, 패키징 메타데이터, 빌드·배포 명령, schema 버전 정책, conformance suite, 성능 gate |
+| [samples/quickstart](../../samples/quickstart) | 실행 가능한 샘플. `run.sh`가 전체 흐름을 한 번에 돌리고 README가 출력을 해설한다 |
 
 ## 작업 항목
 
@@ -133,8 +136,28 @@ Runtime 통합, publisher 계약을 적용할 수 있게 한다.
 
 ## 산출물
 
-- README, `docs/guide/` 5종, schema 버전 정책과 conformance 사용법 문서, 5개 패키지의
-  package README와 패키징 메타데이터
+- README, `docs/guide/` 7종(quickstart·package-config·identity·runtime-integration·
+  unity·publishing·distribution), 5개 패키지의 package README와 패키징 메타데이터,
+  실행 가능한 `samples/quickstart`
+
+## 추가 요청 반영
+
+작업 중 사용자가 세 가지를 추가로 요청해 함께 만들었다.
+
+- **[guide/unity.md](../guide/unity.md)** — 기존 `contracts/unity-adapter.md`는 adapter가
+  무엇을 보장하는지의 계약이라, "내 Unity 프로젝트에 붙이는 순서"를 따로 정리했다.
+  managed plugin 준비(`prepare.sh`), Newtonsoft를 DLL로 넣으면 안 되는 이유,
+  `link.xml`을 빠뜨리면 IL2CPP에서만 깨지는 문제, 지원 범위 표, 체크리스트.
+- **[guide/quickstart.md](../guide/quickstart.md)** — README의 빠른 시작은 개념을 함께
+  설명하는 전체 시나리오라, 복사해서 바로 쓰는 용도의 짧은 적용 가이드를 따로 뒀다.
+  단계별 체크리스트와 "자주 막히는 곳" 표가 중심이다.
+- **[samples/quickstart](../../samples/quickstart)** — 문서만 읽고 조립하지 않아도
+  되도록 실행 가능한 샘플을 만들었다. `run.sh` 하나가 package → verify → sign →
+  Runtime 설치 → incremental → compact를 순서대로 실행하고, `QuickStartClient`가
+  `HttpArtifactTransport` + `FileSystemRuntimeStorage` + `PackageRuntime` 조립을
+  보여준다. 샘플이 조용히 낡지 않도록 `QuickStartClient`를 solution에 넣어
+  `./build.sh Compile`에서 함께 빌드되게 했고, 실행 산출물 `.work/`는 gitignore에
+  추가했다.
 
 ## 완료 기준
 
@@ -198,6 +221,10 @@ macOS arm64, .NET 10.0.302에서 실행했다.
   group을 선언하지 않은 파일은 전부 예약 group `default`로 들어갔다.
 - guide/package-config.md의 exclude 예시(`**/*.tmp`, `**/*.bak`, `**/.DS_Store`,
   `.vscode/**/*`, `**/Thumbs.db`)가 전부 parse되고 의도대로 동작한다.
+- `./samples/quickstart/run.sh` — 8단계 전부 성공. 두 번 연속 실행해 `manifestHash`가
+  동일한 것도 확인했다(결정성).
+- 저장소 markdown 48개의 상대 링크와 cross-file anchor가 전부 유효하다.
+- `QuickStartClient`를 solution에 추가한 뒤 `./build.sh Test` 재실행 — 여전히 537개 통과.
 
 Ubuntu 24.04 x64 공식 성능 gate는 12단계와 마찬가지로 **여전히 미실행**이다. 이 단계는
 그 기준과 실행 절차를 문서로 고정했을 뿐 수치를 만들지 않는다.
