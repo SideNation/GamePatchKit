@@ -98,3 +98,6 @@ v1 진행 상태를 보존하며 아래 항목이 같은 단계의 최신 상태
 - [x] 09 DotNet adapter·통합 테스트
 - [x] 10 adapter conformance
 - [x] 11 서명·key rotation
+- [ ] 12 성능·메모리 검증 — 측정 인프라는 완료. **Ubuntu 24.04 x64 공식 blocking gate
+      (검증 기준 17)만 미실행**이며 Linux 환경이 준비되면 실행한다.
+- [x] 13 문서화·배포 산출물
