@@ -8,8 +8,10 @@ adapter contract를 만족하는지 검증하는 공용 fixture와 test suite다
 
 배포 형태는 소스 fixture로 정했다: xUnit 기반 `GamePatchKit.Conformance` 프로젝트를
 소스로 제공하고, 외부 adapter는 `ConformanceTestBase`를 상속해 factory 메서드만
-구현한다. NuGet test package로 패키징할지는 13단계(문서화·배포 산출물)에서 별도로
-정한다 — 지금은 배포 파이프라인 자체가 없어 소스 형태가 가장 단순하다.
+구현한다. 13단계에서 이 형태를 그대로 확정했다 — NuGet test package로 만들면 소비자의
+테스트 프레임워크 선택을 강제하게 되고, Unity처럼 xUnit을 그대로 실행할 수 없는 host는
+어차피 시나리오를 옮겨야 하므로 소스가 있는 편이 낫다. 근거와 사용법은
+[배포 산출물과 버전 정책](../guide/distribution.md#adapter-conformance-suite)에 있다.
 
 `GamePatchKit.DotNet`(step 09)과 in-memory reference adapter(이 프로젝트가 함께
 제공)를 같은 suite로 실행해 결과를 비교하는 것이 PRD 검증 기준 14의 증거다.

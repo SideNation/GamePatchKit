@@ -11,4 +11,13 @@
     <Copyright>Copyright (c) 2026 TenY</Copyright>
     <PackageTags>game;patch;package;content-delivery;download</PackageTags>
   </PropertyGroup>
+  <!-- Each packable project carries its own README.md next to the csproj; nuget.org shows it on the package
+       page and `dotnet pack` warns (NU5039-adjacent) when a package has none. Declared once here, guarded by
+       Exists() so test and build projects - which have no README.md - are unaffected. -->
+  <PropertyGroup Condition="Exists('$(MSBuildProjectDirectory)/README.md')">
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup Condition="Exists('$(MSBuildProjectDirectory)/README.md')">
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
 </Project>

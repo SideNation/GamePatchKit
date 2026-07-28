@@ -12,32 +12,41 @@ class Build : NukeBuild
 {
     public static int Main() => Execute<Build>(x => x.Compile);
 
+    // Nuke resolves every injected member by its *member name*: --configuration binds to Configuration, and
+    // .nuke/parameters.json's "Solution" binds to Solution. That makes the member name part of the command-line
+    // contract, so these deliberately use Nuke's PascalCase convention instead of the repository's _camelCase
+    // rule for private fields - with underscores they were exposed as --_configuration/--_version and the
+    // [Solution] injection failed outright.
     [Parameter("Configuration to build - Default is 'Debug' (local) or 'Release' (server)")]
-    private readonly string _configuration = IsLocalBuild ? "Debug" : "Release";
+    private readonly string Configuration = IsLocalBuild ? "Debug" : "Release";
 
     [Parameter("NuGet API key for publishing packages")]
     [Secret]
-    private string _nuGetApiKey = Environment.GetEnvironmentVariable("NUGET_API_KEY");
+    private string NuGetApiKey = Environment.GetEnvironmentVariable("NUGET_API_KEY");
 
     [Parameter("NuGet source URL - Default is nuget.org")]
-    private readonly string _nuGetSource = "https://api.nuget.org/v3/index.json";
+    private readonly string NuGetSource = "https://api.nuget.org/v3/index.json";
 
     [Parameter("Package version override")]
-    private readonly string _version;
+    private readonly string Version;
 
     [Solution]
-    private readonly Solution _solution;
+    private readonly Solution Solution;
 
     AbsolutePath SourceDirectory => RootDirectory / "src";
     AbsolutePath TestsDirectory => RootDirectory / "tests";
     AbsolutePath ArtifactsDirectory => RootDirectory / "artifacts";
 
+    // The PRD's deployment artifacts: four NuGet libraries plus the gpk .NET tool. GamePatchKit.Packager is
+    // deliberately absent - it ships inside the gpk tool package (PackAsTool bundles project references) and
+    // has no standalone consumers yet.
     string[] PackableProjects =>
     [
         "GamePatchKit.Core",
         "GamePatchKit.Runtime",
         "GamePatchKit.Compression.NativeCompressions",
-        "GamePatchKit.DotNet"
+        "GamePatchKit.DotNet",
+        "GamePatchKit.Cli"
     ];
 
     Target Clean => _ => _
@@ -53,7 +62,7 @@ class Build : NukeBuild
         .Executes(() =>
         {
             DotNetRestore(s => s
-                .SetProjectFile(_solution));
+                .SetProjectFile(Solution));
         });
 
     Target Compile => _ => _
@@ -61,8 +70,8 @@ class Build : NukeBuild
         .Executes(() =>
         {
             DotNetBuild(s => s
-                .SetProjectFile(_solution)
-                .SetConfiguration(_configuration)
+                .SetProjectFile(Solution)
+                .SetConfiguration(Configuration)
                 .EnableNoRestore());
         });
 
@@ -71,8 +80,8 @@ class Build : NukeBuild
         .Executes(() =>
         {
             DotNetTest(s => s
-                .SetProjectFile(_solution)
-                .SetConfiguration(_configuration)
+                .SetProjectFile(Solution)
+                .SetConfiguration(Configuration)
                 .SetFilter("Category!=Performance")
                 .EnableNoRestore()
                 .EnableNoBuild());
@@ -87,7 +96,7 @@ class Build : NukeBuild
         {
             DotNetTest(s => s
                 .SetProjectFile(TestsDirectory / "GamePatchKit.PerformanceTests" / "GamePatchKit.PerformanceTests.csproj")
-                .SetConfiguration(_configuration)
+                .SetConfiguration(Configuration)
                 .SetFilter("Category=Performance")
                 .EnableNoRestore()
                 .EnableNoBuild());
@@ -105,9 +114,9 @@ class Build : NukeBuild
             var versionElement = doc.Descendants("Version").First();
 
             string packVersion;
-            if (_version != null)
+            if (Version != null)
             {
-                packVersion = _version;
+                packVersion = Version;
             }
             else
             {
@@ -134,7 +143,7 @@ class Build : NukeBuild
         .DependsOn(Pack)
         .Executes(() =>
         {
-            if (string.IsNullOrEmpty(_nuGetApiKey))
+            if (string.IsNullOrEmpty(NuGetApiKey))
                 throw new Exception(
                     "NuGet API key is not set. Provide it via --nuget-api-key parameter or NUGET_API_KEY environment variable.");
 
@@ -144,8 +153,8 @@ class Build : NukeBuild
                 {
                     DotNetNuGetPush(s => s
                         .SetTargetPath(package)
-                        .SetSource(_nuGetSource)
-                        .SetApiKey(_nuGetApiKey)
+                        .SetSource(NuGetSource)
+                        .SetApiKey(NuGetApiKey)
                         .EnableSkipDuplicate());
                 });
         });
