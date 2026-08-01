@@ -192,7 +192,7 @@ suite](distribution.md#adapter-conformance-suite)로 검증한다. 다만 이 su
 | --- | --- | --- |
 | `OperationCanceledException` | lifecycle token으로 중단 | 종료 흐름에서는 무시하고 다음 실행에서 재개 |
 | `ArtifactTransportException.IsTransient == true` | 연결 실패, HTTP 408/429/5xx | Runtime이 최대 3회 재시도한 뒤에도 실패한 것. 네트워크 재시도 UI |
-| `ArtifactTransportException.IsNotFound == true` | HTTP 404로 부재 확인 | target reference나 publish 상태 점검 |
+| `ArtifactTransportException.IsNotFound == true` | 부재 확인(HTTP 404, 또는 본문이 스스로 `statusCode: 404`라고 말하는 HTTP 400) | target reference나 publish 상태 점검 |
 | `RuntimeException` | manifest·hash·state·staging 검증 실패 | `Error.Code` 기록. **손상 artifact를 활성화하지 않는다** |
 | `IOException` | 저장소 권한·용량·writer lock | `persistentDataPath` 가용 공간과 동시 실행 확인 |
 

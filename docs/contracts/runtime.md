@@ -129,10 +129,24 @@ var runtime = new PackageRuntime(
   정확히 분류해야 하는 것과 같은 수준으로, **`IsNotFound`는 "이 리소스가 존재하지
   않는다고 확인됐을 때"에만 `true`로 설정해야 한다** — 확실하지 않으면 기본값
   `false`를 그대로 둬야 한다(잘못 `true`로 설정하면 실제로 서명된 release가
-  unsigned로 취급될 수 있다). `HttpArtifactTransport`는 HTTP 404만 `IsNotFound:
-  true`로 표시하고 401/403/410을 포함한 다른 모든 4xx/5xx는 `false`로 둔다
+  unsigned로 취급될 수 있다). `HttpArtifactTransport`와
+  `UnityWebRequestArtifactTransport`는 HTTP 404를 `IsNotFound: true`로 표시하고
+  401/403/410을 포함한 다른 모든 4xx/5xx는 `false`로 둔다
   (`TestHttpArtifactTransport.OpenArtifactAsync_NotFound_IsConfirmedAbsence`/
   `OpenArtifactAsync_OtherPermanentClientErrors_AreNotConfirmedAbsence`).
+- 예외는 HTTP 400 하나다. 일부 object store는 없는 오브젝트에 400을 돌려주고 진짜
+  상태를 본문에 담는다(Supabase Storage:
+  `{"statusCode":"404","error":"not_found","message":"Object not found"}`). 400을
+  "확인되지 않은 실패"로 두면 그런 host에 올린 **unsigned release는 설치 자체가
+  불가능해진다** — signature 요청이 `runtime.transport-failed`로 떨어지기 때문이다.
+  그래서 두 adapter는 400에 한해 응답 본문을 읽고, `ArtifactTransportResponseBody.
+  ConfirmsNotFound`가 **본문이 스스로 상태를 404라고 말할 때만** `IsNotFound: true`로
+  올린다. 400이라는 사실 자체가 아니라 store의 진술을 근거로 삼는 것이라 위 규칙을
+  벗어나지 않는다. 본문이 없거나, JSON이 아니거나, `statusCode`가 404가 아니거나,
+  `ArtifactTransportResponseBody.MaximumInspectedBytes`(4 KiB)를 넘으면 `false`로
+  남는다. 이 판정이 새로운 공격 표면을 만들지도 않는다: 그 본문을 주입할 수 있는
+  상대는 진짜 404도 똑같이 주입할 수 있고, 그것이 `requireSignature`가 존재하는
+  이유다.
 - 검증은 `ReleaseIdentity.ComputeCanonicalBytes`로 이미 확인한 canonical manifest
   byte(= `manifestHash`가 가리키는 그 byte)를 대상으로 하며, Core의
   `Ed25519Signatures.Verify`(BouncyCastle Ed25519, netstandard2.1)가 Packager의

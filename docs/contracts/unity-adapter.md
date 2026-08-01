@@ -65,6 +65,10 @@ public sealed class PatchBootstrap : MonoBehaviour
   `SynchronizationContext`를 캡처하므로 worker thread에서 생성하면 안 된다.
 - 다운로드 stream을 dispose하면 `Application.temporaryCachePath` 아래 임시 파일이
   삭제된다.
+- HTTP 400에 한해 응답 본문을 읽어 부재 여부를 확인한다. `DownloadHandlerFile`이
+  오류 본문도 같은 임시 파일에 쓰므로 추가 요청 없이 판정하고, 판정한 뒤에 그 파일을
+  지운다. 판정은 `GamePatchKit.Runtime`의 `ArtifactTransportResponseBody`가 맡아
+  DotNet adapter와 같은 규칙을 쓴다([Runtime 상태 머신](runtime.md)의 signature 절).
 
 ## 흐름
 
@@ -80,7 +84,7 @@ public sealed class PatchBootstrap : MonoBehaviour
 | --- | --- | --- |
 | `OperationCanceledException` | host가 전달한 lifecycle token으로 작업 중단 | 화면 종료·앱 종료 흐름에서는 무시하고 다음 실행에서 재개 |
 | `ArtifactTransportException.IsTransient == true` | 연결 실패, HTTP 408/429/5xx | Runtime retry 이후에도 실패하면 네트워크 재시도 UI 표시 |
-| `ArtifactTransportException.IsNotFound == true` | HTTP 404로 부재 확인 | target reference 또는 publish 상태 점검 |
+| `ArtifactTransportException.IsNotFound == true` | 부재 확인(HTTP 404, 또는 본문이 스스로 `statusCode: 404`라고 말하는 HTTP 400) | target reference 또는 publish 상태 점검 |
 | `RuntimeException` | manifest·hash·state·staging 검증 실패 | `Error.Code`를 기록하고 손상 artifact를 활성화하지 않음 |
 | `IOException` | storage 권한·용량·writer lock 문제 | `persistentDataPath` 가용 공간과 동시 실행 여부 점검 |
 

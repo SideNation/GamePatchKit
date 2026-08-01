@@ -12,6 +12,8 @@ namespace GamePatchKit.Unity
 {
     public sealed class UnityWebRequestArtifactTransport : IArtifactTransport
     {
+        private const int BAD_REQUEST_STATUS_CODE = 400;
+        private const int NOT_FOUND_STATUS_CODE = 404;
         private const string DOWNLOAD_DIRECTORY_NAME = "GamePatchKitDownloads";
         private const string MANIFEST_FILE_NAME = "manifest.json";
         private const string SIGNATURE_FILE_NAME = "manifest.sig";
@@ -182,11 +184,13 @@ namespace GamePatchKit.Unity
 
             if (result != UnityWebRequest.Result.Success)
             {
+                // Classify before deleting: the error body this may need to read lives in that same file.
+                bool isNotFound = IsConfirmedAbsent(responseCode, temporaryPath);
                 UnityAtomicFile.TryDelete(temporaryPath);
                 completion.TrySetException(new ArtifactTransportException(
                     FailureMessage(responseCode, error),
                     IsTransient(result, responseCode),
-                    isNotFound: responseCode == 404));
+                    isNotFound: isNotFound));
                 return;
             }
 
@@ -198,6 +202,45 @@ namespace GamePatchKit.Unity
             {
                 UnityAtomicFile.TryDelete(temporaryPath);
                 completion.TrySetException(exception);
+            }
+        }
+
+        // A 404 is absence by definition. A 400 is not - it also covers genuinely malformed requests - but some
+        // object stores answer a missing object with 400 and put the real status in the body (Supabase Storage:
+        // {"statusCode":"404",...}). DownloadHandlerFile writes that body to the same temporary file, so the
+        // store's own statement is available without a second request. Every other status stays unconfirmed.
+        private static bool IsConfirmedAbsent(long responseCode, string temporaryPath)
+        {
+            if (responseCode == NOT_FOUND_STATUS_CODE)
+            {
+                return true;
+            }
+
+            if (responseCode != BAD_REQUEST_STATUS_CODE)
+            {
+                return false;
+            }
+
+            try
+            {
+                var responseFile = new FileInfo(temporaryPath);
+
+                if (!responseFile.Exists
+                    || responseFile.Length == 0
+                    || responseFile.Length > ArtifactTransportResponseBody.MaximumInspectedBytes)
+                {
+                    return false;
+                }
+
+                return ArtifactTransportResponseBody.ConfirmsNotFound(File.ReadAllBytes(temporaryPath));
+            }
+            catch (Exception exception) when (
+                exception is IOException
+                || exception is UnauthorizedAccessException)
+            {
+                // The request has already failed; not being able to read its body only means the failure
+                // stays unconfirmed.
+                return false;
             }
         }
 

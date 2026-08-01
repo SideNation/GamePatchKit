@@ -159,6 +159,23 @@ artifact 경로는 Runtime이 넘겨주는 `relativePath`를 그대로 쓴다 �
 | 호출자 `CancellationToken`이 취소됨 | 감싸지 않고 그대로 전달 |
 | `HttpClient.Timeout`처럼 호출자 token은 안 취소됐는데 발생한 `OperationCanceledException` | `true`로 감싸서 전달 |
 
+`IsNotFound`는 별개의 축이다. Runtime은 이 값이 `true`일 때만 signature 부재를
+"unsigned release"로 인정하므로, 확인되지 않은 실패에 `true`를 주면 서명된 release가
+검증 없이 통과할 수 있다.
+
+| 상황 | `IsNotFound` |
+| --- | --- |
+| HTTP 404 | `true` |
+| HTTP 400인데 응답 본문이 스스로 `statusCode: 404`라고 말함 | `true` |
+| HTTP 400인데 본문이 없거나·JSON이 아니거나·다른 상태를 말하거나·4 KiB를 넘음 | `false` |
+| 그 외 모든 상태 코드(401, 403, 410, 5xx 등) | `false` |
+
+두 번째 줄은 Supabase Storage 때문에 있다. 없는 오브젝트에 HTTP 400과
+`{"statusCode":"404","error":"not_found","message":"Object not found"}`를 돌려주므로,
+이것을 확인되지 않은 실패로 두면 그 host에 올린 unsigned release가 아예 설치되지 않는다.
+판정은 400이라는 사실이 아니라 **store 자신의 상태 진술**을 근거로 하며, 공용 판정 함수는
+`ArtifactTransportResponseBody.ConfirmsNotFound`다(Unity adapter도 같은 것을 쓴다).
+
 마지막 두 줄은 흔한 함정을 구분한다: `HttpClient.Timeout`은 호출자의 token을 취소하지
 않고도 `OperationCanceledException`을 던진다. `cancellationToken.IsCancellationRequested`로
 둘을 구분하지 않으면 진짜 취소까지 재시도 대상으로 잘못 분류되거나, timeout이 취소로

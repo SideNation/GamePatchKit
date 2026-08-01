@@ -265,8 +265,35 @@ immutable manifest·signature·artifact를 읽기 전용 stream으로 연다.
 > `IsNotFound: true`를 쓴다(예: 실제 HTTP 404). 확실하지 않으면 기본값 `false`를 유지한다.
 > 잘못 `true`로 설정하면 401·403처럼 다른 이유로 실패한 응답이 "signature 없음"으로
 > 취급되어, **실제로 서명된 release가 검증 없이 unsigned로 넘어갈 수 있다.**
-> `HttpArtifactTransport`는 HTTP 404만 `IsNotFound: true`로 표시하고 401/403/410을 포함한
-> 다른 모든 4xx/5xx는 `false`로 둔다.
+> 반대로 너무 좁게 잡아도 문제다. 부재를 확인하지 못하면 **unsigned release는 설치 자체가
+> 불가능해진다** — signature 요청이 `runtime.transport-failed`로 떨어지기 때문이다.
+
+### 없는 오브젝트에 404가 아닌 상태를 주는 host
+
+Supabase Storage는 없는 오브젝트에 **HTTP 400**을 주고 진짜 상태는 본문에 담는다.
+
+```json
+{ "statusCode": "404", "error": "not_found", "message": "Object not found" }
+```
+
+기본 adapter 두 개(`HttpArtifactTransport`, `UnityWebRequestArtifactTransport`)는 400에
+한해 응답 본문을 읽어 이 진술을 확인한다. 직접 adapter를 만든다면 같은 판정 함수를 쓰면
+된다.
+
+```csharp
+if (statusCode == 404
+    || (statusCode == 400 && ArtifactTransportResponseBody.ConfirmsNotFound(errorBody)))
+{
+    throw new ArtifactTransportException(message, isTransient: false, isNotFound: true);
+}
+```
+
+- 본문은 `ArtifactTransportResponseBody.MaximumInspectedBytes`(4 KiB)까지만 읽는다.
+  넘으면 이런 오류 문서가 아니므로 `false`다.
+- 근거는 400이라는 사실이 아니라 **store 자신의 상태 진술**이다. 400은 진짜 잘못된
+  요청에도 쓰이므로, 그것만 보고 부재로 단정하면 위 경고에 그대로 걸린다.
+- 본문을 읽다 실패하면 `false`로 둔다. 이미 실패한 요청의 분류일 뿐이라 다른 예외로
+  바뀌어서는 안 된다.
 
 ### `IRuntimeStorage`
 

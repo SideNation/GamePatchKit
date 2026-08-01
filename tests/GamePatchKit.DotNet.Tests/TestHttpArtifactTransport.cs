@@ -118,6 +118,76 @@ public class TestHttpArtifactTransport
         Assert.False(exception.IsNotFound);
     }
 
+    // Supabase Storage answers a request for a missing object with HTTP 400 and puts the real status in the
+    // body. Runtime only tolerates a missing manifest.sig when the adapter confirms absence, so leaving this
+    // unconfirmed would make every unsigned release on such a host fail to install.
+    [Fact]
+    public async Task OpenArtifactAsync_BadRequestWhoseBodyReportsNotFound_IsConfirmedAbsence()
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(TextResponse(
+            HttpStatusCode.BadRequest,
+            "{\"statusCode\":\"404\",\"error\":\"not_found\",\"message\":\"Object not found\"}")));
+        var transport = new HttpArtifactTransport(CreateClient(handler));
+
+        ArtifactTransportException exception = await Assert.ThrowsAsync<ArtifactTransportException>(
+            () => transport.OpenArtifactAsync("game-data", "game-data/artifacts/files/aa11/content", CancellationToken.None));
+
+        Assert.True(exception.IsNotFound);
+        Assert.False(exception.IsTransient);
+    }
+
+    // A bare 400 also covers genuinely malformed requests, so only the store's own statement of the status
+    // counts. Anything else must stay unconfirmed, or a signed release could be downgraded to unsigned.
+    [Theory]
+    [InlineData("")]
+    [InlineData("{\"statusCode\":\"400\",\"error\":\"InvalidRequest\",\"message\":\"Invalid path\"}")]
+    [InlineData("{\"error\":\"not_found\",\"message\":\"Object not found\"}")]
+    [InlineData("{\"statusCode\":\"404\"} trailing")]
+    [InlineData("<html><body>Bad Request</body></html>")]
+    public async Task OpenArtifactAsync_BadRequestWithAnyOtherBody_IsNotConfirmedAbsence(string body)
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(TextResponse(HttpStatusCode.BadRequest, body)));
+        var transport = new HttpArtifactTransport(CreateClient(handler));
+
+        ArtifactTransportException exception = await Assert.ThrowsAsync<ArtifactTransportException>(
+            () => transport.OpenArtifactAsync("game-data", "game-data/artifacts/files/aa11/content", CancellationToken.None));
+
+        Assert.False(exception.IsNotFound);
+    }
+
+    // No error document of this kind is this large, and the adapter must not buffer an unbounded body just to
+    // classify a failure it is already going to throw.
+    [Fact]
+    public async Task OpenArtifactAsync_BadRequestWithOversizedBody_IsNotConfirmedAbsence()
+    {
+        string padding = new('x', ArtifactTransportResponseBody.MaximumInspectedBytes);
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(TextResponse(
+            HttpStatusCode.BadRequest,
+            $"{{\"statusCode\":\"404\",\"message\":\"{padding}\"}}")));
+        var transport = new HttpArtifactTransport(CreateClient(handler));
+
+        ArtifactTransportException exception = await Assert.ThrowsAsync<ArtifactTransportException>(
+            () => transport.OpenArtifactAsync("game-data", "game-data/artifacts/files/aa11/content", CancellationToken.None));
+
+        Assert.False(exception.IsNotFound);
+    }
+
+    // Only a 400 gets its body read. A 403 carrying the same document is still an auth or policy failure, and
+    // reading absence into it is exactly the misclassification IsNotFound exists to prevent.
+    [Fact]
+    public async Task OpenArtifactAsync_ForbiddenWhoseBodyReportsNotFound_IsNotConfirmedAbsence()
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(TextResponse(
+            HttpStatusCode.Forbidden,
+            "{\"statusCode\":\"404\",\"error\":\"not_found\",\"message\":\"Object not found\"}")));
+        var transport = new HttpArtifactTransport(CreateClient(handler));
+
+        ArtifactTransportException exception = await Assert.ThrowsAsync<ArtifactTransportException>(
+            () => transport.OpenArtifactAsync("game-data", "game-data/artifacts/files/aa11/content", CancellationToken.None));
+
+        Assert.False(exception.IsNotFound);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.RequestTimeout)]
     [InlineData(HttpStatusCode.TooManyRequests)]

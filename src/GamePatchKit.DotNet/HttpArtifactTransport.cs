@@ -75,7 +75,7 @@ public sealed class HttpArtifactTransport : IArtifactTransport
                 throw new ArtifactTransportException(
                     $"The artifact request returned HTTP {(int)response.StatusCode}.",
                     IsTransientStatusCode(response.StatusCode),
-                    isNotFound: response.StatusCode == HttpStatusCode.NotFound);
+                    isNotFound: await IsConfirmedAbsentAsync(response, cancellationToken).ConfigureAwait(false));
             }
 
             Stream body = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -102,6 +102,54 @@ public sealed class HttpArtifactTransport : IArtifactTransport
         {
             response.Dispose();
             throw;
+        }
+    }
+
+    // A 404 is absence by definition. A 400 is not - it also covers genuinely malformed requests - but some
+    // object stores answer a missing object with 400 and put the real status in the body (Supabase Storage:
+    // {"statusCode":"404",...}), so that one status is worth reading before writing the failure off as
+    // unconfirmed. Every other status stays unconfirmed, and so does a 400 whose body says anything else.
+    private static async Task<bool> IsConfirmedAbsentAsync(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return true;
+        }
+
+        if (response.StatusCode != HttpStatusCode.BadRequest)
+        {
+            return false;
+        }
+
+        try
+        {
+            await using Stream body = await response.Content
+                .ReadAsStreamAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            // One byte past the cap so a body that overruns it is recognized as too large rather than
+            // silently truncated into something that might parse.
+            var buffer = new byte[ArtifactTransportResponseBody.MaximumInspectedBytes + 1];
+            int total = 0;
+            int read;
+
+            while (total < buffer.Length
+                && (read = await body.ReadAsync(buffer.AsMemory(total), cancellationToken).ConfigureAwait(false)) > 0)
+            {
+                total += read;
+            }
+
+            return total <= ArtifactTransportResponseBody.MaximumInspectedBytes
+                && ArtifactTransportResponseBody.ConfirmsNotFound(buffer[..total]);
+        }
+        catch (Exception exception) when (
+            exception is HttpRequestException
+            || exception is IOException
+            || (exception is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            // The request has already failed; not being able to read its body only means the failure stays
+            // unconfirmed. Classification must never replace the transport exception with a different one.
+            return false;
         }
     }
 

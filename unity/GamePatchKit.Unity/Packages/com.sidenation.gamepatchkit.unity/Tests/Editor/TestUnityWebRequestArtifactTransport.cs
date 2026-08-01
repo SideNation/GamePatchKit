@@ -90,6 +90,48 @@ namespace GamePatchKit.Unity.Tests
             Assert.That(exception.IsNotFound, Is.True);
         }
 
+        // Runtime only tolerates a missing manifest.sig when the adapter confirms absence, so a store that
+        // reports a missing object as 400 would otherwise make every unsigned release fail to install.
+        [UnityTest]
+        public IEnumerator Artifact_Http400WhoseBodyReportsNotFoundIsConfirmedNotFound()
+        {
+            using var server = new LoopbackHttpServer();
+            var transport = new UnityWebRequestArtifactTransport(server.BaseUrl, _downloadRoot);
+
+            Task<Stream> openTask = transport.OpenArtifactAsync(
+                PACKAGE_ID,
+                "object-store-missing",
+                CancellationToken.None);
+            yield return WaitFor(openTask);
+
+            ArtifactTransportException exception = Assert.Throws<ArtifactTransportException>(
+                () => openTask.GetAwaiter().GetResult())!;
+            Assert.That(exception.IsTransient, Is.False);
+            Assert.That(exception.IsNotFound, Is.True);
+            Assert.That(Directory.GetFiles(_downloadRoot), Is.Empty);
+        }
+
+        // A bare 400 also covers genuinely malformed requests, so anything but the store's own statement of
+        // the status has to stay unconfirmed.
+        [UnityTest]
+        public IEnumerator Artifact_Http400WithAnyOtherBodyIsNotConfirmedNotFound()
+        {
+            using var server = new LoopbackHttpServer();
+            var transport = new UnityWebRequestArtifactTransport(server.BaseUrl, _downloadRoot);
+
+            Task<Stream> openTask = transport.OpenArtifactAsync(
+                PACKAGE_ID,
+                "bad-request",
+                CancellationToken.None);
+            yield return WaitFor(openTask);
+
+            ArtifactTransportException exception = Assert.Throws<ArtifactTransportException>(
+                () => openTask.GetAwaiter().GetResult())!;
+            Assert.That(exception.IsTransient, Is.False);
+            Assert.That(exception.IsNotFound, Is.False);
+            Assert.That(Directory.GetFiles(_downloadRoot), Is.Empty);
+        }
+
         [UnityTest]
         public IEnumerator Artifact_Http503IsTransient()
         {
@@ -327,6 +369,28 @@ namespace GamePatchKit.Unity.Tests
                     if (LastRequestPath == "/retry")
                     {
                         await WriteResponseAsync(stream, 503, "Service Unavailable", string.Empty);
+                        return;
+                    }
+
+                    // What Supabase Storage answers for a missing object: the transport-level status is 400
+                    // and the real one is in the body.
+                    if (LastRequestPath == "/object-store-missing")
+                    {
+                        await WriteResponseAsync(
+                            stream,
+                            400,
+                            "Bad Request",
+                            "{\"statusCode\":\"404\",\"error\":\"not_found\",\"message\":\"Object not found\"}");
+                        return;
+                    }
+
+                    if (LastRequestPath == "/bad-request")
+                    {
+                        await WriteResponseAsync(
+                            stream,
+                            400,
+                            "Bad Request",
+                            "{\"statusCode\":\"400\",\"error\":\"InvalidRequest\",\"message\":\"Invalid path\"}");
                         return;
                     }
 
