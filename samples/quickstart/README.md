@@ -5,13 +5,15 @@ package하고, 검증·서명하고, 로컬 HTTP로 서빙한 publish tree에서
 다운로드·설치하고, incremental release와 compact까지 이어서 보여준다.
 
 ```bash
+./package-only.sh # package만 실행
 ./run.sh          # 전체 실행
 PORT=9000 ./run.sh
 ```
 
-`dotnet`과 `python3`가 필요하다. 서명 단계는 `openssl`이 Ed25519를 지원할 때만 돌고,
-아니면 건너뛴다. 생성물은 전부 `.work/`에 만들고 실행할 때마다 지우므로 여러 번 돌려도
-안전하다.
+`package-only.sh`는 최초 release 생성과 publish tree 출력만 수행한다. `verify`, `sign`,
+Runtime 설치, incremental, compact는 실행하지 않는다. `dotnet`과 `python3`가 필요하다.
+`run.sh`의 서명 단계는 `openssl`이 Ed25519를 지원할 때만 돌고, 아니면 건너뛴다. 생성물은
+전부 `.work/`에 만들고 실행할 때마다 지우므로 여러 번 돌려도 안전하다.
 
 ## 구성
 
@@ -23,8 +25,10 @@ samples/quickstart/
 │   └── maps/{forest.dat,desert.dat}
 ├── QuickStartClient/          # Runtime을 쓰는 최소 client
 │   └── Program.cs
+├── package-only.sh            # 최초 release 생성만 하는 샘플
 ├── run.sh
 └── .work/                     # 실행 산출물 (gitignore)
+    ├── package-only/          # package-only.sh의 입력 사본과 publish tree
     ├── game-data/             # run.sh가 incremental 단계에서 수정하는 사본
     ├── publish/               # gpk가 만든 publish tree
     └── runtime-root/          # Runtime이 설치한 결과
