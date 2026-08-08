@@ -1,7 +1,7 @@
 # 핵심 원칙
 
 1. **karpathy-guidelines** 스킬을 항상 참조한다.
-2. **.claude/rules/minimal-implementation룰을** 항상 참조한다.
+2. **.claude/rules/minimal-implementation 룰을** 항상 참조한다.
 3. **재현 가능성**: 모든 변경은 코드로 남긴다. 콘솔에서 수동으로 만든 리소스는 금지한다.
 
 # 작업 기록 저장 규칙

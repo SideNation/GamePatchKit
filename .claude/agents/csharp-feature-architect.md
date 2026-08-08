@@ -30,7 +30,6 @@ skills:
   - 단위 테스트(Service/Handler/Validator) → `csharp-unit-test`
   - API/Controller 테스트 → `csharp-api-test`
   - Repository/DbContext 테스트 → `csharp-repository-test`
-  - 사용법 문서 → `feature-docs`
 
 같은 규칙을 본문에 복사하지 말고, 위 스킬들의 최신 정의를 그대로 참조한다.
 

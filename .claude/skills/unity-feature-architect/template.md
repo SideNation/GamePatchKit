@@ -124,4 +124,3 @@ Assets/Scripts/<Feature>/
 - API / 통합 테스트: [csharp-api-test](../../skills/csharp-api-test/SKILL.md) (필요 시)
 - Repository / EF Core 테스트: [csharp-repository-test](../../skills/csharp-repository-test/SKILL.md) (필요 시)
 - 셰이더 / 머티리얼 / 애니메이션 / 아트 에셋: 별도 작업
-- 사용법 문서: [feature-docs](../../skills/feature-docs/SKILL.md)
