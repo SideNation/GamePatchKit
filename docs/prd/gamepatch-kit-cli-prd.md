@@ -114,7 +114,7 @@ groups:
 
 이전 `manifest.json`은 역직렬화 직후, 그룹 판단·git diff·산출물 쓰기 전에 검증한다. 아래 조건을 하나라도 위반하면 `이전 매니페스트가 올바르지 않습니다.`와 필드 경로·이유를 출력하고 중단하며 `--output`을 바꾸지 않는다.
 
-1. 루트의 `schemaVersion`은 CLI가 지원하는 값이고, `sourcePath`는 `.` 또는 정규화된 저장소 기준 상대 경로이며, `sourceCommit`은 빈 문자열이 아니고 `groups`는 존재해야 한다.
+1. 루트의 `schemaVersion`은 CLI가 지원하는 값이고, `releaseVersion`은 0 이상이며, `sourcePath`는 `.` 또는 정규화된 저장소 기준 상대 경로이고, `sourceCommit`은 빈 문자열이 아니며 `groups`는 존재해야 한다.
 2. 그룹 `id`는 중복되지 않은 정규화 상대 경로이고, 그룹 `version`은 0 이상이며 `entries`가 존재해야 한다. 같은 그룹의 엔트리 `path`도 중복되지 않은 정규화 상대 경로여야 한다.
 3. 아카이브와 파일 객체의 `checksum`은 64자리 소문자 hex이고 모든 크기·offset·length는 0 이상이어야 한다.
 4. 모든 그룹의 `entries`는 비어 있지 않아야 한다. `packing: file` 그룹은 `archive`가 없어야 하고 모든 엔트리가 `source: file`이어야 한다. `packing: group`에서 `source: archive` 엔트리가 하나라도 있으면 `archive`가 있어야 한다.
@@ -200,13 +200,16 @@ groups:
 
 | 영역 | 필드 |
 | --- | --- |
-| 루트 | `schemaVersion`, `sourcePath`, `sourceCommit`, `groups` |
+| 루트 | `schemaVersion`, `releaseVersion`, `sourcePath`, `sourceCommit`, `groups` |
 | 그룹 | `id`, `version`, `packing`, `compression`, `archive`(있을 때), `entries` |
 | 아카이브 | `name`, `payloadSize`, `storedSize`, `checksum` |
 | 엔트리 | `path`, `version`, `size`, `source`(`archive` \| `file`) |
 | `source: archive` | `offset`, `length` |
 | `source: file` | `name`, `storedSize`, `checksum` |
 
+- `releaseVersion`은 매니페스트 전체의 세대를 가리키는 0 이상의 정수다. 첫 빌드는 0이고, 이후에는 CLI가 이전 매니페스트의 값 + 1로 올린다. 그룹 버전과 달리 재패키징 여부 같은 판단이 없어 사용자가 결정할 것이 없으므로 CLI가 정한다.
+- 새 매니페스트가 `releaseVersion`을 뺀 나머지에서 이전과 같으면 이전 값을 그대로 쓴다. 아무것도 바꾸지 않고 다시 빌드했을 때 매니페스트가 이전과 같아야 하는 완료 조건 4를 지키기 위해서다.
+- 매니페스트가 자기 세대를 담으므로 파일 하나만 가진 쪽도 그것이 어느 세대인지 안다. 배포된 매니페스트를 세대별로 보관하고 소비자가 세대를 골라 받는 방식은 [gamepatch-kit-distribution-prd.md](gamepatch-kit-distribution-prd.md)에서 다룬다.
 - 그룹은 `id` 오름차순, 엔트리는 `path` 오름차순으로 쓴다.
 - 필드 이름은 `[JsonProperty]`로 고정한다. Unity 클라이언트가 같은 모델을 읽게 되므로 이름 자동 추론에 기대지 않는다.
 - `manifest.json`은 `Formatting.None`, UTF-8 BOM 없음, 끝 개행 없음으로 쓴다. 들여쓰기를 켜면 Newtonsoft가 줄바꿈에 `Environment.NewLine`을 써서 운영체제마다 바이트가 달라지고, 완료 조건 4의 매니페스트 바이트 동일성이 깨진다.
@@ -418,12 +421,13 @@ files/group2/1/b.bin.v1.1
 20. `manifest.json`은 같은 디렉터리의 임시 파일에서 완성한 뒤 원자적으로 교체하며, 실패한 빌드는 기존 매니페스트를 바꾸지 않는다. 재실행은 마지막 성공 `sourceCommit`부터 변경을 다시 계산한다. 실패한 빌드가 쓴 산출물과 후보가 같으면 재사용하고, 파일 객체가 다르면 파일 리비전을 증가시킨다. 같은 그룹 버전의 아카이브가 다르면 중단하고, 사용자가 그룹 버전을 올려 재실행하면 해당 그룹은 현재 `HEAD`로 전체 빌드되며 다른 증분 그룹도 실패 구간의 변경을 포함한다.
 21. 이전 매니페스트가 JSON으로 읽히더라도 잘못된 `sourcePath`, 중복 그룹·엔트리, 잘못된 상대 경로·버전·checksum·조건부 필드, 음수 크기, 아카이브 범위를 벗어나거나 겹치는 구간 중 하나가 있으면 그룹 판단과 산출물 쓰기 전에 중단하고 `--output`을 바꾸지 않는다.
 22. `gpk verify --output <폴더>`가 매니페스트의 모든 아카이브·파일 객체를 존재 여부·`storedSize`·SHA-256으로 검사한다. 모두 일치하면 종료 코드 0으로 끝나고, 산출물을 삭제하거나 truncate하거나 크기를 유지한 채 바이트를 바꾸면 해당 경로와 이유가 **모두** 나열되며 0이 아닌 종료 코드로 끝난다. `--source`와 git 저장소와 `gamepatchkit.yml` 없이 실행되고 산출물과 매니페스트를 바꾸지 않는다.
+23. 첫 빌드의 `releaseVersion`은 0이고, 산출물이 달라지는 빌드마다 1씩 올라간다. 아무것도 바꾸지 않고 다시 빌드하면 값이 유지되어 매니페스트 바이트가 이전과 같다.
 
 ## 제외 범위
 
 사용자가 이번 범위를 패치 데이터 생성 과정으로 한정했다. 다음은 넣지 않는다.
 
-- 패치 산출물 업로드·CDN·캐시 정책, 채널·롤아웃
+- CDN·캐시 정책, 채널·롤아웃. 패치 산출물 업로드는 [gamepatch-kit-cli-upload-prd.md](gamepatch-kit-cli-upload-prd.md)에서 별도로 다룬다
 - 클라이언트 런타임(다운로드·검증·적용·롤백)
 - 서명·키 관리 — 매니페스트의 체크섬은 전송 손상 감지용이다. 위조 방지가 필요해지면 서명을 별도로 다룬다
 - 미참조 객체 정리, 보존 정책
