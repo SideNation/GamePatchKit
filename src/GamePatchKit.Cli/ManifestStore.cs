@@ -250,7 +250,7 @@ internal static class ManifestStore
             throw Invalid(errorPrefix, $"{entryPath}.path", "중복되었습니다.");
         }
 
-        if (!IsEntryVersion(entry.Version, group.Version))
+        if (!TryParseEntryVersion(entry.Version, group.Version, out _))
         {
             throw Invalid(errorPrefix, $"{entryPath}.version", $"{group.Version}.<0 이상의 리비전> 형식이어야 합니다.");
         }
@@ -381,8 +381,10 @@ internal static class ManifestStore
         }
     }
 
-    private static bool IsEntryVersion(string? value, int groupVersion)
+    internal static bool TryParseEntryVersion(string? value, int groupVersion, out int revision)
     {
+        revision = 0;
+
         if (value is null)
         {
             return false;
@@ -399,7 +401,7 @@ internal static class ManifestStore
         string revisionPart = value[(separatorIndex + 1)..];
 
         if (!int.TryParse(groupPart, NumberStyles.None, CultureInfo.InvariantCulture, out int parsedGroupVersion)
-            || !int.TryParse(revisionPart, NumberStyles.None, CultureInfo.InvariantCulture, out int revision)
+            || !int.TryParse(revisionPart, NumberStyles.None, CultureInfo.InvariantCulture, out revision)
             || parsedGroupVersion != groupVersion)
         {
             return false;
