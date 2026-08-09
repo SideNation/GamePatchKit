@@ -2,7 +2,7 @@ namespace GamePatchKit.Cli;
 
 internal sealed class BuildCommand
 {
-    public void Execute(BuildArguments arguments)
+    public BuildSummary Execute(BuildArguments arguments)
     {
         string sourcePath = ResolvePath(arguments.SourcePath);
         string outputPath = ResolvePath(arguments.OutputPath);
@@ -64,21 +64,33 @@ internal sealed class BuildCommand
             changedPaths);
 
         var artifactWriter = new ArtifactWriter();
-        ManifestGroup[] manifestGroups = configuration.Groups
-            .OrderBy(group => group.Id, StringComparer.Ordinal)
-            .Select(
-                group => incrementalGroupIds.Contains(group.Id)
-                    ? BuildIncrementalGroup(
+        var manifestGroups = new List<ManifestGroup>(configuration.Groups.Count);
+        var groupSummaries = new List<GroupBuildSummary>(configuration.Groups.Count);
+        var fileRevisionAdjustments = new List<FileRevisionAdjustment>();
+
+        foreach (GroupConfiguration group in configuration.Groups.OrderBy(group => group.Id, StringComparer.Ordinal))
+        {
+            (ManifestGroup Manifest, GroupBuildSummary Summary) result = incrementalGroupIds.Contains(group.Id)
+                ? BuildIncrementalGroup(
+                    outputPath,
+                    group,
+                    entriesByGroup[group.Id],
+                    previousGroups[group.Id],
+                    changedPaths,
+                    artifactWriter,
+                    fileRevisionAdjustments)
+                : group.Packing == PackingKind.Group
+                    ? BuildArchiveGroup(outputPath, group, entriesByGroup[group.Id], artifactWriter)
+                    : BuildFileGroup(
                         outputPath,
                         group,
                         entriesByGroup[group.Id],
-                        previousGroups[group.Id],
-                        changedPaths,
-                        artifactWriter)
-                    : group.Packing == PackingKind.Group
-                        ? BuildArchiveGroup(outputPath, group, entriesByGroup[group.Id], artifactWriter)
-                        : BuildFileGroup(outputPath, group, entriesByGroup[group.Id], artifactWriter))
-            .ToArray();
+                        artifactWriter,
+                        fileRevisionAdjustments);
+            manifestGroups.Add(result.Manifest);
+            groupSummaries.Add(result.Summary);
+        }
+
         ManifestStore.WriteAtomically(
             outputPath,
             new PatchManifest
@@ -88,9 +100,10 @@ internal sealed class BuildCommand
                 SourceCommit = currentCommit,
                 Groups = manifestGroups
             });
+        return new BuildSummary(groupSummaries, fileRevisionAdjustments);
     }
 
-    private static ManifestGroup BuildArchiveGroup(
+    private static (ManifestGroup Manifest, GroupBuildSummary Summary) BuildArchiveGroup(
         string outputPath,
         GroupConfiguration group,
         IReadOnlyList<SourceEntry> entries,
@@ -99,7 +112,7 @@ internal sealed class BuildCommand
         WrittenArchive written = artifactWriter.WriteArchive(outputPath, group, entries);
         string entryVersion = $"{group.Version}.0";
 
-        return new ManifestGroup
+        var manifest = new ManifestGroup
         {
             Id = group.Id,
             Version = group.Version,
@@ -125,24 +138,43 @@ internal sealed class BuildCommand
                     })
                 .ToArray()
         };
+        var summary = new GroupBuildSummary(
+            group.Id,
+            group.Version,
+            manifest.Entries.Count,
+            written.IsCreated,
+            FileObjectCount: 0,
+            written.IsCreated ? written.StoredSize : 0);
+        return (manifest, summary);
     }
 
-    private static ManifestGroup BuildFileGroup(
+    private static (ManifestGroup Manifest, GroupBuildSummary Summary) BuildFileGroup(
         string outputPath,
         GroupConfiguration group,
         IReadOnlyList<SourceEntry> entries,
-        ArtifactWriter artifactWriter)
+        ArtifactWriter artifactWriter,
+        ICollection<FileRevisionAdjustment> fileRevisionAdjustments)
     {
         string requestedVersion = $"{group.Version}.0";
         var manifestEntries = new List<ManifestEntry>(entries.Count);
+        int fileObjectCount = 0;
+        long writtenBytes = 0;
 
         foreach (SourceEntry entry in entries)
         {
             WrittenArtifact written = artifactWriter.WriteFile(outputPath, group, entry, requestedVersion);
-            manifestEntries.Add(CreateFileEntry(entry, written));
+            manifestEntries.Add(
+                TrackWrittenFile(
+                    group,
+                    entry,
+                    requestedVersion,
+                    written,
+                    fileRevisionAdjustments,
+                    ref fileObjectCount,
+                    ref writtenBytes));
         }
 
-        return new ManifestGroup
+        var manifest = new ManifestGroup
         {
             Id = group.Id,
             Version = group.Version,
@@ -150,18 +182,29 @@ internal sealed class BuildCommand
             Compression = group.Compression,
             Entries = manifestEntries
         };
+        var summary = new GroupBuildSummary(
+            group.Id,
+            group.Version,
+            manifestEntries.Count,
+            IsArchiveCreated: false,
+            fileObjectCount,
+            writtenBytes);
+        return (manifest, summary);
     }
 
-    private static ManifestGroup BuildIncrementalGroup(
+    private static (ManifestGroup Manifest, GroupBuildSummary Summary) BuildIncrementalGroup(
         string outputPath,
         GroupConfiguration group,
         IReadOnlyList<SourceEntry> entries,
         ManifestGroup previousGroup,
         IReadOnlySet<string> changedPaths,
-        ArtifactWriter artifactWriter)
+        ArtifactWriter artifactWriter,
+        ICollection<FileRevisionAdjustment> fileRevisionAdjustments)
     {
         var previousEntries = previousGroup.Entries.ToDictionary(entry => entry.Path, StringComparer.Ordinal);
         var manifestEntries = new List<ManifestEntry>(entries.Count);
+        int fileObjectCount = 0;
+        long writtenBytes = 0;
 
         foreach (SourceEntry entry in entries)
         {
@@ -190,10 +233,18 @@ internal sealed class BuildCommand
 
             string requestedVersion = $"{group.Version}.{requestedRevision}";
             WrittenArtifact written = artifactWriter.WriteFile(outputPath, group, entry, requestedVersion);
-            manifestEntries.Add(CreateFileEntry(entry, written));
+            manifestEntries.Add(
+                TrackWrittenFile(
+                    group,
+                    entry,
+                    requestedVersion,
+                    written,
+                    fileRevisionAdjustments,
+                    ref fileObjectCount,
+                    ref writtenBytes));
         }
 
-        return new ManifestGroup
+        var manifest = new ManifestGroup
         {
             Id = group.Id,
             Version = group.Version,
@@ -202,10 +253,37 @@ internal sealed class BuildCommand
             Archive = previousGroup.Archive,
             Entries = manifestEntries
         };
+        var summary = new GroupBuildSummary(
+            group.Id,
+            group.Version,
+            manifestEntries.Count,
+            IsArchiveCreated: false,
+            fileObjectCount,
+            writtenBytes);
+        return (manifest, summary);
     }
 
-    private static ManifestEntry CreateFileEntry(SourceEntry entry, WrittenArtifact written)
+    private static ManifestEntry TrackWrittenFile(
+        GroupConfiguration group,
+        SourceEntry entry,
+        string requestedVersion,
+        WrittenArtifact written,
+        ICollection<FileRevisionAdjustment> fileRevisionAdjustments,
+        ref int fileObjectCount,
+        ref long writtenBytes)
     {
+        if (written.IsCreated)
+        {
+            fileObjectCount++;
+            writtenBytes = checked(writtenBytes + written.StoredSize);
+        }
+
+        if (!string.Equals(requestedVersion, written.Version, StringComparison.Ordinal))
+        {
+            fileRevisionAdjustments.Add(
+                new FileRevisionAdjustment(group.Id, entry.Path, requestedVersion, written.Version));
+        }
+
         return new ManifestEntry
         {
             Path = entry.Path,

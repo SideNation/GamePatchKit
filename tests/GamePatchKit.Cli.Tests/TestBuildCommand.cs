@@ -651,7 +651,7 @@ public sealed class TestBuildCommand
             ("nested/b.bin", "second"));
         string outputPath = testRepository.GetExternalPath("patches");
 
-        _sut.Execute(
+        BuildSummary summary = _sut.Execute(
             new BuildArguments(testRepository.GetRepositoryPath("data"), outputPath));
 
         ManifestGroup group = GetOnlyGroup(outputPath);
@@ -665,6 +665,16 @@ public sealed class TestBuildCommand
             group.Entries,
             entry => AssertFileEntry(outputPath, entry, "a.bin", "3.0", size: 5),
             entry => AssertFileEntry(outputPath, entry, "nested/b.bin", "3.0", size: 6));
+        Assert.Equal(
+            new GroupBuildSummary(
+                "group",
+                3,
+                2,
+                IsArchiveCreated: false,
+                FileObjectCount: 2,
+                group.Entries.Sum(entry => entry.StoredSize!.Value)),
+            Assert.Single(summary.Groups));
+        Assert.Empty(summary.FileRevisionAdjustments);
         Assert.Equal(
             new[]
             {
@@ -859,6 +869,392 @@ public sealed class TestBuildCommand
             GetOutputFiles(outputPath));
     }
 
+    [Fact]
+    public void Execute_GroupPackingLifecycle_ReturnsExpectedSummariesAndManifest()
+    {
+        using var testRepository = CreateGroupRepository(
+            currentVersion: 1,
+            ("a.txt", "a0"),
+            ("b.txt", "b0"));
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        var arguments = new BuildArguments(sourcePath, outputPath);
+
+        BuildSummary initial = _sut.Execute(arguments);
+
+        AssertOnlyGroupSummary(initial, version: 1, entries: 2, archiveCreated: true, fileObjects: 0, writtenBytes: 4);
+        ManifestGroup initialGroup = GetOnlyGroup(outputPath);
+        Assert.Collection(
+            initialGroup.Entries,
+            entry => AssertArchiveEntry(entry, "a.txt", "1.0", offset: 0, length: 2),
+            entry => AssertArchiveEntry(entry, "b.txt", "1.0", offset: 2, length: 2));
+        Assert.Equal(
+            new[]
+            {
+                "archives/group/1.gpka",
+                "manifest.json"
+            },
+            GetOutputFiles(outputPath));
+        byte[] manifestBeforeNoOp = File.ReadAllBytes(Path.Combine(outputPath, "manifest.json"));
+        IReadOnlyDictionary<string, byte[]> outputBeforeNoOp = GetOutputContents(outputPath);
+        using var standardOutput = new StringWriter();
+        using var error = new StringWriter();
+
+        int noOpExitCode = Program.Run(
+            new[] { "build", "--source", sourcePath, "--output", outputPath },
+            standardOutput,
+            error);
+
+        Assert.Equal(0, noOpExitCode);
+        Assert.Equal(string.Empty, error.ToString());
+        Assert.Contains("archiveCreated=false", standardOutput.ToString(), StringComparison.Ordinal);
+        Assert.Contains("writtenBytes=0", standardOutput.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("경고:", standardOutput.ToString(), StringComparison.Ordinal);
+        Assert.Equal(manifestBeforeNoOp, File.ReadAllBytes(Path.Combine(outputPath, "manifest.json")));
+        AssertOutputContentsEqual(outputBeforeNoOp, outputPath);
+        testRepository.WriteFile("data/group/a.txt", "a1");
+        testRepository.CommitAll("modify a");
+
+        BuildSummary firstModification = _sut.Execute(arguments);
+
+        AssertOnlyGroupSummary(
+            firstModification,
+            version: 1,
+            entries: 2,
+            archiveCreated: false,
+            fileObjects: 1,
+            writtenBytes: 2);
+        Assert.Equal("1.1", GetEntry(GetOnlyGroup(outputPath), "a.txt").Version);
+        Assert.Equal(
+            new[]
+            {
+                "archives/group/1.gpka",
+                "files/group/1/a.txt.v1.1",
+                "manifest.json"
+            },
+            GetOutputFiles(outputPath));
+        testRepository.WriteFile("data/group/a.txt", "a2");
+        testRepository.CommitAll("modify a again");
+
+        BuildSummary secondModification = _sut.Execute(arguments);
+
+        AssertOnlyGroupSummary(
+            secondModification,
+            version: 1,
+            entries: 2,
+            archiveCreated: false,
+            fileObjects: 1,
+            writtenBytes: 2);
+        Assert.Equal("1.2", GetEntry(GetOnlyGroup(outputPath), "a.txt").Version);
+        Assert.Equal(
+            new[]
+            {
+                "archives/group/1.gpka",
+                "files/group/1/a.txt.v1.1",
+                "files/group/1/a.txt.v1.2",
+                "manifest.json"
+            },
+            GetOutputFiles(outputPath));
+        testRepository.WriteFile("data/group/c.txt", "c0");
+        testRepository.CommitAll("add c");
+
+        BuildSummary addition = _sut.Execute(arguments);
+
+        AssertOnlyGroupSummary(addition, version: 1, entries: 3, archiveCreated: false, fileObjects: 1, writtenBytes: 2);
+        Assert.Equal("1.0", GetEntry(GetOnlyGroup(outputPath), "c.txt").Version);
+        Assert.Equal(
+            new[]
+            {
+                "archives/group/1.gpka",
+                "files/group/1/a.txt.v1.1",
+                "files/group/1/a.txt.v1.2",
+                "files/group/1/c.txt.v1.0",
+                "manifest.json"
+            },
+            GetOutputFiles(outputPath));
+        testRepository.DeleteFile("data/group/b.txt");
+        testRepository.CommitAll("delete b");
+
+        BuildSummary deletion = _sut.Execute(arguments);
+
+        AssertOnlyGroupSummary(deletion, version: 1, entries: 2, archiveCreated: false, fileObjects: 0, writtenBytes: 0);
+        Assert.DoesNotContain(GetOnlyGroup(outputPath).Entries, entry => entry.Path == "b.txt");
+        Assert.Equal(
+            new[]
+            {
+                "archives/group/1.gpka",
+                "files/group/1/a.txt.v1.1",
+                "files/group/1/a.txt.v1.2",
+                "files/group/1/c.txt.v1.0",
+                "manifest.json"
+            },
+            GetOutputFiles(outputPath));
+        testRepository.WriteFile(
+            "data/gamepatchkit.yml",
+            """
+            groups:
+              - id: group
+                version: 2
+                packing: group
+                compression: none
+            """);
+        testRepository.CommitAll("increase group version");
+
+        BuildSummary repack = _sut.Execute(arguments);
+
+        AssertOnlyGroupSummary(repack, version: 2, entries: 2, archiveCreated: true, fileObjects: 0, writtenBytes: 4);
+        ManifestGroup finalGroup = GetOnlyGroup(outputPath);
+        Assert.Collection(
+            finalGroup.Entries,
+            entry => AssertArchiveEntry(entry, "a.txt", "2.0", offset: 0, length: 2),
+            entry => AssertArchiveEntry(entry, "c.txt", "2.0", offset: 2, length: 2));
+        Assert.Equal(
+            new[]
+            {
+                "archives/group/1.gpka",
+                "archives/group/2.gpka",
+                "files/group/1/a.txt.v1.1",
+                "files/group/1/a.txt.v1.2",
+                "files/group/1/c.txt.v1.0",
+                "manifest.json"
+            },
+            GetOutputFiles(outputPath));
+    }
+
+    [Fact]
+    public void Run_FileRevisionAdjustments_PrintsOneWarningAfterSummaries()
+    {
+        using var testRepository = new GitTestRepository();
+        testRepository.WriteFile(
+            "data/gamepatchkit.yml",
+            """
+            groups:
+              - id: alpha
+                version: 1
+                packing: file
+                compression: none
+              - id: beta
+                version: 2
+                packing: file
+                compression: none
+            """);
+        testRepository.WriteFile("data/alpha/a.txt", "same-a");
+        testRepository.WriteFile("data/beta/b.txt", "new-b");
+        testRepository.CommitAll("initial");
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        WriteOutputFile(outputPath, "files/alpha/1/a.txt.v1.5", "same-a"u8.ToArray());
+        WriteOutputFile(outputPath, "files/beta/2/b.txt.v2.4", "old-b"u8.ToArray());
+        using var standardOutput = new StringWriter();
+        using var error = new StringWriter();
+
+        int exitCode = Program.Run(
+            new[] { "build", "--source", sourcePath, "--output", outputPath },
+            standardOutput,
+            error);
+
+        string[] lines = standardOutput.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(0, exitCode);
+        Assert.Equal(string.Empty, error.ToString());
+        Assert.Equal(
+            new[]
+            {
+                "그룹 'alpha': version=1, entries=1, archiveCreated=false, fileObjects=0, writtenBytes=0",
+                "그룹 'beta': version=2, entries=1, archiveCreated=false, fileObjects=1, writtenBytes=5",
+                "합계: groups=2, entries=2, archivesCreated=0, fileObjects=1, writtenBytes=5",
+                "경고: 파일 리비전이 자동 증가했습니다.",
+                "  group='alpha', path='a.txt', requested=1.0, actual=1.5",
+                "  group='beta', path='b.txt', requested=2.0, actual=2.5"
+            },
+            lines);
+        PatchManifest manifest = Assert.IsType<PatchManifest>(ManifestStore.ReadPrevious(outputPath));
+        Assert.Collection(
+            manifest.Groups,
+            group => Assert.Equal("1.5", GetEntry(group, "a.txt").Version),
+            group => Assert.Equal("2.5", GetEntry(group, "b.txt").Version));
+    }
+
+    [Fact]
+    public void Execute_PartialFailure_RerunReusesMatchingArtifactAndKeepsLastManifest()
+    {
+        using var testRepository = new GitTestRepository();
+        testRepository.WriteFile(
+            "data/gamepatchkit.yml",
+            """
+            groups:
+              - id: m-base
+                version: 1
+                packing: group
+                compression: none
+            """);
+        testRepository.WriteFile("data/m-base/file.txt", "m");
+        testRepository.CommitAll("initial");
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        var arguments = new BuildArguments(sourcePath, outputPath);
+        _sut.Execute(arguments);
+        byte[] manifestBefore = File.ReadAllBytes(Path.Combine(outputPath, "manifest.json"));
+        string successfulCommit = ManifestStore.ReadPrevious(outputPath)!.SourceCommit;
+        testRepository.WriteFile(
+            "data/gamepatchkit.yml",
+            """
+            groups:
+              - id: a-new
+                version: 1
+                packing: group
+                compression: none
+              - id: m-base
+                version: 1
+                packing: group
+                compression: none
+              - id: z-new
+                version: 1
+                packing: group
+                compression: none
+            """);
+        testRepository.WriteFile("data/a-new/file.txt", "a");
+        testRepository.WriteFile("data/z-new/file.txt", "z");
+        string currentCommit = testRepository.CommitAll("add groups");
+        string conflictingArchiveName = "archives/z-new/1.gpka";
+        WriteOutputFile(outputPath, conflictingArchiveName, "collision"u8.ToArray());
+
+        BuildException exception = Assert.Throws<BuildException>(() => _sut.Execute(arguments));
+
+        Assert.Contains("z-new", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(manifestBefore, File.ReadAllBytes(Path.Combine(outputPath, "manifest.json")));
+        Assert.Equal(successfulCommit, ManifestStore.ReadPrevious(outputPath)!.SourceCommit);
+        string reusableArchivePath = GetOutputPath(outputPath, "archives/a-new/1.gpka");
+        Assert.Equal("a"u8.ToArray(), File.ReadAllBytes(reusableArchivePath));
+        File.SetLastWriteTimeUtc(reusableArchivePath, new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc));
+        DateTime reusableTimestamp = File.GetLastWriteTimeUtc(reusableArchivePath);
+        File.Delete(GetOutputPath(outputPath, conflictingArchiveName));
+
+        BuildSummary rerun = _sut.Execute(arguments);
+
+        Assert.Collection(
+            rerun.Groups,
+            group => Assert.Equal(new GroupBuildSummary("a-new", 1, 1, false, 0, 0), group),
+            group => Assert.Equal(new GroupBuildSummary("m-base", 1, 1, false, 0, 0), group),
+            group => Assert.Equal(new GroupBuildSummary("z-new", 1, 1, true, 0, 1), group));
+        Assert.Empty(rerun.FileRevisionAdjustments);
+        Assert.Equal(reusableTimestamp, File.GetLastWriteTimeUtc(reusableArchivePath));
+        Assert.Equal(currentCommit, ManifestStore.ReadPrevious(outputPath)!.SourceCommit);
+    }
+
+    [Fact]
+    public void Execute_ArchiveConflictThenVersionBump_IncludesFailedRangeAndOtherIncrementalChanges()
+    {
+        using var testRepository = new GitTestRepository();
+        testRepository.WriteFile(
+            "data/gamepatchkit.yml",
+            """
+            groups:
+              - id: a-incremental
+                version: 1
+                packing: group
+                compression: none
+              - id: z-repack
+                version: 1
+                packing: group
+                compression: none
+            """);
+        testRepository.WriteFile("data/a-incremental/file.txt", "a0");
+        testRepository.WriteFile("data/z-repack/file.txt", "z0");
+        testRepository.CommitAll("initial");
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        var arguments = new BuildArguments(sourcePath, outputPath);
+        _sut.Execute(arguments);
+        byte[] manifestBefore = File.ReadAllBytes(Path.Combine(outputPath, "manifest.json"));
+        string successfulCommit = ManifestStore.ReadPrevious(outputPath)!.SourceCommit;
+        testRepository.WriteFile(
+            "data/gamepatchkit.yml",
+            """
+            groups:
+              - id: a-incremental
+                version: 1
+                packing: group
+                compression: none
+              - id: z-repack
+                version: 2
+                packing: group
+                compression: none
+            """);
+        testRepository.WriteFile("data/a-incremental/file.txt", "a1");
+        testRepository.WriteFile("data/z-repack/file.txt", "z1");
+        testRepository.CommitAll("prepare failed build");
+        const string conflictingArchiveName = "archives/z-repack/2.gpka";
+        WriteOutputFile(outputPath, conflictingArchiveName, "collision"u8.ToArray());
+
+        Assert.Throws<BuildException>(() => _sut.Execute(arguments));
+
+        Assert.Equal(manifestBefore, File.ReadAllBytes(Path.Combine(outputPath, "manifest.json")));
+        Assert.Equal(successfulCommit, ManifestStore.ReadPrevious(outputPath)!.SourceCommit);
+        Assert.Equal(
+            "a1"u8.ToArray(),
+            File.ReadAllBytes(GetOutputPath(outputPath, "files/a-incremental/1/file.txt.v1.1")));
+        testRepository.WriteFile(
+            "data/gamepatchkit.yml",
+            """
+            groups:
+              - id: a-incremental
+                version: 1
+                packing: group
+                compression: none
+              - id: z-repack
+                version: 3
+                packing: group
+                compression: none
+            """);
+        testRepository.WriteFile("data/a-incremental/file.txt", "a2");
+        string finalCommit = testRepository.CommitAll("recover with new group version");
+
+        BuildSummary recovered = _sut.Execute(arguments);
+
+        Assert.Collection(
+            recovered.Groups,
+            group => Assert.Equal(new GroupBuildSummary("a-incremental", 1, 1, false, 1, 2), group),
+            group => Assert.Equal(new GroupBuildSummary("z-repack", 3, 1, true, 0, 2), group));
+        Assert.Equal(
+            new FileRevisionAdjustment("a-incremental", "file.txt", "1.1", "1.2"),
+            Assert.Single(recovered.FileRevisionAdjustments));
+        PatchManifest manifest = Assert.IsType<PatchManifest>(ManifestStore.ReadPrevious(outputPath));
+        ManifestGroup incrementalGroup = Assert.Single(manifest.Groups, group => group.Id == "a-incremental");
+        ManifestGroup repackedGroup = Assert.Single(manifest.Groups, group => group.Id == "z-repack");
+        Assert.Equal("1.2", Assert.Single(incrementalGroup.Entries).Version);
+        Assert.Equal(3, repackedGroup.Version);
+        Assert.Equal(finalCommit, manifest.SourceCommit);
+        Assert.Equal("collision"u8.ToArray(), File.ReadAllBytes(GetOutputPath(outputPath, conflictingArchiveName)));
+    }
+
+    [Fact]
+    public void Execute_UntrackedSourceAndTrackedOutsideChange_AreIgnored()
+    {
+        using var testRepository = new GitTestRepository();
+        testRepository.WriteFile(
+            "data/gamepatchkit.yml",
+            """
+            groups:
+              - id: group
+                version: 1
+                packing: file
+                compression: none
+            """);
+        testRepository.WriteFile("data/group/file.txt", "tracked");
+        testRepository.WriteFile("outside.txt", "before");
+        testRepository.CommitAll("initial");
+        testRepository.WriteFile("data/group/untracked.txt", "untracked");
+        testRepository.WriteFile("outside.txt", "after");
+        string outputPath = testRepository.GetExternalPath("patches");
+
+        BuildSummary summary = _sut.Execute(
+            new BuildArguments(testRepository.GetRepositoryPath("data"), outputPath));
+
+        AssertOnlyGroupSummary(summary, version: 1, entries: 1, archiveCreated: false, fileObjects: 1, writtenBytes: 7);
+        Assert.Equal("tracked"u8.ToArray(), File.ReadAllBytes(GetOutputPath(outputPath, "files/group/1/file.txt.v1.0")));
+        Assert.DoesNotContain(GetOutputFiles(outputPath), path => path.Contains("untracked", StringComparison.Ordinal));
+    }
+
     private static GitTestRepository CreateVersionedRepository(int currentVersion)
     {
         return CreateFileRepository(currentVersion, "none", ("file.txt", "data"));
@@ -947,6 +1343,20 @@ public sealed class TestBuildCommand
         Assert.Equal(expected.Checksum, actual.Checksum);
     }
 
+    private static void AssertOnlyGroupSummary(
+        BuildSummary summary,
+        int version,
+        int entries,
+        bool archiveCreated,
+        int fileObjects,
+        long writtenBytes)
+    {
+        Assert.Equal(
+            new GroupBuildSummary("group", version, entries, archiveCreated, fileObjects, writtenBytes),
+            Assert.Single(summary.Groups));
+        Assert.Empty(summary.FileRevisionAdjustments);
+    }
+
     private static void AssertFileEntry(
         string outputPath,
         ManifestEntry entry,
@@ -1025,6 +1435,13 @@ public sealed class TestBuildCommand
     private static string GetOutputPath(string outputPath, string relativePath)
     {
         return Path.Combine(outputPath, relativePath.Replace('/', Path.DirectorySeparatorChar));
+    }
+
+    private static void WriteOutputFile(string outputPath, string relativePath, byte[] bytes)
+    {
+        string path = GetOutputPath(outputPath, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, bytes);
     }
 
     private static byte[] WritePreviousManifest(string outputPath, int previousVersion, string sourceCommit)

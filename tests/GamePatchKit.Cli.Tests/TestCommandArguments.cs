@@ -46,11 +46,13 @@ public sealed class TestCommandArguments
     [Fact]
     public void Run_CommandIsUnknown_ReturnsNonZeroExitCode()
     {
+        using var standardOutput = new StringWriter();
         using var error = new StringWriter();
 
-        int exitCode = Program.Run(new[] { "unknown" }, error);
+        int exitCode = Program.Run(new[] { "unknown" }, standardOutput, error);
 
         Assert.NotEqual(0, exitCode);
+        Assert.Equal(string.Empty, standardOutput.ToString());
         Assert.Contains("알 수 없는 명령", error.ToString(), StringComparison.Ordinal);
     }
 }
