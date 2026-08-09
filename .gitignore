@@ -14,7 +14,7 @@ obj/
 *.nupkg
 *.snupkg
 
-# Nuke build
+# Build output
 /artifacts/
 .nuke/temp/
 

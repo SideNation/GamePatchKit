@@ -1,0 +1,20 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="NativeCompressions.Zstandard.Core" Version="[0.6.1]" />
+    <PackageVersion Include="NativeCompressions.Zstandard.Runtime.win-x64" Version="[0.6.1]" />
+    <PackageVersion Include="NativeCompressions.Zstandard.Runtime.linux-x64" Version="[0.6.1]" />
+    <PackageVersion Include="NativeCompressions.Zstandard.Runtime.osx-arm64" Version="[0.6.1]" />
+    <PackageVersion Include="Newtonsoft.Json" Version="13.0.2" />
+    <PackageVersion Include="YamlDotNet" Version="18.1.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+  </ItemGroup>
+</Project>
