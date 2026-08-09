@@ -638,6 +638,179 @@ public sealed class TestBuildCommand
         Assert.Equal("candidate"u8.ToArray(), File.ReadAllBytes(GetOutputPath(outputPath, entry.Name!)));
     }
 
+    [Theory]
+    [InlineData("none")]
+    [InlineData("zstd")]
+    public void Execute_FirstFileBuild_WritesEveryFileWithoutArchiveAndUsesActualStoredMetadata(
+        string compression)
+    {
+        using var testRepository = CreateFileRepository(
+            currentVersion: 3,
+            compression,
+            ("a.bin", "first"),
+            ("nested/b.bin", "second"));
+        string outputPath = testRepository.GetExternalPath("patches");
+
+        _sut.Execute(
+            new BuildArguments(testRepository.GetRepositoryPath("data"), outputPath));
+
+        ManifestGroup group = GetOnlyGroup(outputPath);
+        Assert.Equal(3, group.Version);
+        Assert.Equal(PackingKind.File, group.Packing);
+        Assert.Equal(
+            compression == "none" ? CompressionKind.None : CompressionKind.Zstd,
+            group.Compression);
+        Assert.Null(group.Archive);
+        Assert.Collection(
+            group.Entries,
+            entry => AssertFileEntry(outputPath, entry, "a.bin", "3.0", size: 5),
+            entry => AssertFileEntry(outputPath, entry, "nested/b.bin", "3.0", size: 6));
+        Assert.Equal(
+            new[]
+            {
+                "files/group/3/a.bin.v3.0",
+                "files/group/3/nested/b.bin.v3.0",
+                "manifest.json"
+            },
+            GetOutputFiles(outputPath));
+    }
+
+    [Fact]
+    public void Execute_FilePackingChangedAddedAndDeleted_WritesOnlyChangedAndNewObjects()
+    {
+        using var testRepository = CreateFileRepository(
+            currentVersion: 1,
+            compression: "none",
+            ("a.txt", "a0"),
+            ("b.txt", "b0"),
+            ("c.txt", "c0"));
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+        ManifestEntry previousC = GetEntry(GetOnlyGroup(outputPath), "c.txt");
+        testRepository.WriteFile("data/group/a.txt", "a1");
+        testRepository.DeleteFile("data/group/b.txt");
+        testRepository.WriteFile("data/group/d.txt", "d0");
+        testRepository.CommitAll("change file group");
+
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+
+        ManifestGroup group = GetOnlyGroup(outputPath);
+        ManifestEntry changed = GetEntry(group, "a.txt");
+        ManifestEntry added = GetEntry(group, "d.txt");
+        Assert.Equal("1.1", changed.Version);
+        Assert.Equal("a1"u8.ToArray(), File.ReadAllBytes(GetOutputPath(outputPath, changed.Name!)));
+        Assert.DoesNotContain(group.Entries, entry => entry.Path == "b.txt");
+        AssertManifestEntryEqual(previousC, GetEntry(group, "c.txt"));
+        Assert.Equal("1.0", added.Version);
+        Assert.Equal("d0"u8.ToArray(), File.ReadAllBytes(GetOutputPath(outputPath, added.Name!)));
+        Assert.Equal(
+            new[]
+            {
+                "files/group/1/a.txt.v1.0",
+                "files/group/1/a.txt.v1.1",
+                "files/group/1/b.txt.v1.0",
+                "files/group/1/c.txt.v1.0",
+                "files/group/1/d.txt.v1.0",
+                "manifest.json"
+            },
+            GetOutputFiles(outputPath));
+    }
+
+    [Fact]
+    public void Execute_FileRemovedThenReaddedWithDifferentBytes_UsesNextRevisionAndKeepsGroupVersion()
+    {
+        using var testRepository = CreateFileRepository(
+            currentVersion: 1,
+            compression: "none",
+            ("a.txt", "old"),
+            ("b.txt", "keep"));
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+        testRepository.DeleteFile("data/group/a.txt");
+        testRepository.CommitAll("remove a");
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+        testRepository.WriteFile("data/group/a.txt", "new");
+        testRepository.CommitAll("readd a");
+
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+
+        ManifestGroup group = GetOnlyGroup(outputPath);
+        ManifestEntry readded = GetEntry(group, "a.txt");
+        Assert.Equal(1, group.Version);
+        Assert.Equal("1.1", readded.Version);
+        Assert.Equal("files/group/1/a.txt.v1.1", readded.Name);
+        Assert.Equal("old"u8.ToArray(), File.ReadAllBytes(GetOutputPath(outputPath, "files/group/1/a.txt.v1.0")));
+        Assert.Equal("new"u8.ToArray(), File.ReadAllBytes(GetOutputPath(outputPath, readded.Name!)));
+    }
+
+    [Theory]
+    [InlineData("missing", "없습니다")]
+    [InlineData("truncated", "크기가 다릅니다")]
+    public void Execute_InheritedFileIsMissingOrTruncated_FailsBeforeWritingChangedFile(
+        string damageKind,
+        string expectedReason)
+    {
+        using var testRepository = CreateFileRepository(
+            currentVersion: 1,
+            compression: "none",
+            ("a.txt", "a0"),
+            ("b.txt", "b0"));
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+        string inheritedName = GetEntry(GetOnlyGroup(outputPath), "b.txt").Name!;
+        testRepository.WriteFile("data/group/a.txt", "a-changed");
+        testRepository.CommitAll("modify a");
+        string inheritedPath = GetOutputPath(outputPath, inheritedName);
+
+        if (damageKind == "missing")
+        {
+            File.Delete(inheritedPath);
+        }
+        else
+        {
+            File.WriteAllBytes(inheritedPath, [0]);
+        }
+
+        IReadOnlyDictionary<string, byte[]> outputBefore = GetOutputContents(outputPath);
+
+        BuildException exception = Assert.Throws<BuildException>(
+            () => _sut.Execute(new BuildArguments(sourcePath, outputPath)));
+
+        Assert.Contains(inheritedName, exception.Message, StringComparison.Ordinal);
+        Assert.Contains(expectedReason, exception.Message, StringComparison.Ordinal);
+        AssertOutputContentsEqual(outputBefore, outputPath);
+        Assert.DoesNotContain("files/group/1/a.txt.v1.1", GetOutputFiles(outputPath));
+    }
+
+    [Fact]
+    public void Execute_InheritedFileHasSameSizeCorruption_DoesNotReadBytes()
+    {
+        using var testRepository = CreateFileRepository(
+            currentVersion: 1,
+            compression: "none",
+            ("a.txt", "a0"),
+            ("b.txt", "b0"));
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+        ManifestEntry previousB = GetEntry(GetOnlyGroup(outputPath), "b.txt");
+        string inheritedPath = GetOutputPath(outputPath, previousB.Name!);
+        testRepository.WriteFile("data/group/a.txt", "a-changed");
+        testRepository.CommitAll("modify a");
+        CorruptSameSize(inheritedPath);
+        byte[] corruptedBytes = File.ReadAllBytes(inheritedPath);
+
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+
+        ManifestGroup group = GetOnlyGroup(outputPath);
+        Assert.Equal("1.1", GetEntry(group, "a.txt").Version);
+        AssertManifestEntryEqual(previousB, GetEntry(group, "b.txt"));
+        Assert.Equal(corruptedBytes, File.ReadAllBytes(inheritedPath));
+    }
+
     [Fact]
     public void Execute_GroupVersionIsLowerThanPrevious_ThrowsWithoutChangingManifest()
     {
@@ -668,21 +841,33 @@ public sealed class TestBuildCommand
     }
 
     [Fact]
-    public void Execute_GroupVersionIncreasedPreviousCommitIsMissing_DoesNotRequirePreviousCommit()
+    public void Execute_FileGroupVersionIncreasedPreviousCommitIsMissing_RebuildsAtRevisionZero()
     {
         using var testRepository = CreateVersionedRepository(currentVersion: 2);
         string outputPath = testRepository.GetExternalPath("patches");
-        byte[] before = WritePreviousManifest(outputPath, previousVersion: 1, new string('f', 40));
+        _ = WritePreviousManifest(outputPath, previousVersion: 1, new string('f', 40));
 
-        BuildException exception = Assert.Throws<BuildException>(
-            () => _sut.Execute(new BuildArguments(testRepository.GetRepositoryPath("data"), outputPath)));
+        _sut.Execute(
+            new BuildArguments(testRepository.GetRepositoryPath("data"), outputPath));
 
-        Assert.Contains("아직 구현되지 않았습니다", exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain("이전 상태", exception.Message, StringComparison.Ordinal);
-        Assert.Equal(before, File.ReadAllBytes(Path.Combine(outputPath, "manifest.json")));
+        ManifestGroup group = GetOnlyGroup(outputPath);
+        Assert.Equal(2, group.Version);
+        Assert.Null(group.Archive);
+        AssertFileEntry(outputPath, Assert.Single(group.Entries), "file.txt", "2.0", size: 4);
+        Assert.Equal(
+            new[] { "files/group/2/file.txt.v2.0", "manifest.json" },
+            GetOutputFiles(outputPath));
     }
 
     private static GitTestRepository CreateVersionedRepository(int currentVersion)
+    {
+        return CreateFileRepository(currentVersion, "none", ("file.txt", "data"));
+    }
+
+    private static GitTestRepository CreateFileRepository(
+        int currentVersion,
+        string compression,
+        params (string Path, string Contents)[] entries)
     {
         var testRepository = new GitTestRepository();
         testRepository.WriteFile(
@@ -692,9 +877,14 @@ public sealed class TestBuildCommand
               - id: group
                 version: {{currentVersion}}
                 packing: file
-                compression: none
+                compression: {{compression}}
             """);
-        testRepository.WriteFile("data/group/file.txt", "data");
+
+        foreach ((string path, string contents) in entries)
+        {
+            testRepository.WriteFile($"data/group/{path}", contents);
+        }
+
         testRepository.CommitAll("initial");
         return testRepository;
     }
@@ -755,6 +945,27 @@ public sealed class TestBuildCommand
         Assert.Equal(expected.Name, actual.Name);
         Assert.Equal(expected.StoredSize, actual.StoredSize);
         Assert.Equal(expected.Checksum, actual.Checksum);
+    }
+
+    private static void AssertFileEntry(
+        string outputPath,
+        ManifestEntry entry,
+        string path,
+        string version,
+        long size)
+    {
+        Assert.Equal(path, entry.Path);
+        Assert.Equal(version, entry.Version);
+        Assert.Equal(size, entry.Size);
+        Assert.Equal(EntrySource.File, entry.Source);
+        Assert.Null(entry.Offset);
+        Assert.Null(entry.Length);
+        Assert.Equal($"files/group/{version[..version.IndexOf('.', StringComparison.Ordinal)]}/{path}.v{version}", entry.Name);
+        Assert.NotNull(entry.StoredSize);
+        Assert.NotNull(entry.Checksum);
+        StoredArtifact stored = ArtifactWriter.ReadStored(GetOutputPath(outputPath, entry.Name!));
+        Assert.Equal(stored.StoredSize, entry.StoredSize);
+        Assert.Equal(stored.Checksum, entry.Checksum);
     }
 
     private static IReadOnlyDictionary<string, byte[]> GetOutputContents(string outputPath)

@@ -63,24 +63,21 @@ internal sealed class BuildCommand
             incrementalGroupIds,
             changedPaths);
 
-        if (configuration.Groups.Any(group => group.Packing == PackingKind.File))
-        {
-            throw new BuildException("build 명령의 패치 생성은 아직 구현되지 않았습니다.");
-        }
-
         var artifactWriter = new ArtifactWriter();
         ManifestGroup[] manifestGroups = configuration.Groups
             .OrderBy(group => group.Id, StringComparer.Ordinal)
             .Select(
                 group => incrementalGroupIds.Contains(group.Id)
-                    ? BuildIncrementalArchiveGroup(
+                    ? BuildIncrementalGroup(
                         outputPath,
                         group,
                         entriesByGroup[group.Id],
                         previousGroups[group.Id],
                         changedPaths,
                         artifactWriter)
-                    : BuildArchiveGroup(outputPath, group, entriesByGroup[group.Id], artifactWriter))
+                    : group.Packing == PackingKind.Group
+                        ? BuildArchiveGroup(outputPath, group, entriesByGroup[group.Id], artifactWriter)
+                        : BuildFileGroup(outputPath, group, entriesByGroup[group.Id], artifactWriter))
             .ToArray();
         ManifestStore.WriteAtomically(
             outputPath,
@@ -130,7 +127,32 @@ internal sealed class BuildCommand
         };
     }
 
-    private static ManifestGroup BuildIncrementalArchiveGroup(
+    private static ManifestGroup BuildFileGroup(
+        string outputPath,
+        GroupConfiguration group,
+        IReadOnlyList<SourceEntry> entries,
+        ArtifactWriter artifactWriter)
+    {
+        string requestedVersion = $"{group.Version}.0";
+        var manifestEntries = new List<ManifestEntry>(entries.Count);
+
+        foreach (SourceEntry entry in entries)
+        {
+            WrittenArtifact written = artifactWriter.WriteFile(outputPath, group, entry, requestedVersion);
+            manifestEntries.Add(CreateFileEntry(entry, written));
+        }
+
+        return new ManifestGroup
+        {
+            Id = group.Id,
+            Version = group.Version,
+            Packing = group.Packing,
+            Compression = group.Compression,
+            Entries = manifestEntries
+        };
+    }
+
+    private static ManifestGroup BuildIncrementalGroup(
         string outputPath,
         GroupConfiguration group,
         IReadOnlyList<SourceEntry> entries,
@@ -168,17 +190,7 @@ internal sealed class BuildCommand
 
             string requestedVersion = $"{group.Version}.{requestedRevision}";
             WrittenArtifact written = artifactWriter.WriteFile(outputPath, group, entry, requestedVersion);
-            manifestEntries.Add(
-                new ManifestEntry
-                {
-                    Path = entry.Path,
-                    Version = written.Version,
-                    Size = entry.Size,
-                    Source = EntrySource.File,
-                    Name = written.Name,
-                    StoredSize = written.StoredSize,
-                    Checksum = written.Checksum
-                });
+            manifestEntries.Add(CreateFileEntry(entry, written));
         }
 
         return new ManifestGroup
@@ -189,6 +201,20 @@ internal sealed class BuildCommand
             Compression = group.Compression,
             Archive = previousGroup.Archive,
             Entries = manifestEntries
+        };
+    }
+
+    private static ManifestEntry CreateFileEntry(SourceEntry entry, WrittenArtifact written)
+    {
+        return new ManifestEntry
+        {
+            Path = entry.Path,
+            Version = written.Version,
+            Size = entry.Size,
+            Source = EntrySource.File,
+            Name = written.Name,
+            StoredSize = written.StoredSize,
+            Checksum = written.Checksum
         };
     }
 
