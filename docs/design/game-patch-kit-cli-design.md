@@ -110,7 +110,7 @@
 | `GitRepository` | External process boundary | 저장소 루트, clean 상태, HEAD, tracked 파일, 두 커밋 간 변경 경로 조회 |
 | `SourceEntry` | Internal DTO | 그룹 소유가 확정된 원본 파일의 경로와 크기 |
 | `PatchManifest` 계열 | JSON DTO | PRD의 루트·그룹·아카이브·엔트리 계약 |
-| `ManifestStore` | Loader/Writer | 이전 매니페스트 읽기와 정렬된 새 매니페스트의 임시 파일 작성·원자적 교체 |
+| `ManifestStore` | Loader/Writer | 이전 매니페스트 읽기·관계 검증과 정렬된 새 매니페스트의 임시 파일 작성·원자적 교체 |
 | `ArtifactWriter` | File writer | 임시 후보 쓰기, zstd 적용, stored size와 SHA-256 계산, 아카이브 재사용·충돌 판정, 파일 리비전 확정, 아카이브 엔트리별 offset·length 산출 |
 | `IncrementalPrecondition` 검사 | `BuildCommand` 내부 절차 | 증분 대상이 있을 때의 이전 커밋 객체 존재 여부, 승계 산출물의 존재 여부·저장 크기·SHA-256, `packing`·`compression` 동일 여부 확인 |
 | `BuildSummary` / `GroupBuildSummary` | Output model | 그룹별·전체 빌드 요약과 자동 파일 리비전 증가 내역 |
@@ -345,6 +345,8 @@ internal sealed class BuildException : Exception
 
 `WriteArchive`는 실제로 쓴 바이트에서 얻은 `Layout`을 반환한다. 호출자가 `SourceEntry.Size`를 누적해 offset을 따로 계산하면 payload를 쓰는 쪽과 offset을 계산하는 쪽이 갈려 완료 조건 2(offset·length가 원본과 일치)가 깨질 수 있다. offset의 유일한 출처는 writer다.
 
+`ManifestStore.ReadPrevious`는 JSON 역직렬화 직후 별도 타입을 만들지 않고 매니페스트 DTO를 직접 검증한다. root 필수 필드, 그룹·엔트리 중복과 정규화 상대 경로, 0 이상의 버전·크기, 64자리 소문자 hex checksum, source별 필수·금지 필드, 엔트리 버전의 그룹 버전 일치, 정식 산출물 `name` 일치, archive 구간의 범위·단조 증가·비중첩을 확인한다. 위반 시 필드 경로와 이유를 담은 `BuildException`을 던진다.
+
 `WriteArchive`와 `WriteFile`은 최종 경로와 같은 디렉터리의 임시 파일에 후보를 완성한 뒤 게시한다. `WriteArchive`는 yaml 그룹 버전을 바꾸지 않으며 동일 아카이브 재사용 여부를 `IsCreated`로 반환한다. `WriteFile`은 실제로 선택한 `Version`을 반환하고, `BuildCommand`는 요청 버전과 다를 때 `FileRevisionAdjustment`를 만든다.
 
 ## 11. 파일·폴더 배치 제안
@@ -419,7 +421,7 @@ tests/
   → source/output 경로 검증
   → Git 저장소·clean 상태·HEAD 확인
   → YAML 로드 및 그룹 검증
-  → 이전 manifest 로드
+  → 이전 manifest 로드 및 관계 검증
   → 그룹별 첫 빌드·전체 빌드·증분 빌드 대상 판정
   → 이전 커밋 객체와 설정에 대한 증분 전제 검증
   → tracked 파일 탐색 및 가장 깊은 그룹 할당
@@ -518,12 +520,15 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - YAML 기본값과 허용 값 검증을 구현한다.
   - 그룹 id 중복, 절대 경로, `..`, 존재하지 않는 그룹 폴더를 거부한다.
   - `[JsonProperty]`가 붙은 매니페스트 DTO와 정렬된 직렬화를 구현한다.
-  - 이전 매니페스트의 schema와 조건부 필드를 검증한다.
+  - 이전 매니페스트의 schema, 필수 필드, 중복 그룹·엔트리, 정규화 상대 경로, 버전·크기·checksum 형식을 검증한다.
+  - `packing`·`source`별 필수·금지 필드와 정식 산출물 `name`을 검증한다.
+  - archive 엔트리의 `length == size`, `offset + length <= payloadSize`, path 순서상 단조 증가·비중첩을 검증한다.
 - 검증:
   - 최소 YAML, 모든 옵션 YAML, 잘못된 id/enum/버전 테스트가 통과한다.
   - 매니페스트 round-trip 후 필드명과 값이 유지된다.
   - 입력 순서를 바꿔도 출력 그룹·엔트리 순서는 동일하다.
-- 완료 조건 연결: 1, 10
+  - JSON으로는 유효하지만 중복, 경로, 버전, checksum, source 조건부 필드, archive 범위 중 하나가 잘못된 이전 매니페스트를 각각 거부하고 `--output`을 바꾸지 않는다.
+- 완료 조건 연결: 1, 10, 21
 
 ### P3. Git 스냅샷과 그룹 탐색
 
@@ -665,12 +670,13 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 | 18. 아카이브 재사용·그룹 버전 충돌 | `Build_ExistingArchiveWithSameBytesIsReused`<br>`Build_ExistingArchiveWithDifferentBytesFailsWithoutOutputChanges` | 통합 |
 | 19. 파일 리비전 충돌 자동 증가 | `Build_ExistingFileWithSameBytesReusesHighestRevisionAndWarnsWhenAdjusted`<br>`Build_ExistingFileWithDifferentBytesUsesNextRevisionAndWarnsOnce` | 통합 |
 | 20. 실패 후 재실행과 수동 그룹 버전 복구 | `ManifestStore_WriteAtomicallyReplacesManifest`<br>`Build_FailedRunKeepsPreviousManifest`<br>`Build_RerunAfterFailureReusesMatchingArtifacts`<br>`Build_RerunWithChangedArchiveRequiresGroupVersionBumpAndIncludesFailedRange` | 단위·통합 |
+| 21. 이전 매니페스트 관계 검증 | `ManifestStore_RejectsDuplicateGroupsOrEntries`<br>`ManifestStore_RejectsInvalidArtifactNameOrVersion`<br>`ManifestStore_RejectsInvalidSourceFields`<br>`ManifestStore_RejectsInvalidChecksumOrNegativeSize`<br>`ManifestStore_RejectsOutOfRangeOrOverlappingArchiveLayout` | 단위 |
 
 테스트 이름은 구현 시 실제 대상 타입에 맞춰 조정할 수 있지만, 각 완료 조건을 검증하는 시나리오는 삭제하지 않는다.
 
 ## 18. 완료 정의
 
-- PRD 완료 조건 20개가 모두 자동 테스트 또는 RID별 smoke 검증에 연결되어 있다.
+- PRD 완료 조건 21개가 모두 자동 테스트 또는 RID별 smoke 검증에 연결되어 있다.
 - `dotnet restore`, `dotnet build`, `dotnet test`가 성공한다.
 - `win-x64`, `linux-x64`, `osx-arm64` 네이티브 환경에서 zstd 빌드가 실행된다.
 - 동일 HEAD에서 다시 실행했을 때 새 산출물이 없고 매니페스트 바이트가 같다.
