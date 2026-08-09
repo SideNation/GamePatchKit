@@ -6,6 +6,8 @@ namespace GamePatchKit.Cli;
 
 internal static class BuildConfigurationLoader
 {
+    public const string FILE_NAME = "gamepatchkit.yml";
+
     private const string GroupValue = "group";
     private const string FileValue = "file";
     private const string ZstdValue = "zstd";
