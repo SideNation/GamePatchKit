@@ -143,4 +143,3 @@ DI 등록 위치: `Program.cs` (`builder.Services.AddScoped<IOrderConfirmationSe
 - 단위 테스트(Service/Handler/Validator): `csharp-unit-test` 스킬
 - API/Controller 테스트: `csharp-api-test` 스킬
 - Repository/DbContext 테스트: `csharp-repository-test` 스킬
-- 사용법 문서: `feature-docs` 스킬
