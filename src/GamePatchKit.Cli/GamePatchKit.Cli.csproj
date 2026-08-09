@@ -9,6 +9,7 @@
     <ToolCommandName>gpk</ToolCommandName>
     <PackageOutputPath>$(MSBuildProjectDirectory)/../../artifacts</PackageOutputPath>
     <Description>Build and verify GamePatchKit patch data.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +19,10 @@
     <PackageReference Include="NativeCompressions.Zstandard.Runtime.osx-arm64" />
     <PackageReference Include="Newtonsoft.Json" />
     <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
   <ItemGroup>

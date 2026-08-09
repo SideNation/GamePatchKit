@@ -1,0 +1,151 @@
+name: .NET
+
+on:
+  push:
+  pull_request:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      package-version: ${{ steps.package.outputs.package-version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve package version
+        id: package
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == release ]]; then
+            if [[ "$RELEASE_TAG" != v?* ]]; then
+              echo 'Release tag must use the v<NuGet version> format.' >&2
+              exit 1
+            fi
+
+            version=${RELEASE_TAG#v}
+          else
+            version=$(sed -n 's:.*<Version>\([^<]*\)</Version>.*:\1:p' Directory.Build.props)
+          fi
+
+          if [[ -z "$version" ]]; then
+            echo 'Package version could not be resolved.' >&2
+            exit 1
+          fi
+
+          echo "package-version=$version" >> "$GITHUB_OUTPUT"
+
+  test:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-26
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    name: Test and smoke (${{ matrix.rid }})
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore GamePatchKit.sln
+
+      - name: Test
+        run: dotnet test GamePatchKit.sln --configuration Release --no-restore
+
+      - name: Pack
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ needs.version.outputs.package-version }}
+        run: dotnet pack src/GamePatchKit.Cli/GamePatchKit.Cli.csproj --configuration Release --no-restore --output artifacts "-p:PackageVersion=$PACKAGE_VERSION"
+
+      - name: Install local tool
+        id: install
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ needs.version.outputs.package-version }}
+        run: |
+          tool_path=.gpk-tool
+          dotnet tool install GamePatchKit.Cli --tool-path "$tool_path" --add-source artifacts --version "$PACKAGE_VERSION"
+          tool_command="$tool_path/gpk"
+
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            tool_command="$tool_command.exe"
+          fi
+
+          if [[ ! -f "$tool_command" ]]; then
+            echo "Installed gpk command was not found: $tool_command" >&2
+            exit 1
+          fi
+
+          echo "tool-command=$tool_command" >> "$GITHUB_OUTPUT"
+
+      - name: Run zstd smoke test
+        shell: bash
+        env:
+          TOOL_COMMAND: ${{ steps.install.outputs.tool-command }}
+        run: bash .github/scripts/smoke-test.sh "$TOOL_COMMAND" .gpk-smoke
+
+      - name: Upload smoke result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke-${{ matrix.rid }}
+          path: .gpk-smoke/output
+          if-no-files-found: error
+
+  compare:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Download smoke results
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: smoke-*
+          path: .gpk-smoke-results
+
+      - name: Compare smoke results
+        shell: bash
+        run: bash .github/scripts/compare-smoke-results.sh .gpk-smoke-results
+
+  publish:
+    if: github.event_name == 'release'
+    needs: [version, test, compare]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore GamePatchKit.sln
+
+      - name: Pack release
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ needs.version.outputs.package-version }}
+        run: dotnet pack src/GamePatchKit.Cli/GamePatchKit.Cli.csproj --configuration Release --no-restore --output artifacts "-p:PackageVersion=$PACKAGE_VERSION"
+
+      - name: Publish to nuget.org
+        shell: bash
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: dotnet nuget push "artifacts/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
