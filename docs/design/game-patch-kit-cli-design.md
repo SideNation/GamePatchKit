@@ -10,11 +10,11 @@
 
 현재 `develop` 브랜치는 기존 구현을 제거한 초기 상태이므로, 삭제된 구조를 복원하지 않고 PRD에 필요한 CLI 한 개와 테스트 프로젝트 한 개만 새로 만든다.
 
-## 2. 가정과 확정 사항
-
-### 확정 사항
+## 2. 확정 사항
 
 - `--output`은 필수이고 `--source`만 현재 디렉터리를 기본값으로 사용한다.
+- 외부 명령은 `build`와 `verify` 둘이다. `verify`는 `--output`만 받고 Git 저장소나 설정 파일을 요구하지 않는다.
+- `--output`은 매니페스트가 참조하는 산출물을 모두 보관하는 완전한 저장소로 본다. 참조 산출물을 지우고 매니페스트만 남긴 스테이징 방식은 지원하지 않으며, 증분 빌드가 존재 검사에서 중단한다.
 - `git` 실행 파일이 PATH에 있으며 CLI는 Git 라이브러리 대신 Git 프로세스를 호출한다.
 - `--source`는 Git 저장소 최상위 경로이거나 그 하위 디렉터리다. Git이 반환한 저장소 기준 경로는 source-relative 경로로 바꾼 뒤 그룹 탐색과 변경 판정에 사용한다.
 - `--output`은 `--source`가 속한 Git 저장소 바깥에 둔다. 산출물이 입력 파일 탐색이나 워킹 트리 상태에 섞이는 경우를 막기 위한 확정 제약이다.
@@ -31,8 +31,8 @@
 
 ### 입력
 
-- 명령: `gpk build --source <데이터 루트> --output <패치 데이터 폴더>`
-- 설정: `<source>/gamepatchkit.yml`
+- 명령: `gpk build --source <데이터 루트> --output <패치 데이터 폴더>`, `gpk verify --output <패치 데이터 폴더>`
+- 설정: `<source>/gamepatchkit.yml` (`build`만 사용)
 - 데이터: 설정의 각 `groups[].id`가 가리키는 폴더 아래에서 Git이 추적하는 파일. 설정 파일도 Git 추적 대상이어야 한다.
 - 증분 기준: 기존 `<output>/manifest.json`의 `sourceCommit`
 - 현재 기준: source 아래의 추적 파일에 커밋되지 않은 변경이 없는 `HEAD`
@@ -43,6 +43,7 @@
 - 파일 객체: `files/<그룹 id>/<그룹 버전>/<상대 경로>.v<파일 버전>`
 - 매니페스트: `<output>/manifest.json`
 - 콘솔 요약: 그룹별 엔트리 수, 그룹 버전, 아카이브 생성 여부, 새 파일 객체 수, 새로 쓴 바이트와 전체 합계
+- `verify` 출력: 불일치한 산출물의 `--output` 상대 경로와 이유 전체 목록, 불일치가 있으면 0이 아닌 종료 코드. 산출물과 매니페스트는 바꾸지 않는다
 
 ### 제약
 
@@ -59,7 +60,10 @@
 - 경로는 source/group/output 기준을 구분하고 매니페스트에는 `/` 구분자만 기록한다.
 - `--output`이 `--source`가 속한 Git 저장소 내부면 빌드를 중단한다.
 - `packing: group` 아카이브는 전체 payload를 한 번만 압축한 zstd 1프레임이어야 한다.
-- SHA-256은 저장된 산출물 바이트를 대상으로 하고 소문자 hex로 기록한다.
+- 그룹에 빌드 대상 엔트리가 하나도 없으면 중단한다. 빈 그룹은 매니페스트에 기록하지 않는다.
+- zstd는 단일 스레드로 호출하고 압축 파라미터와 패키지 버전을 고정해 같은 입력이 같은 산출물 바이트를 내게 한다. 재사용·충돌 판정이 저장 바이트 비교이므로 이 성질이 깨지면 입력이 같아도 그룹 버전 충돌로 중단된다.
+- SHA-256은 저장된 산출물 바이트를 대상으로 하고 소문자 hex로 기록한다. 파일을 통째로 메모리에 올리지 않고 스트림에서 계산한다. 아카이브는 2 GB를 넘을 수 있어 전체 적재 방식은 계산 자체가 실패한다.
+- `manifest.json`은 `Formatting.None`, UTF-8 BOM 없음, 끝 개행 없음으로 직렬화한다. `Formatting.Indented`는 줄바꿈에 `Environment.NewLine`을 써서 운영체제마다 바이트가 달라진다.
 - NuGet package id는 `GamePatchKit.Cli`, tool command는 `gpk`, 패키지 출력 폴더는 `artifacts`다.
 - 패치 산출물 업로드, 런타임 적용, 서명, 객체 정리, 병렬 처리, 재시도, 로깅 프레임워크는 구현하지 않는다.
 
@@ -95,9 +99,10 @@
 
 | 책임 단위 | 종류 | 설명 |
 | --- | --- | --- |
-| `Program` | Entry point | 명령 실행, 성공/실패 종료 코드, 사용자 출력 |
-| `BuildArguments` | Input model | `build`, `--source`, `--output` 파싱 결과와 기본값 |
+| `Program` | Entry point | `build`·`verify` 분기, 성공/실패 종료 코드, 사용자 출력 |
+| `BuildArguments` / `VerifyArguments` | Input model | 명령별 옵션 파싱 결과와 기본값 |
 | `BuildCommand` | Application service | 전체 빌드 순서와 그룹별 전체/증분 판단 조정 |
+| `VerifyCommand` | Application service | 매니페스트가 참조하는 모든 산출물의 존재 여부·저장 크기·SHA-256 검사와 불일치 목록 반환 |
 | `BuildConfiguration` / `GroupConfiguration` | YAML DTO | 루트 설정과 그룹 설정, 기본값과 유효성 검사 대상 |
 | `BuildConfigurationLoader` | Loader | `gamepatchkit.yml` 역직렬화와 설정 검증 |
 | `GitRepository` | External process boundary | 저장소 루트와 source prefix 확인, source 범위의 tracked clean 상태, HEAD, tracked 파일, 두 커밋 간 변경 경로 조회와 source-relative 변환 |
@@ -105,7 +110,8 @@
 | `PatchManifest` 계열 | JSON DTO | PRD의 루트·그룹·아카이브·엔트리 계약 |
 | `ManifestStore` | Loader/Writer | 이전 매니페스트 읽기·관계 검증과 정렬된 새 매니페스트의 임시 파일 작성·원자적 교체 |
 | `ArtifactWriter` | File writer | 임시 후보 쓰기, zstd 적용, stored size와 SHA-256 계산, 아카이브 재사용·충돌 판정, 파일 리비전 확정, 아카이브 엔트리별 offset·length 산출 |
-| `IncrementalPrecondition` 검사 | `BuildCommand` 내부 절차 | 증분 대상이 있을 때의 이전 커밋 객체 존재 여부, 승계 산출물의 존재 여부·저장 크기·SHA-256, `packing`·`compression` 동일 여부 확인 |
+| `ArtifactWriter.ReadStored` | 정적 도우미 | 저장된 파일을 스트림으로 읽어 크기와 SHA-256을 얻는 단일 구현. 아카이브 재사용 판정과 `VerifyCommand`가 함께 쓴다 |
+| `IncrementalPrecondition` 검사 | `BuildCommand` 내부 절차 | 증분 대상이 있을 때의 이전 커밋 객체 존재 여부, 승계 산출물의 존재 여부·저장 크기, `packing`·`compression` 동일 여부 확인 |
 | `BuildSummary` / `GroupBuildSummary` | Output model | 그룹별·전체 빌드 요약과 자동 파일 리비전 증가 내역 |
 | `BuildException` | Error | 사용자가 조치할 수 있는 빌드 중단 사유 전달 |
 
@@ -153,9 +159,12 @@ internal enum EntrySource
 
 internal sealed record BuildArguments(string SourcePath, string OutputPath);
 
-internal static class BuildArgumentsParser
+internal sealed record VerifyArguments(string OutputPath);
+
+internal static class ArgumentsParser
 {
-    public static BuildArguments Parse(string[] arguments);
+    public static BuildArguments ParseBuild(string[] arguments);
+    public static VerifyArguments ParseVerify(string[] arguments);
 }
 
 internal sealed class BuildCommand
@@ -163,11 +172,23 @@ internal sealed class BuildCommand
     public BuildSummary Execute(BuildArguments arguments);
 }
 
+internal sealed record ArtifactMismatch(string Name, string Reason);
+
+internal sealed class VerifyCommand
+{
+    public IReadOnlyList<ArtifactMismatch> Execute(VerifyArguments arguments);
+}
+
 internal sealed class GitRepository
 {
     public GitRepository(string sourcePath);
 
+    public string RepositoryRoot { get; }
+    public string SourcePrefix { get; }
+    public string SourcePath { get; }
+
     public string GetHeadCommit();
+    public bool HasCommit(string commit);
     public IReadOnlyList<string> GetChangedPaths(string previousCommit, string currentCommit);
     public IReadOnlyList<string> GetTrackedPaths();
     public void EnsureConfigurationTracked();
@@ -186,7 +207,6 @@ internal sealed class GroupConfiguration
     public int Version { get; init; }
     public PackingKind Packing { get; init; }
     public CompressionKind Compression { get; init; }
-    public int? Level { get; init; }
 }
 
 internal static class BuildConfigurationLoader
@@ -300,8 +320,12 @@ internal sealed record WrittenArchive(
     bool IsCreated,
     IReadOnlyList<ArchiveEntryLayout> Layout);
 
+internal sealed record StoredArtifact(long StoredSize, string Checksum);
+
 internal sealed class ArtifactWriter
 {
+    public static StoredArtifact ReadStored(string path);
+
     public WrittenArchive WriteArchive(
         string outputPath,
         GroupConfiguration group,
@@ -338,11 +362,19 @@ internal sealed class BuildException : Exception
 }
 ```
 
+`GitRepository`의 세 경로 속성은 `EnsureSourceIsInRepository`가 `git rev-parse --show-toplevel`·`--show-prefix`로 확정한 뒤 유효하다. `RepositoryRoot`는 저장소 최상위 절대 경로, `SourcePrefix`는 tracked·changed path 조회의 pathspec으로 넘길 저장소 기준 prefix(저장소 루트면 빈 문자열), `SourcePath`는 매니페스트에 기록할 값(저장소 루트면 `.`, 그 외에는 끝의 `/`를 제거한 저장소 기준 상대 경로)이다. pathspec용과 매니페스트용은 표기가 달라 한 속성으로 합치지 않는다.
+
+`HasCommit`은 증분 전제 1을 위한 `git cat-file -e <commit>^{commit}` 호출이다. 증분 대상 그룹이 하나 이상일 때만 부르며, 결과가 `false`면 `BuildCommand`가 중단한다.
+
 `packing`, `compression`, `source`는 JSON에서 PRD 값과 같은 소문자 문자열로 직렬화한다. `source: archive`일 때 파일 객체 필드는 생략하고, `source: file`일 때 offset·length는 생략한다.
 
 `WriteArchive`는 실제로 쓴 바이트에서 얻은 `Layout`을 반환한다. 호출자가 `SourceEntry.Size`를 누적해 offset을 따로 계산하면 payload를 쓰는 쪽과 offset을 계산하는 쪽이 갈려 완료 조건 2(offset·length가 원본과 일치)가 깨질 수 있다. offset의 유일한 출처는 writer다.
 
 `ManifestStore.ReadPrevious`는 JSON 역직렬화 직후 별도 타입을 만들지 않고 매니페스트 DTO를 직접 검증한다. root 필수 필드와 정규화된 `sourcePath`, 그룹·엔트리 중복과 정규화 상대 경로, 0 이상의 버전·크기, 64자리 소문자 hex checksum, source별 필수·금지 필드, 엔트리 버전의 그룹 버전 일치, 정식 산출물 `name` 일치, archive 구간의 범위·단조 증가·비중첩을 확인한다. 위반 시 필드 경로와 이유를 담은 `BuildException`을 던진다. 유효한 매니페스트를 읽은 뒤 `BuildCommand`가 현재 canonical source와 `sourcePath`의 일치를 검사한다.
+
+`ArtifactWriter.ReadStored`는 디스크의 산출물을 스트림으로 읽어 크기와 SHA-256을 돌려주는 유일한 구현이다. 기존 아카이브·파일 객체와 후보를 비교하는 쓰기 경로와 `VerifyCommand`가 같은 연산을 필요로 하므로 각자 구현하지 않는다. 파일을 통째로 배열에 담지 않으며, 2 GB를 넘는 아카이브에서 전체 적재 방식은 계산 자체가 실패한다.
+
+`VerifyCommand`는 `ManifestStore.ReadPrevious`로 매니페스트를 읽어 관계 검증까지 마친 뒤, 각 그룹의 `archive`와 모든 `source: file` 엔트리를 존재 → 크기 → SHA-256 순서로 확인하고 불일치를 모두 모아 반환한다. `source: archive` 엔트리는 아카이브 검사에 포함되므로 따로 열지 않는다. 첫 불일치에서 중단하지 않는 이유는 손상된 저장소에 필요한 것이 한 건이 아니라 전체 목록이기 때문이다. `Program`은 반환 목록이 비어 있지 않으면 0이 아닌 종료 코드로 끝낸다. `--source`, `GitRepository`, `BuildConfigurationLoader`를 쓰지 않는다.
 
 `WriteArchive`와 `WriteFile`은 최종 경로와 같은 디렉터리의 임시 파일에 후보를 완성한 뒤 게시한다. `WriteArchive`는 yaml 그룹 버전을 바꾸지 않으며 동일 아카이브 재사용 여부를 `IsCreated`로 반환한다. `WriteFile`은 실제로 선택한 `Version`을 반환하고, `BuildCommand`는 요청 버전과 다를 때 `FileRevisionAdjustment`를 만든다.
 
@@ -363,25 +395,30 @@ src/
 └── GamePatchKit.Cli/
     ├── GamePatchKit.Cli.csproj
     ├── Program.cs
-    ├── BuildArguments.cs
+    ├── CommandArguments.cs        BuildArguments, VerifyArguments, ArgumentsParser
     ├── BuildCommand.cs
-    ├── BuildConfiguration.cs
+    ├── VerifyCommand.cs           VerifyCommand, ArtifactMismatch
+    ├── BuildKinds.cs              PackingKind, CompressionKind, EntrySource
+    ├── BuildConfiguration.cs      BuildConfiguration, GroupConfiguration
     ├── BuildConfigurationLoader.cs
     ├── GitRepository.cs
-    ├── PatchManifest.cs
+    ├── SourceEntry.cs
+    ├── PatchManifest.cs           PatchManifest, ManifestGroup, ManifestArchive, ManifestEntry
     ├── ManifestStore.cs
-    ├── ArtifactWriter.cs
-    ├── BuildSummary.cs
+    ├── ArtifactWriter.cs          ArtifactWriter, StoredArtifact, WrittenArtifact, WrittenArchive, ArchiveEntryLayout
+    ├── BuildSummary.cs            BuildSummary, GroupBuildSummary, FileRevisionAdjustment
     └── BuildException.cs
 tests/
 └── GamePatchKit.Cli.Tests/
     ├── GamePatchKit.Cli.Tests.csproj
-    ├── TestBuildArguments.cs
+    ├── TestCommandArguments.cs
     ├── TestBuildConfiguration.cs
     ├── TestGitRepository.cs
-    └── TestBuildCommand.cs
+    ├── TestBuildCommand.cs
+    └── TestVerifyCommand.cs
 ```
 
+- 타입 배치: 파일 오른쪽에 적은 타입이 그 파일에 들어간다. enum 세 개는 `BuildKinds.cs` 하나에서 관리하고, 반환 전용 record는 그 값을 만드는 타입과 같은 파일에 둔다. 값 타입 하나마다 파일을 만들면 §13의 파일 수만 늘고 탐색에 도움이 되지 않는다.
 - 실행 파일 이름: `GamePatchKit.Cli.csproj`의 `AssemblyName`과 `ToolCommandName`을 `gpk`로 지정한다.
 - NuGet 패키지: `PackageId=GamePatchKit.Cli`, `PackAsTool=true`, `PackageOutputPath=<repo>/artifacts`로 지정한다. `RuntimeIdentifiers`는 설정하지 않아 framework-dependent 도구 패키지 하나를 만든다.
 - 프로젝트 참조: 별도 라이브러리 프로젝트 없이 CLI 프로젝트가 PRD의 런타임 패키지를 직접 참조한다.
@@ -442,6 +479,7 @@ TrackableData의 배포 방식에서 공통 패키지 메타데이터, `artifact
   → 그룹별 첫 빌드·전체 빌드·증분 빌드 대상 판정
   → 이전 커밋 객체와 설정에 대한 증분 전제 검증
   → tracked 파일 탐색 및 가장 깊은 그룹 할당
+  → 엔트리가 0개인 그룹이 있으면 중단
   → 증분 대상이 있으면 이전 sourceCommit 대비 changed path 계산
   → 새 매니페스트가 승계할 산출물 확정 및 무결성 검증
   → 판정한 방식으로 그룹별 빌드
@@ -451,19 +489,31 @@ TrackableData의 배포 방식에서 공통 패키지 메타데이터, `artifact
   → 파일 리비전 자동 증가가 있으면 마지막에 경고 한 묶음 출력
 ```
 
+`verify`는 위 흐름을 공유하지 않는다.
+
+```text
+인자 파싱
+  → manifest.json 로드 및 관계 검증
+  → 매니페스트가 참조하는 모든 아카이브·파일 객체를 존재 → 실제 크기 → SHA-256 순으로 검사
+  → 불일치 전체를 경로와 이유로 나열
+  → 불일치가 있으면 0이 아닌 종료 코드
+```
+
 ### 증분 전제 검증
 
 PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는 이전 상태를 이어받고 식별이 해시가 아니므로, 전제가 깨졌을 때 다시 계산해 복구할 수단이 없다. 이전 커밋 객체와 설정은 그룹 분류 직후 검사하고, 승계 산출물은 tracked 파일과 changed path로 새 매니페스트의 승계 대상을 확정한 뒤 검사한다. 모든 검사는 산출물을 하나도 쓰기 전에 끝내 실패 시 `--output`이 변하지 않게 한다.
+
+세 검사의 성격이 같지 않다. 이전 커밋 객체와 설정 동일은 깨지면 **이어받은 결과 자체가 틀린다** — diff를 계산할 수 없거나 매니페스트가 아카이브를 오기술한다. 승계 산출물 검사는 결과가 아니라 **output 폴더의 상태**를 본다. 증분 빌드가 이전 상태에서 읽는 것은 `manifest.json` 하나이고 승계 산출물의 바이트는 어떤 계산에도 들어가지 않으므로, 검사해도 새 매니페스트의 내용은 달라지지 않는다. 그래서 여기서는 바이트를 읽지 않는 존재·크기까지만 하고, 전량 SHA-256은 `gpk verify`로 분리한다. 크기가 같은 바이트 손상은 삭제·truncate보다 훨씬 드문 반면 비용은 변경량이 아니라 승계 산출물 총량에 비례하기 때문이다.
 
 아래 "통과 조건"은 **성립해야 정상인 상태**다. 성립하지 않을 때만 중단한다.
 
 | 검사 | 통과 조건 (성립해야 정상) | 위반 시 |
 | --- | --- | --- |
 | 이전 커밋 객체 존재 | 증분 대상 그룹이 하나 이상이면 이전 매니페스트의 `sourceCommit`을 git diff 입력으로 쓸 수 있게 현재 저장소에 **있다** (`git cat-file -e <commit>^{commit}`) | 중단. `이전 상태가 없습니다.`라고만 알리고 이후 조치는 사용자에게 맡김 |
-| 승계 산출물 무결성 | 증분 대상 그룹이 승계할 아카이브·파일 객체가 `--output`에 **실재하고**, 실제 크기와 SHA-256이 이전 매니페스트의 `storedSize`·`checksum`과 **일치한다** | 중단. 누락 또는 불일치 경로와 이유를 나열 |
+| 승계 산출물 존재·크기 | 증분 대상 그룹이 승계할 아카이브·파일 객체가 `--output`에 **실재하고**, 실제 크기가 이전 매니페스트의 `storedSize`와 **같다** | 중단. 누락 또는 불일치 경로와 이유를 나열 |
 | 설정 동일 | 그룹 버전을 그대로 둔 그룹은 `packing`·`compression`이 이전 매니페스트와 **같다** | 중단. 바뀐 그룹 id와 함께 그룹 버전을 올리도록 안내 |
 
-이전 매니페스트와 `id`·`version`이 같은 그룹만 증분 대상이다. 증분 대상이 하나도 없으면 이전 커밋 객체 확인과 git diff를 생략한다. 승계 산출물 검사도 증분 대상 그룹에만 수행한다. `BuildCommand`는 `packing` 분기 전에 모든 증분 그룹의 승계 대상을 모아 공통 검사를 한 번 수행하므로 `packing: group`의 아카이브·오버레이와 `packing: file`의 파일 객체에 같은 규칙이 적용된다. 각 승계 산출물은 존재 여부 → 실제 크기 → SHA-256 순서로 검사하며, 크기가 다르면 해시 계산 없이 실패로 판정한다. 그룹 버전의 동일·증가·감소는 이전 매니페스트의 같은 `id`와 yaml 설정값을 비교해 판단하며 CLI가 자동으로 버전을 바꾸지 않는다.
+이전 매니페스트와 `id`·`version`이 같은 그룹만 증분 대상이다. 증분 대상이 하나도 없으면 이전 커밋 객체 확인과 git diff를 생략한다. 승계 산출물 검사도 증분 대상 그룹에만 수행한다. `BuildCommand`는 `packing` 분기 전에 모든 증분 그룹의 승계 대상을 모아 공통 검사를 한 번 수행하므로 `packing: group`의 아카이브·오버레이와 `packing: file`의 파일 객체에 같은 규칙이 적용된다. 각 승계 산출물은 존재 여부 → 실제 크기 순서로 검사한다. 바이트를 읽지 않으므로 비용이 참조 산출물 수에만 비례한다. 그룹 버전의 동일·증가·감소는 이전 매니페스트의 같은 `id`와 yaml 설정값을 비교해 판단하며 CLI가 자동으로 버전을 바꾸지 않는다.
 
 ### 그룹 판단 규칙
 
@@ -475,8 +525,10 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 | 같은 버전 + `packing: group` | 기존 아카이브 유지, 변경·신규 파일만 오버레이 작성 |
 | 같은 버전 + `packing: file` | 변경·신규 파일 객체만 작성 |
 | 현재 tracked 목록에서 사라짐 | 새 매니페스트에서 제거 |
-| 그룹의 엔트리가 0개 | 아카이브를 만들지 않고 `archive` 생략, `entries`는 빈 배열 |
+| 그룹의 tracked 엔트리가 0개 | 중단하고 yaml에서 그룹을 제거하도록 안내 |
 | YAML에서 그룹 제거 | 새 매니페스트에서 그룹 제거, 기존 산출물은 보존 |
+
+그룹 폴더의 존재 여부를 따로 검사하지 않고 tracked 엔트리 수 하나로 판정한다. Git은 빈 디렉터리를 추적하지 않아 그룹의 파일을 모두 지우면 폴더도 사라지므로, 폴더 존재를 별도 조건으로 두면 같은 논리 상태가 로컬(폴더 남음)과 새 체크아웃(폴더 없음)에서 다른 결과를 낸다. 빈 그룹의 해소는 위 표 마지막 행, 즉 사용자가 yaml에서 그룹을 빼는 것이다.
 
 ### 산출물 게시와 충돌 처리
 
@@ -508,7 +560,7 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 
 ## 16. 단계별 구현 계획
 
-`P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7 → P8 → P9` 순서로 진행한다. 각 단계는 해당 검증을 통과한 뒤 다음 단계로 넘어간다.
+`P0 → P1 → P2 → P3 → P4 → P5 → P6 → P7 → P8 → P9 → P10` 순서로 진행한다. 각 단계는 해당 검증을 통과한 뒤 다음 단계로 넘어간다.
 
 ### P0. 출력 계약과 정책 확정
 
@@ -525,11 +577,11 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 - 수행:
   - `global.json`, `Directory.Build.props`, `Directory.Packages.props`, 솔루션, CLI 프로젝트, 테스트 프로젝트를 만든다.
   - SDK·TargetFramework·AssemblyName·패키지 버전을 PRD와 맞추고 `PackageId=GamePatchKit.Cli`, `PackAsTool=true`, `ToolCommandName=gpk`를 설정한다.
-  - 수동 인자 파서와 `build` 명령의 빈 실행 경계를 만든다.
+  - 수동 인자 파서와 `build`·`verify` 두 명령의 빈 실행 경계를 만든다.
 - 검증:
   - `dotnet --version`이 `10.0.302`를 선택한다.
   - `dotnet restore`, `dotnet build`, `dotnet test`가 성공한다.
-  - source 생략, output 누락, 알 수 없는 명령·옵션의 테스트가 통과한다.
+  - source 생략, output 누락, 알 수 없는 명령·옵션, `verify`에 `--source`를 준 경우의 테스트가 통과한다.
   - output을 source가 속한 Git 저장소 내부로 지정하면 빌드가 중단되고 산출물이 생기지 않는다.
 - 완료 조건 연결: 13, 17
 
@@ -537,8 +589,8 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 
 - 수행:
   - YAML 기본값과 허용 값 검증을 구현한다.
-  - 그룹 id 중복, 절대 경로, `..`, 존재하지 않는 그룹 폴더를 거부한다.
-  - `[JsonProperty]`가 붙은 매니페스트 DTO와 정렬된 직렬화를 구현한다.
+  - 그룹 id 중복, 절대 경로, `..`를 거부한다. 그룹 폴더 존재 여부는 검사하지 않고 P3의 tracked 엔트리 수로 판정한다.
+  - `[JsonProperty]`가 붙은 매니페스트 DTO와 정렬된 직렬화를 구현한다. `Formatting.None`, UTF-8 BOM 없음, 끝 개행 없음, `NullValueHandling.Ignore`를 고정한다.
   - 이전 매니페스트의 schema, 필수 필드, 중복 그룹·엔트리, 정규화 상대 경로, 버전·크기·checksum 형식을 검증한다.
   - 이전 매니페스트의 `sourcePath` 형식을 검증하고 현재 canonical source와 다르면 산출물을 쓰기 전에 중단한다.
   - `packing`·`source`별 필수·금지 필드와 정식 산출물 `name`을 검증한다.
@@ -547,6 +599,7 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - 최소 YAML, 모든 옵션 YAML, 잘못된 id/enum/버전 테스트가 통과한다.
   - 매니페스트 round-trip 후 필드명과 값이 유지된다.
   - 입력 순서를 바꿔도 출력 그룹·엔트리 순서는 동일하다.
+  - 직렬화한 매니페스트 바이트에 `\r`과 BOM이 없고 끝 개행도 붙지 않는다.
   - JSON으로는 유효하지만 `sourcePath`, 중복, 경로, 버전, checksum, source 조건부 필드, archive 범위 중 하나가 잘못된 이전 매니페스트를 각각 거부하고 `--output`을 바꾸지 않는다.
 - 완료 조건 연결: 1, 10, 21
 
@@ -558,6 +611,7 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - `gamepatchkit.yml`이 Git 추적 대상인지 확인하고, 아니면 YAML을 읽기 전에 중단한다.
   - `-z` 형식과 rename 비활성화를 사용해 저장소 기준 경로를 안전하게 읽고 source-relative로 변환하며 rename을 삭제+추가로 취급한다.
   - tracked 파일만 가장 깊은 그룹에 할당한다.
+  - 그룹에 할당된 tracked 엔트리가 0개면 산출물을 쓰기 전에 중단하고 yaml에서 그룹을 제거하도록 안내한다. 그룹 폴더의 존재 여부는 검사하지 않는다.
   - 이전 매니페스트에 같은 `id`의 그룹이 있는데 yaml 그룹 버전이 더 작으면 산출물을 쓰기 전에 중단한다.
   - 증분 대상 그룹이 하나 이상일 때만 이전 `sourceCommit` 커밋 객체가 현재 저장소에 있는지 `git cat-file -e <commit>^{commit}`으로 확인하고, 없으면 중단한다.
   - 증분 대상 그룹이 없으면 이전 커밋 객체 확인과 changed path 조회를 생략한다.
@@ -568,10 +622,12 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - source 아래의 untracked 파일과 source 바깥 변경은 빌드와 dirty 판정에서 제외되며, source 아래 tracked 파일의 미커밋 변경은 중단된다.
   - `gamepatchkit.yml`이 untracked이면 산출물 없이 중단된다.
   - 중첩 그룹에서 파일이 가장 깊은 그룹에 한 번만 들어간다.
+  - 그룹의 tracked 파일을 모두 지워 폴더까지 사라진 경우와 `id`에 없는 폴더를 적은 경우가 모두 중단되고, yaml에서 그룹을 제거하라는 같은 안내가 나오며 `--output`이 변하지 않는다.
+  - 그룹 폴더가 untracked 파일 때문에 남아 있어도 tracked 엔트리가 0개면 같은 결과가 나온다.
   - yaml 그룹 버전이 이전 성공 버전보다 작으면 더 큰 값을 사용하라는 안내와 함께 중단되고 `--output`이 변하지 않는다.
   - 이전 매니페스트의 커밋 객체가 없고 같은 버전 그룹이 남아 있으면 `이전 상태가 없습니다.`를 출력하고 빌드가 중단되며 `--output`이 변하지 않는다.
   - 이전 매니페스트의 커밋 객체가 없어도 모든 현재 그룹이 신규이거나 버전이 올라갔다면 전체 빌드에 성공한다.
-- 완료 조건 연결: 5, 7, 8, 9, 10, 16
+- 완료 조건 연결: 5, 7, 8, 9, 10, 15, 16
 
 ### P4. 산출물 writer와 체크섬
 
@@ -579,6 +635,7 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - `compression: none` 파일 복사와 zstd 스트림 압축을 구현한다.
   - 그룹 아카이브는 정렬된 파일을 한 압축 스트림에 이어 써서 zstd 1프레임을 만든다.
   - 저장 스트림에서 stored size와 SHA-256을 동시에 계산한다.
+  - 디스크의 산출물에서 크기와 SHA-256을 얻는 `ArtifactWriter.ReadStored`를 단일 구현으로 만든다. 파일을 스트림으로 읽어 2 GB를 넘는 아카이브에서도 동작해야 하며, 기존 아카이브 비교와 P8의 `verify`가 같은 구현을 쓴다.
   - 최종 경로와 같은 디렉터리의 임시 파일에 후보를 완성한 뒤 저장 크기·SHA-256 비교 결과에 따라 새 경로 게시 또는 기존 파일 재사용을 결정한다.
   - 파일 객체의 정식 이름만 파싱해 요청 리비전 이상의 최댓값을 구하고, 다른 후보와 충돌하면 그 값 + 1을 실제 리비전으로 반환한다.
 - 검증:
@@ -591,19 +648,17 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 ### P5. `packing: group` 전체 빌드
 
 - 수행:
-  - 엔트리가 하나 이상인 그룹의 첫 빌드와 그룹 버전 증가 시 새 `.gpka`를 만든다.
+  - 그룹의 첫 빌드와 그룹 버전 증가 시 새 `.gpka`를 만든다. 엔트리가 0개인 그룹은 P3에서 이미 걸러졌으므로 여기서는 다루지 않는다.
   - `WriteArchive`가 반환한 `Layout`으로 offset·length를 채우고 `<그룹 버전>.0` 버전을 만든다.
   - 그룹 버전 증가 시 이전 오버레이 참조를 제거한다.
-  - 엔트리가 0개면 아카이브를 만들지 않고 `archive`를 생략한다.
   - 대상 아카이브가 후보와 같으면 재사용하고, 다르면 yaml 그룹 버전을 유지한 채 그룹 버전 충돌로 중단한다.
 - 검증:
-  - 엔트리가 하나 이상인 그룹의 최초 빌드에서 아카이브 하나와 archive 엔트리만 생긴다.
+  - 최초 빌드에서 아카이브 하나와 archive 엔트리만 생긴다.
   - offset이 0부터 단조 증가하고 각 구간이 원본 파일과 같다.
   - 그룹 버전 증가 시 모든 리비전이 0으로 돌아간다.
-  - 대상 파일이 없는 그룹이 `archive` 없이 빈 `entries`로 기록된다.
   - 아카이브만 쓴 뒤 매니페스트 기록 전에 실패한 상태에서 재실행하면 같은 아카이브를 재사용해 성공한다.
   - YAML에서 뺐던 그룹을 같은 버전의 다른 내용으로 되살리면 중단되고 기존 아카이브와 매니페스트가 그대로 남는다.
-- 완료 조건 연결: 1, 2, 5, 15, 18
+- 완료 조건 연결: 1, 2, 5, 18
 
 ### P6. `packing: group` 증분 빌드
 
@@ -621,9 +676,9 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - 같은 HEAD 재실행 전후의 파일 목록과 매니페스트 바이트가 같다.
   - `packing: group`의 승계 대상 아카이브와 오버레이 파일 객체를 각각 삭제한 경우 빌드가 중단되고 산출물과 매니페스트가 바뀌지 않는다.
   - `packing: group`의 승계 대상 아카이브와 오버레이 파일 객체를 각각 truncate해 실제 크기를 바꾸면 빌드가 중단되고 산출물과 매니페스트가 바뀌지 않는다.
-  - `packing: group`의 승계 대상 아카이브와 오버레이 파일 객체의 크기는 유지한 채 바이트를 바꾸면 SHA-256 불일치로 빌드가 중단되고 산출물과 매니페스트가 바뀌지 않는다.
+  - `packing: group`의 승계 대상 아카이브와 오버레이 파일 객체의 크기는 유지한 채 바이트를 바꾸면 빌드가 정상 성공한다. 이 경우는 P8의 `verify`가 담당하며 `build`는 승계 산출물의 바이트를 읽지 않는다.
   - `packing`을 `group`에서 `file`로 바꾸고 버전을 두면 중단되고 그룹 버전을 올리라는 안내가 나온다. `compression`도 같다.
-  - 그룹의 마지막 파일을 지우면 `archive` 없이 빈 `entries`로 기록된다.
+  - 그룹의 마지막 파일을 지우면 중단되고 yaml에서 그룹을 제거하라는 안내가 나오며, 기존 아카이브와 매니페스트가 그대로 남는다.
 - 완료 조건 연결: 3, 4, 7, 8, 14, 15, 16, 19
 
 ### P7. `packing: file` 빌드
@@ -639,16 +694,34 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - 파일 하나 수정 시 그 객체 하나만 추가되고 다른 엔트리는 유지된다.
   - compression none/zstd 양쪽의 stored size와 checksum이 실제 파일과 같다.
   - 삭제 후 같은 그룹 버전으로 다시 추가한 파일이 기존 마지막 객체와 다르면 마지막 리비전 + 1로 생성되고 그룹 버전은 yaml과 같다.
-  - 변경되지 않아 승계할 파일 객체를 각각 삭제, truncate, 동일 크기 바이트 변조한 경우 빌드가 중단되고 산출물과 매니페스트가 바뀌지 않는다.
+  - 변경되지 않아 승계할 파일 객체를 각각 삭제하거나 truncate하면 빌드가 중단되고 산출물과 매니페스트가 바뀌지 않는다. 크기를 유지한 채 바이트만 바꾸면 빌드는 성공하고 P8의 `verify`가 잡는다.
 - 완료 조건 연결: 6, 11, 12, 16, 19
 
-### P8. CLI 요약과 전체 인수 테스트
+### P8. `gpk verify`
+
+- 수행:
+  - `Program`이 인자 첫 토큰으로 `build`와 `verify`를 분기한다. `verify`는 `--output`만 받는다.
+  - `ManifestStore.ReadPrevious`로 매니페스트를 읽어 관계 검증까지 마친다. 관계 검증 실패는 그대로 `verify` 실패다.
+  - 각 그룹의 `archive`(있으면)와 모든 `source: file` 엔트리의 객체를 존재 → 실제 크기 → `ArtifactWriter.ReadStored`의 SHA-256 순서로 검사한다. 크기가 다르면 해시를 계산하지 않는다. `source: archive` 엔트리는 아카이브 검사에 포함되므로 따로 열지 않는다.
+  - 불일치를 모두 모아 `--output` 상대 경로와 이유로 나열하고, 하나라도 있으면 0이 아닌 종료 코드로 끝낸다.
+  - 미참조 객체 보고, 아카이브 해제 재확인, 손상 복구는 만들지 않는다. `GitRepository`와 `BuildConfigurationLoader`를 쓰지 않는다.
+- 검증:
+  - 정상 `--output`에서 종료 코드 0으로 끝나고 산출물과 매니페스트가 바뀌지 않는다.
+  - 아카이브와 파일 객체를 각각 삭제, truncate, 크기 유지 바이트 변조한 경우가 모두 보고되고 0이 아닌 종료 코드로 끝난다.
+  - 불일치가 여러 개일 때 첫 건에서 멈추지 않고 전부 나열된다.
+  - `--source` 없이, Git 저장소 밖의 폴더에서, `gamepatchkit.yml` 없이 실행된다.
+  - 관계 검증에 걸리는 매니페스트는 산출물 검사를 시작하기 전에 실패한다.
+  - `build`가 성공시킨 동일 크기 바이트 변조를 `verify`가 잡는다.
+- 완료 조건 연결: 22
+
+### P9. CLI 요약과 전체 인수 테스트
 
 - 수행:
   - 그룹별 요약과 합계를 출력한다.
   - 파일 리비전 자동 증가가 있으면 모든 정상 요약 뒤에 그룹 id, 경로, 요청 버전, 실제 버전을 경고 한 묶음으로 출력한다.
   - 사용자가 조치할 수 있는 실패에는 원인과 대상 경로/그룹을 포함한다.
   - 산출물 작성 후 매니페스트를 같은 디렉터리의 임시 파일에서 완성해 마지막에 원자적으로 교체한다. 성공 경로가 아니거나 후보 작성·교체에 실패하면 기존 매니페스트를 유지한다.
+  - "산출물을 일부 쓴 뒤 매니페스트 기록 전에 실패" 상태는 **테스트 전용 seam 없이 산출물 충돌로 만든다.** 그룹은 `id` ordinal 순으로 처리되므로, id가 마지막인 그룹의 대상 아카이브 경로에 후보와 다른 바이트의 `.gpka`를 미리 놓아두면 앞 그룹의 산출물이 모두 쓰인 뒤 그 그룹에서 그룹 버전 충돌로 중단된다. §9·§12에서 배제한 인터페이스나 DI를 이 테스트 때문에 되돌리지 않는다.
 - 검증:
   - PRD 예시의 최초→수정→재수정→추가→삭제→버전 증가 흐름을 하나의 임시 Git 저장소에서 순서대로 실행한다.
   - 각 단계의 출력 파일 집합, 매니페스트, 요약 값이 기대와 같다.
@@ -659,7 +732,7 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - 실패 후 같은 그룹 버전의 아카이브 후보가 달라지면 중단되고, yaml 그룹 버전을 올려 재실행하면 해당 그룹의 현재 `HEAD`와 다른 증분 그룹의 실패 구간 변경이 모두 반영된다.
 - 완료 조건 연결: 1~12, 18, 19, 20
 
-### P9. NuGet tool 패키징·RID별 실행·게시 검증
+### P10. NuGet tool 패키징·RID별 실행·게시 검증
 
 - 수행:
   - `.github/workflows/dotnet.yml`에서 GitHub Actions 매트릭스(`windows-latest`, `ubuntu-latest`, `macos-26`)로 restore, test, pack, 로컬 tool 설치, smoke run을 수행한다. 각 러너는 `win-x64`, `linux-x64`, `osx-arm64`에 대응하며, 로컬에 세 운영체제 환경이 없으므로 CI가 유일한 수행 수단이다.
@@ -690,23 +763,25 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 | 12. checksum 일치 | `ArtifactWriter_ChecksumMatchesStoredBytes` | 단위 |
 | 13. NuGet tool 세 RID 실행·게시 | `PackInstallAndSmoke_<rid>`<br>`ReleasePublishesAfterRidMatrix` | CI 매트릭스 |
 | 14. 설정 변경 중단 | `Build_PackingOrCompressionChangeWithSameVersionFails` | 통합 |
-| 15. 빈 그룹 | `Build_EmptyGroupOmitsArchiveAndWritesEmptyEntries` | 통합 |
-| 16. 조건부 이전 커밋 검증·승계 산출물 무결성 | `Build_MissingPreviousCommitWithIncrementalGroupFailsWithoutOutputChanges`<br>`Build_MissingPreviousCommitWithOnlyFullBuildGroupsSucceeds`<br>`Build_GroupPacking_MissingInheritedArtifactFailsWithoutOutputChanges`<br>`Build_GroupPacking_TruncatedInheritedArtifactFailsWithoutOutputChanges`<br>`Build_GroupPacking_CorruptedInheritedArtifactFailsWithoutOutputChanges`<br>`Build_FilePacking_MissingInheritedObjectFailsWithoutOutputChanges`<br>`Build_FilePacking_TruncatedInheritedObjectFailsWithoutOutputChanges`<br>`Build_FilePacking_CorruptedInheritedObjectFailsWithoutOutputChanges` | 통합 |
+| 15. 빈 그룹 중단 | `Build_GroupWithNoTrackedEntriesFailsAndSuggestsRemovingGroup`<br>`Build_MissingGroupFolderFailsWithSameGuidance`<br>`Build_DeletingLastFileInGroupFailsWithoutOutputChanges` | 통합 |
+| 16. 조건부 이전 커밋 검증·승계 산출물 존재·크기 | `Build_MissingPreviousCommitWithIncrementalGroupFailsWithoutOutputChanges`<br>`Build_MissingPreviousCommitWithOnlyFullBuildGroupsSucceeds`<br>`Build_GroupPacking_MissingInheritedArtifactFailsWithoutOutputChanges`<br>`Build_GroupPacking_TruncatedInheritedArtifactFailsWithoutOutputChanges`<br>`Build_FilePacking_MissingInheritedObjectFailsWithoutOutputChanges`<br>`Build_FilePacking_TruncatedInheritedObjectFailsWithoutOutputChanges`<br>`Build_SameSizeCorruptedInheritedArtifactDoesNotFailBuild` | 통합 |
 | 17. source 저장소 내부 output 거부 | `Build_OutputInsideSourceRepositoryFailsWithoutArtifacts` | 통합 |
 | 18. 아카이브 재사용·그룹 버전 충돌 | `Build_ExistingArchiveWithSameBytesIsReused`<br>`Build_ExistingArchiveWithDifferentBytesFailsWithoutOutputChanges` | 통합 |
 | 19. 파일 리비전 충돌 자동 증가 | `Build_ExistingFileWithSameBytesReusesHighestRevisionAndWarnsWhenAdjusted`<br>`Build_ExistingFileWithDifferentBytesUsesNextRevisionAndWarnsOnce` | 통합 |
 | 20. 실패 후 재실행과 수동 그룹 버전 복구 | `ManifestStore_WriteAtomicallyReplacesManifest`<br>`Build_FailedRunKeepsPreviousManifest`<br>`Build_RerunAfterFailureReusesMatchingArtifacts`<br>`Build_RerunWithChangedArchiveRequiresGroupVersionBumpAndIncludesFailedRange` | 단위·통합 |
 | 21. 이전 매니페스트 관계 검증 | `ManifestStore_RejectsInvalidSourcePath`<br>`ManifestStore_RejectsDuplicateGroupsOrEntries`<br>`ManifestStore_RejectsInvalidArtifactNameOrVersion`<br>`ManifestStore_RejectsInvalidSourceFields`<br>`ManifestStore_RejectsInvalidChecksumOrNegativeSize`<br>`ManifestStore_RejectsOutOfRangeOrOverlappingArchiveLayout` | 단위 |
+| 22. `gpk verify` 산출물 검증 | `Verify_IntactOutputSucceedsWithoutChanges`<br>`Verify_MissingArtifactIsReported`<br>`Verify_TruncatedArtifactIsReported`<br>`Verify_SameSizeCorruptedArtifactIsReported`<br>`Verify_ReportsAllMismatchesNotOnlyFirst`<br>`Verify_RunsWithoutSourceRepositoryOrConfiguration`<br>`Verify_InvalidManifestFailsBeforeArtifactChecks` | 통합 |
 
 테스트 이름은 구현 시 실제 대상 타입에 맞춰 조정할 수 있지만, 각 완료 조건을 검증하는 시나리오는 삭제하지 않는다.
 
 ## 18. 완료 정의
 
-- PRD 완료 조건 21개가 모두 자동 테스트 또는 RID별 smoke 검증에 연결되어 있다.
+- PRD 완료 조건 22개가 모두 자동 테스트 또는 RID별 smoke 검증에 연결되어 있다.
 - `dotnet restore`, `dotnet build`, `dotnet test`가 성공한다.
 - `win-x64`, `linux-x64`, `osx-arm64` 네이티브 환경에서 zstd 빌드가 실행된다.
 - `GamePatchKit.Cli`가 framework-dependent NuGet .NET tool로 패키징되어 세 환경에서 `gpk` 명령으로 설치·실행되고, GitHub Release 게시 workflow가 RID 매트릭스 성공 후 nuget.org에 게시한다.
 - 동일 HEAD에서 다시 실행했을 때 새 산출물이 없고 매니페스트 바이트가 같다.
 - 증분 전제 위반 세 가지가 모두 산출물을 쓰기 전에 중단되고 `--output`을 바꾸지 않는다.
+- `gpk verify`가 `--source`와 Git 저장소 없이 매니페스트의 모든 산출물을 검사하고, 불일치를 전부 나열한 뒤 0이 아닌 종료 코드로 끝난다.
 - 현재 범위에서 제외한 패치 산출물 업로드·런타임·서명·정리·병렬 처리·재시도·로깅 코드가 들어오지 않는다.
 - 구현 diff의 모든 파일이 PRD 요구사항, 테스트, 또는 필수 프로젝트 연결 코드로 추적된다.
