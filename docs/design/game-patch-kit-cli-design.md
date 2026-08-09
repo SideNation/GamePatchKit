@@ -10,31 +10,22 @@
 
 현재 `develop` 브랜치는 기존 구현을 제거한 초기 상태이므로, 삭제된 구조를 복원하지 않고 PRD에 필요한 CLI 한 개와 테스트 프로젝트 한 개만 새로 만든다.
 
-## 2. 가정과 확인 필요 사항
+## 2. 가정과 확정 사항
 
-### 가정
+### 확정 사항
 
 - `--output`은 필수이고 `--source`만 현재 디렉터리를 기본값으로 사용한다.
 - `git` 실행 파일이 PATH에 있으며 CLI는 Git 라이브러리 대신 Git 프로세스를 호출한다.
-- `--source`는 Git 저장소 최상위 경로다. 하위 디렉터리를 데이터 루트로 허용하지 않는다.
+- `--source`는 Git 저장소 최상위 경로이거나 그 하위 디렉터리다. Git이 반환한 저장소 기준 경로는 source-relative 경로로 바꾼 뒤 그룹 탐색과 변경 판정에 사용한다.
 - `--output`은 `--source`가 속한 Git 저장소 바깥에 둔다. 산출물이 입력 파일 탐색이나 워킹 트리 상태에 섞이는 경우를 막기 위한 확정 제약이다.
 - `schemaVersion`은 정수 `1`로 시작한다.
+- `<source>/gamepatchkit.yml`과 빌드 데이터는 Git이 추적해야 한다. source 아래의 untracked 파일은 입력과 dirty 판정에서 제외하고, source 바깥의 변경도 dirty 판정에서 제외한다.
 - 그룹 버전과 파일 리비전은 0 이상의 `int`, 파일 크기·offset·length·저장 크기는 `long`으로 표현한다. 이전 매니페스트에 같은 `id`의 그룹이 있으면 yaml 그룹 버전은 이전 성공 버전과 같거나 더 커야 한다.
 - 매니페스트의 `name`은 `--output` 기준 상대 경로이며 구분자는 `/`로 고정한다.
+- 매니페스트의 `sourcePath`는 저장소 루트면 `.`, 하위 source면 `/` 구분자를 쓰는 저장소 기준 상대 경로다. 이전 매니페스트의 값과 현재 canonical source가 다르면 중단한다.
 - Git 커밋 ID는 길이를 40자로 가정하지 않고 Git이 반환한 문자열을 그대로 기록한다.
-- 첫 배포 검증은 framework-dependent RID publish를 기준으로 한다. self-contained 또는 single-file 배포는 현재 요구사항에 포함하지 않는다.
-
-### 구현 시작 전에 확인할 사항
-
-| 항목 | 이 문서의 임시 기준 | 확인이 필요한 이유 |
-| --- | --- | --- |
-| `schemaVersion` 타입과 초기값 | 정수 `1` | PRD에 필드명만 있고 타입·초기값이 없다. |
-| `--source` 범위 | Git 저장소 최상위 경로만 허용 | 저장소 하위 경로도 허용하면 Git 경로를 source-relative로 다시 매핑해야 한다. |
-| untracked 파일의 dirty 판정 | 하나라도 있으면 빌드 중단 | PRD의 “Git 추적 파일만 대상”과 “커밋되지 않은 변경이 있으면 중단” 사이의 경계를 확정해야 한다. |
-| 배포 형태 | framework-dependent publish | 실제 배포에서 .NET 런타임을 포함해야 하면 self-contained publish가 필요하다. |
-| P9 수행 환경 | GitHub Actions 매트릭스 | 로컬은 `osx-arm64` 한 대뿐이라 CI 없이는 세 RID 검증을 수행할 수 없다. CI를 쓰지 않으면 지원 RID 목록 자체를 줄여야 한다. |
-
-위 항목은 구현 결과나 외부 계약을 바꾸는 정책이다. 확인 전에는 코드로 확정하지 않는다.
+- CLI는 nuget.org의 `GamePatchKit.Cli` 패키지로 배포하는 framework-dependent .NET tool이다. `PackAsTool`은 `true`, `ToolCommandName`은 `gpk`로 지정하며 self-contained, single-file, RID별 도구 패키지는 만들지 않는다.
+- GitHub Actions가 세 운영체제의 검증과 GitHub Release 기반 NuGet 게시를 수행한다.
 
 ## 3. 요구사항 정리
 
@@ -42,9 +33,9 @@
 
 - 명령: `gpk build --source <데이터 루트> --output <패치 데이터 폴더>`
 - 설정: `<source>/gamepatchkit.yml`
-- 데이터: 설정의 각 `groups[].id`가 가리키는 폴더 아래에서 Git이 추적하는 파일
+- 데이터: 설정의 각 `groups[].id`가 가리키는 폴더 아래에서 Git이 추적하는 파일. 설정 파일도 Git 추적 대상이어야 한다.
 - 증분 기준: 기존 `<output>/manifest.json`의 `sourceCommit`
-- 현재 기준: 깨끗한 워킹 트리의 `HEAD`
+- 현재 기준: source 아래의 추적 파일에 커밋되지 않은 변경이 없는 `HEAD`
 
 ### 출력
 
@@ -69,7 +60,8 @@
 - `--output`이 `--source`가 속한 Git 저장소 내부면 빌드를 중단한다.
 - `packing: group` 아카이브는 전체 payload를 한 번만 압축한 zstd 1프레임이어야 한다.
 - SHA-256은 저장된 산출물 바이트를 대상으로 하고 소문자 hex로 기록한다.
-- 업로드, 런타임 적용, 서명, 객체 정리, 병렬 처리, 재시도, 로깅 프레임워크는 구현하지 않는다.
+- NuGet package id는 `GamePatchKit.Cli`, tool command는 `gpk`, 패키지 출력 폴더는 `artifacts`다.
+- 패치 산출물 업로드, 런타임 적용, 서명, 객체 정리, 병렬 처리, 재시도, 로깅 프레임워크는 구현하지 않는다.
 
 ## 4. 실행 방식
 
@@ -85,6 +77,7 @@
 - `BuildCommand`가 설정, Git 스냅샷, 이전 매니페스트, 그룹별 증분 판단을 순서대로 조정한다.
 - Git 호출, YAML 로드, JSON 매니페스트, 산출물 스트림 쓰기는 각각 구체 클래스로만 분리한다.
 - DI 컨테이너, 인터페이스, 별도 Core/Infrastructure 프로젝트, 명령 프레임워크는 추가하지 않는다.
+- CLI 프로젝트 자체를 `gpk` .NET tool로 패키징하고 GitHub Actions가 기존 dotnet 명령을 직접 실행한다. 배포만을 위한 별도 빌드 애플리케이션은 만들지 않는다.
 - 아카이브 payload는 메모리에 모두 적재하지 않고 정렬된 원본 파일 스트림을 하나의 출력 스트림에 순서대로 복사한다. zstd 그룹은 이 출력 스트림에 압축기 한 개를 적용해 1프레임을 만든다.
 - zstd 스트리밍은 `NativeCompressions.ZstandardStream`을 쓴다. `ZstandardStream(Stream inner, in ZstandardCompressionOptions options, bool leaveOpen)` 생성자가 0.6.1에 있는 것을 확인했다. 저수준 `ZstandardEncoder`(`OperationStatus` 기반 streamless API)를 직접 다루지 않는다. 테스트의 해제 검증도 같은 타입을 `CompressionMode.Decompress`로 쓴다.
 
@@ -107,7 +100,7 @@
 | `BuildCommand` | Application service | 전체 빌드 순서와 그룹별 전체/증분 판단 조정 |
 | `BuildConfiguration` / `GroupConfiguration` | YAML DTO | 루트 설정과 그룹 설정, 기본값과 유효성 검사 대상 |
 | `BuildConfigurationLoader` | Loader | `gamepatchkit.yml` 역직렬화와 설정 검증 |
-| `GitRepository` | External process boundary | 저장소 루트, clean 상태, HEAD, tracked 파일, 두 커밋 간 변경 경로 조회 |
+| `GitRepository` | External process boundary | 저장소 루트와 source prefix 확인, source 범위의 tracked clean 상태, HEAD, tracked 파일, 두 커밋 간 변경 경로 조회와 source-relative 변환 |
 | `SourceEntry` | Internal DTO | 그룹 소유가 확정된 원본 파일의 경로와 크기 |
 | `PatchManifest` 계열 | JSON DTO | PRD의 루트·그룹·아카이브·엔트리 계약 |
 | `ManifestStore` | Loader/Writer | 이전 매니페스트 읽기·관계 검증과 정렬된 새 매니페스트의 임시 파일 작성·원자적 교체 |
@@ -177,8 +170,9 @@ internal sealed class GitRepository
     public string GetHeadCommit();
     public IReadOnlyList<string> GetChangedPaths(string previousCommit, string currentCommit);
     public IReadOnlyList<string> GetTrackedPaths();
-    public void EnsureClean();
-    public void EnsureSourceIsRepositoryRoot();
+    public void EnsureConfigurationTracked();
+    public void EnsureSourceIsInRepository();
+    public void EnsureTrackedSourceClean();
 }
 
 internal sealed class BuildConfiguration
@@ -206,6 +200,9 @@ internal sealed class PatchManifest
 {
     [JsonProperty("schemaVersion")]
     public int SchemaVersion { get; init; }
+
+    [JsonProperty("sourcePath")]
+    public string SourcePath { get; init; }
 
     [JsonProperty("sourceCommit")]
     public string SourceCommit { get; init; }
@@ -345,7 +342,7 @@ internal sealed class BuildException : Exception
 
 `WriteArchive`는 실제로 쓴 바이트에서 얻은 `Layout`을 반환한다. 호출자가 `SourceEntry.Size`를 누적해 offset을 따로 계산하면 payload를 쓰는 쪽과 offset을 계산하는 쪽이 갈려 완료 조건 2(offset·length가 원본과 일치)가 깨질 수 있다. offset의 유일한 출처는 writer다.
 
-`ManifestStore.ReadPrevious`는 JSON 역직렬화 직후 별도 타입을 만들지 않고 매니페스트 DTO를 직접 검증한다. root 필수 필드, 그룹·엔트리 중복과 정규화 상대 경로, 0 이상의 버전·크기, 64자리 소문자 hex checksum, source별 필수·금지 필드, 엔트리 버전의 그룹 버전 일치, 정식 산출물 `name` 일치, archive 구간의 범위·단조 증가·비중첩을 확인한다. 위반 시 필드 경로와 이유를 담은 `BuildException`을 던진다.
+`ManifestStore.ReadPrevious`는 JSON 역직렬화 직후 별도 타입을 만들지 않고 매니페스트 DTO를 직접 검증한다. root 필수 필드와 정규화된 `sourcePath`, 그룹·엔트리 중복과 정규화 상대 경로, 0 이상의 버전·크기, 64자리 소문자 hex checksum, source별 필수·금지 필드, 엔트리 버전의 그룹 버전 일치, 정식 산출물 `name` 일치, archive 구간의 범위·단조 증가·비중첩을 확인한다. 위반 시 필드 경로와 이유를 담은 `BuildException`을 던진다. 유효한 매니페스트를 읽은 뒤 `BuildCommand`가 현재 canonical source와 `sourcePath`의 일치를 검사한다.
 
 `WriteArchive`와 `WriteFile`은 최종 경로와 같은 디렉터리의 임시 파일에 후보를 완성한 뒤 게시한다. `WriteArchive`는 yaml 그룹 버전을 바꾸지 않으며 동일 아카이브 재사용 여부를 `IsCreated`로 반환한다. `WriteFile`은 실제로 선택한 `Version`을 반환하고, `BuildCommand`는 요청 버전과 다를 때 `FileRevisionAdjustment`를 만든다.
 
@@ -356,6 +353,12 @@ internal sealed class BuildException : Exception
 ```text
 GamePatchKit.sln
 global.json
+Directory.Build.props
+Directory.Packages.props
+artifacts/                  (Git 제외, NuGet 패키지 출력)
+.github/
+└── workflows/
+    └── dotnet.yml
 src/
 └── GamePatchKit.Cli/
     ├── GamePatchKit.Cli.csproj
@@ -379,10 +382,21 @@ tests/
     └── TestBuildCommand.cs
 ```
 
-- 실행 파일 이름: `GamePatchKit.Cli.csproj`의 `AssemblyName`을 `gpk`로 지정한다.
+- 실행 파일 이름: `GamePatchKit.Cli.csproj`의 `AssemblyName`과 `ToolCommandName`을 `gpk`로 지정한다.
+- NuGet 패키지: `PackageId=GamePatchKit.Cli`, `PackAsTool=true`, `PackageOutputPath=<repo>/artifacts`로 지정한다. `RuntimeIdentifiers`는 설정하지 않아 framework-dependent 도구 패키지 하나를 만든다.
 - 프로젝트 참조: 별도 라이브러리 프로젝트 없이 CLI 프로젝트가 PRD의 런타임 패키지를 직접 참조한다.
 - 테스트 참조: 테스트 프로젝트는 CLI 프로젝트를 참조하고 xUnit 및 .NET test SDK만 테스트 전용으로 사용한다.
 - DI 등록 위치: 없음. `Program`이 필요한 구체 객체를 직접 만든다.
+
+### NuGet 배포와 GitHub Actions
+
+TrackableData의 배포 방식에서 공통 패키지 메타데이터, `artifacts` 출력, Test → Pack → Push 순서, nuget.org source, `NUGET_API_KEY`, 중복 패키지 건너뛰기를 가져온다. 이 저장소는 배포 대상이 CLI 프로젝트 하나이므로 별도 NUKE 빌드 프로젝트 없이 GitHub Actions에서 동일한 dotnet 명령을 직접 실행한다.
+
+- pull request와 일반 push: `windows-latest`(`win-x64`), `ubuntu-latest`(`linux-x64`), `macos-26`(`osx-arm64`) 매트릭스에서 restore → test → pack → 임시 tool path에 로컬 패키지 설치 → zstd smoke run 순서로 검증한다.
+- GitHub Release 게시: release tag는 `v<NuGet version>` 형식으로 두고, `v`를 제외한 값을 `PackageVersion`으로 전달한다. 세 운영체제 검증이 모두 성공해야 Ubuntu 게시 job이 실행된다.
+- 게시 job: `dotnet pack --configuration Release --output artifacts`, 이어서 `dotnet nuget push artifacts/*.nupkg --source https://api.nuget.org/v3/index.json --skip-duplicate`를 실행한다.
+- 인증: repository secret `NUGET_API_KEY`를 같은 이름의 환경 변수로 게시 step에만 전달한다.
+- 설치 계약: `dotnet tool install GamePatchKit.Cli --global` 또는 local tool manifest로 설치하고 `gpk`로 실행한다. 실행 환경에는 .NET 10 런타임이 있어야 한다.
 
 ## 12. 도입하지 않은 구조
 
@@ -393,6 +407,7 @@ tests/
 - DI 컨테이너: 객체 수명이나 대체 구현 관리가 필요하지 않다.
 - JSON Schema와 별도 canonical JSON writer: PRD가 요구하지 않는다. `[JsonProperty]`, 정렬, 고정 serializer 설정으로 필요한 계약과 no-op 동일성을 검증한다.
 - 전체 빌드용 staging·rollback·복구 journal 계층: 중간 실패 후 미참조 객체 정리는 제외 범위다. 산출물은 기존 공통 쓰기 규칙대로 게시하고, `manifest.json` 한 파일만 같은 디렉터리의 임시 파일에서 원자적으로 교체한다.
+- NUKE 빌드 프로젝트: 참고한 TrackableData는 여러 패키지의 Pack/Push 조정에 사용하지만, 현재는 pack 대상이 CLI 하나이고 GitHub Actions의 dotnet 명령만으로 같은 순서를 재현할 수 있어 제외한다.
 - 로깅·메트릭·성능 계층: 빌드 요약 외에는 제외 범위다.
 
 ## 13. 단순화 자가 검토 결과
@@ -418,10 +433,12 @@ tests/
 
 ```text
 인자 파싱
-  → source/output 경로 검증
-  → Git 저장소·clean 상태·HEAD 확인
+  → source/output 경로와 source가 속한 Git 저장소 루트·source prefix 확인
+  → source 범위의 tracked clean 상태·HEAD 확인
+  → gamepatchkit.yml의 Git 추적 여부 확인
   → YAML 로드 및 그룹 검증
   → 이전 manifest 로드 및 관계 검증
+  → 이전 manifest의 sourcePath와 현재 source 일치 확인
   → 그룹별 첫 빌드·전체 빌드·증분 빌드 대상 판정
   → 이전 커밋 객체와 설정에 대한 증분 전제 검증
   → tracked 파일 탐색 및 가장 깊은 그룹 할당
@@ -481,11 +498,13 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 
 ### 파일 소유 그룹 결정
 
-1. 그룹 `id`를 source 기준 정규화된 디렉터리 경로로 바꾼다.
-2. Git tracked 파일 중 그룹 경로 아래의 일반 파일만 후보로 둔다.
-3. 여러 그룹 경로에 포함되면 경로 세그먼트가 가장 긴 그룹에 배정한다.
-4. 그룹 루트 기준 상대 경로를 `/`로 정규화한다.
-5. 그룹은 `id`, 엔트리는 `path`를 `StringComparer.Ordinal`로 정렬한다.
+1. `GitRepository`는 `git rev-parse --show-toplevel`과 `git rev-parse --show-prefix`로 저장소 루트와 source의 저장소 기준 prefix를 구한다. source가 저장소 바깥이면 중단하고, prefix는 저장소 루트일 때 `.`, 그 외에는 끝의 `/`를 제거한 `sourcePath`로 정규화한다.
+2. tracked 파일과 changed path 조회는 source prefix로 pathspec을 제한하고 `-z` 결과를 저장소 기준에서 source-relative 경로로 바꾼다. source 밖의 경로는 이후 로직에 전달하지 않는다.
+3. 그룹 `id`를 source 기준 정규화된 디렉터리 경로로 바꾼다.
+4. source 아래 Git tracked 파일 중 그룹 경로 아래의 일반 파일만 후보로 둔다. untracked 파일은 열거나 상태 검사에 사용하지 않는다.
+5. 여러 그룹 경로에 포함되면 경로 세그먼트가 가장 긴 그룹에 배정한다.
+6. 그룹 루트 기준 상대 경로를 `/`로 정규화한다.
+7. 그룹은 `id`, 엔트리는 `path`를 `StringComparer.Ordinal`로 정렬한다.
 
 ## 16. 단계별 구현 계획
 
@@ -494,7 +513,7 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 ### P0. 출력 계약과 정책 확정
 
 - 수행:
-  - 2절의 확인 필요 사항을 결정한다.
+  - 2절의 확정 사항과 PRD가 일치하는지 확인한다.
   - 매니페스트 샘플 JSON 한 개로 필드 타입, 조건부 필드, 상대 경로를 확정한다.
 - 검증:
   - PRD의 매니페스트 필드가 샘플에 모두 대응한다.
@@ -504,8 +523,8 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 ### P1. 솔루션과 실행 뼈대
 
 - 수행:
-  - `global.json`, 솔루션, CLI 프로젝트, 테스트 프로젝트를 만든다.
-  - SDK·TargetFramework·AssemblyName·RID·패키지 버전을 PRD와 맞춘다.
+  - `global.json`, `Directory.Build.props`, `Directory.Packages.props`, 솔루션, CLI 프로젝트, 테스트 프로젝트를 만든다.
+  - SDK·TargetFramework·AssemblyName·패키지 버전을 PRD와 맞추고 `PackageId=GamePatchKit.Cli`, `PackAsTool=true`, `ToolCommandName=gpk`를 설정한다.
   - 수동 인자 파서와 `build` 명령의 빈 실행 경계를 만든다.
 - 검증:
   - `dotnet --version`이 `10.0.302`를 선택한다.
@@ -521,27 +540,33 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - 그룹 id 중복, 절대 경로, `..`, 존재하지 않는 그룹 폴더를 거부한다.
   - `[JsonProperty]`가 붙은 매니페스트 DTO와 정렬된 직렬화를 구현한다.
   - 이전 매니페스트의 schema, 필수 필드, 중복 그룹·엔트리, 정규화 상대 경로, 버전·크기·checksum 형식을 검증한다.
+  - 이전 매니페스트의 `sourcePath` 형식을 검증하고 현재 canonical source와 다르면 산출물을 쓰기 전에 중단한다.
   - `packing`·`source`별 필수·금지 필드와 정식 산출물 `name`을 검증한다.
   - archive 엔트리의 `length == size`, `offset + length <= payloadSize`, path 순서상 단조 증가·비중첩을 검증한다.
 - 검증:
   - 최소 YAML, 모든 옵션 YAML, 잘못된 id/enum/버전 테스트가 통과한다.
   - 매니페스트 round-trip 후 필드명과 값이 유지된다.
   - 입력 순서를 바꿔도 출력 그룹·엔트리 순서는 동일하다.
-  - JSON으로는 유효하지만 중복, 경로, 버전, checksum, source 조건부 필드, archive 범위 중 하나가 잘못된 이전 매니페스트를 각각 거부하고 `--output`을 바꾸지 않는다.
+  - JSON으로는 유효하지만 `sourcePath`, 중복, 경로, 버전, checksum, source 조건부 필드, archive 범위 중 하나가 잘못된 이전 매니페스트를 각각 거부하고 `--output`을 바꾸지 않는다.
 - 완료 조건 연결: 1, 10, 21
 
 ### P3. Git 스냅샷과 그룹 탐색
 
 - 수행:
-  - Git 저장소 루트, clean 상태, HEAD, tracked path, changed path 조회를 구현한다.
-  - `-z` 형식과 rename 비활성화를 사용해 경로를 안전하게 읽고 rename을 삭제+추가로 취급한다.
+  - source가 Git 저장소 루트 또는 하위 경로인지 확인하고 저장소 루트와 source prefix를 구한다.
+  - source prefix로 제한한 tracked clean 상태, HEAD, tracked path, changed path 조회를 구현한다. untracked 파일과 source 바깥 변경은 dirty 판정과 결과에서 제외한다.
+  - `gamepatchkit.yml`이 Git 추적 대상인지 확인하고, 아니면 YAML을 읽기 전에 중단한다.
+  - `-z` 형식과 rename 비활성화를 사용해 저장소 기준 경로를 안전하게 읽고 source-relative로 변환하며 rename을 삭제+추가로 취급한다.
   - tracked 파일만 가장 깊은 그룹에 할당한다.
   - 이전 매니페스트에 같은 `id`의 그룹이 있는데 yaml 그룹 버전이 더 작으면 산출물을 쓰기 전에 중단한다.
   - 증분 대상 그룹이 하나 이상일 때만 이전 `sourceCommit` 커밋 객체가 현재 저장소에 있는지 `git cat-file -e <commit>^{commit}`으로 확인하고, 없으면 중단한다.
   - 증분 대상 그룹이 없으면 이전 커밋 객체 확인과 changed path 조회를 생략한다.
 - 검증:
   - 테스트가 임시 Git 저장소를 만들고 최초 커밋, 수정, 추가, 삭제, rename, dirty 상태를 재현한다.
-  - untracked 파일과 그룹 밖 파일의 정책이 P0 결정과 일치한다.
+  - 저장소 루트와 하위 폴더를 각각 source로 사용할 수 있고, 하위 source의 tracked·changed 경로가 source-relative로 변환된다.
+  - 저장소 루트는 `sourcePath: "."`, 하위 폴더는 정규화된 저장소 기준 상대 경로로 매니페스트에 기록되며, 다른 source에서 같은 output을 재사용하면 `데이터 루트가 이전 빌드와 다릅니다.`를 출력하고 중단된다.
+  - source 아래의 untracked 파일과 source 바깥 변경은 빌드와 dirty 판정에서 제외되며, source 아래 tracked 파일의 미커밋 변경은 중단된다.
+  - `gamepatchkit.yml`이 untracked이면 산출물 없이 중단된다.
   - 중첩 그룹에서 파일이 가장 깊은 그룹에 한 번만 들어간다.
   - yaml 그룹 버전이 이전 성공 버전보다 작으면 더 큰 값을 사용하라는 안내와 함께 중단되고 `--output`이 변하지 않는다.
   - 이전 매니페스트의 커밋 객체가 없고 같은 버전 그룹이 남아 있으면 `이전 상태가 없습니다.`를 출력하고 빌드가 중단되며 `--output`이 변하지 않는다.
@@ -628,23 +653,24 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - PRD 예시의 최초→수정→재수정→추가→삭제→버전 증가 흐름을 하나의 임시 Git 저장소에서 순서대로 실행한다.
   - 각 단계의 출력 파일 집합, 매니페스트, 요약 값이 기대와 같다.
   - 자동 증가 항목이 여러 개여도 경고 헤더는 마지막에 한 번만 출력되고 모든 조정 항목이 포함된다.
-  - dirty 상태에서는 산출물과 매니페스트가 바뀌지 않는다.
+  - source 아래 tracked 파일이 dirty 상태이면 산출물과 매니페스트가 바뀌지 않고, untracked 파일이나 source 바깥 변경만 있으면 정상 빌드된다.
   - 매니페스트 후보 작성 전에 실패시키면 기존 `manifest.json`의 바이트와 `sourceCommit`이 직전 성공 빌드 그대로다.
   - 동일한 후보 산출물을 일부 쓴 실패 상태에서 재실행하면 해당 산출물을 재사용하고 실패 구간의 변경을 반영한다.
   - 실패 후 같은 그룹 버전의 아카이브 후보가 달라지면 중단되고, yaml 그룹 버전을 올려 재실행하면 해당 그룹의 현재 `HEAD`와 다른 증분 그룹의 실패 구간 변경이 모두 반영된다.
 - 완료 조건 연결: 1~12, 18, 19, 20
 
-### P9. RID별 빌드·실행 검증
+### P9. NuGet tool 패키징·RID별 실행·게시 검증
 
 - 수행:
-  - GitHub Actions 매트릭스(`windows-latest`, `ubuntu-latest`, `macos-latest`)에서 restore, test, publish, smoke run 한다. 로컬에 세 운영체제 환경이 없으므로 CI가 유일한 수행 수단이다.
-  - smoke run은 `compression: zstd`를 포함해 네이티브 라이브러리 로딩까지 확인한다.
+  - `.github/workflows/dotnet.yml`에서 GitHub Actions 매트릭스(`windows-latest`, `ubuntu-latest`, `macos-26`)로 restore, test, pack, 로컬 tool 설치, smoke run을 수행한다. 각 러너는 `win-x64`, `linux-x64`, `osx-arm64`에 대응하며, 로컬에 세 운영체제 환경이 없으므로 CI가 유일한 수행 수단이다.
+  - smoke run은 `artifacts`의 `GamePatchKit.Cli` 패키지를 임시 tool path에 설치한 `gpk`로 실행하며 `compression: zstd`를 포함해 RID별 네이티브 라이브러리 로딩까지 확인한다.
   - 테스트용 임시 저장소는 `core.autocrlf=false`로 만든다. Windows 러너의 줄바꿈 변환이 원본 바이트를 바꾸면 같은 커밋에서도 payload가 달라진다.
+  - GitHub Release 게시 이벤트에서는 release tag 버전으로 다시 pack하고, 매트릭스 성공 후 `NUGET_API_KEY`를 사용해 nuget.org에 `--skip-duplicate`로 게시한다.
 - 검증:
-  - 각 환경에서 `gpk build`가 종료 코드 0으로 끝나고 매니페스트와 산출물이 생성된다.
+  - 각 환경에서 로컬 NuGet 패키지 설치와 `gpk build`가 종료 코드 0으로 끝나고 매니페스트와 산출물이 생성된다.
   - 다른 환경에서 만든 동일 입력의 매니페스트 계약과 해제 결과가 같다.
+  - release workflow에서 게시 job은 세 환경 검증에 의존하고, package id·version·tool command가 `GamePatchKit.Cli`·release tag 버전·`gpk`와 일치한다.
 - 완료 조건 연결: 13
-- CI를 도입하지 않기로 하면 P9는 `osx-arm64` 로컬 검증만 수행하고, 나머지 두 RID는 완료 정의와 지원 목록에서 함께 뺀다. 검증하지 않은 RID를 지원한다고 적지 않는다.
 
 ## 17. 테스트 추적성
 
@@ -658,11 +684,11 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 | 6. file packing 증분 | `Build_FilePacking_ChangedFileCreatesOneObject` | 통합 |
 | 7. 파일 삭제 | `Build_DeletedFileRemovesManifestEntry` | 통합 |
 | 8. 파일 추가 | `Build_AddedFileStartsAtRevisionZero` | 통합 |
-| 9. dirty 중단 | `Build_DirtyWorkingTreeFailsWithoutOutputChanges` | 통합 |
-| 10. commit 기록·비교 | `Build_RecordsHeadAndUsesPreviousCommitForDiff` | 통합 |
+| 9. source 범위 tracked dirty 중단 | `Build_TrackedDirtyUnderSourceFailsWithoutOutputChanges`<br>`Build_UntrackedUnderSourceIsIgnored`<br>`Build_TrackedChangeOutsideSourceIsIgnored`<br>`Build_UntrackedConfigurationFailsWithoutArtifacts` | 통합 |
+| 10. source·commit 기록과 비교 | `Build_RecordsSourcePathAndHeadAndUsesPreviousCommitForDiff`<br>`Build_DifferentSourceWithSameOutputFailsWithoutChanges` | 통합 |
 | 11. none 원본 일치 | `ArtifactWriter_NonePreservesBytes` | 단위 |
 | 12. checksum 일치 | `ArtifactWriter_ChecksumMatchesStoredBytes` | 단위 |
-| 13. 세 RID 실행 | `PublishAndSmoke_<rid>` | CI 매트릭스 |
+| 13. NuGet tool 세 RID 실행·게시 | `PackInstallAndSmoke_<rid>`<br>`ReleasePublishesAfterRidMatrix` | CI 매트릭스 |
 | 14. 설정 변경 중단 | `Build_PackingOrCompressionChangeWithSameVersionFails` | 통합 |
 | 15. 빈 그룹 | `Build_EmptyGroupOmitsArchiveAndWritesEmptyEntries` | 통합 |
 | 16. 조건부 이전 커밋 검증·승계 산출물 무결성 | `Build_MissingPreviousCommitWithIncrementalGroupFailsWithoutOutputChanges`<br>`Build_MissingPreviousCommitWithOnlyFullBuildGroupsSucceeds`<br>`Build_GroupPacking_MissingInheritedArtifactFailsWithoutOutputChanges`<br>`Build_GroupPacking_TruncatedInheritedArtifactFailsWithoutOutputChanges`<br>`Build_GroupPacking_CorruptedInheritedArtifactFailsWithoutOutputChanges`<br>`Build_FilePacking_MissingInheritedObjectFailsWithoutOutputChanges`<br>`Build_FilePacking_TruncatedInheritedObjectFailsWithoutOutputChanges`<br>`Build_FilePacking_CorruptedInheritedObjectFailsWithoutOutputChanges` | 통합 |
@@ -670,7 +696,7 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 | 18. 아카이브 재사용·그룹 버전 충돌 | `Build_ExistingArchiveWithSameBytesIsReused`<br>`Build_ExistingArchiveWithDifferentBytesFailsWithoutOutputChanges` | 통합 |
 | 19. 파일 리비전 충돌 자동 증가 | `Build_ExistingFileWithSameBytesReusesHighestRevisionAndWarnsWhenAdjusted`<br>`Build_ExistingFileWithDifferentBytesUsesNextRevisionAndWarnsOnce` | 통합 |
 | 20. 실패 후 재실행과 수동 그룹 버전 복구 | `ManifestStore_WriteAtomicallyReplacesManifest`<br>`Build_FailedRunKeepsPreviousManifest`<br>`Build_RerunAfterFailureReusesMatchingArtifacts`<br>`Build_RerunWithChangedArchiveRequiresGroupVersionBumpAndIncludesFailedRange` | 단위·통합 |
-| 21. 이전 매니페스트 관계 검증 | `ManifestStore_RejectsDuplicateGroupsOrEntries`<br>`ManifestStore_RejectsInvalidArtifactNameOrVersion`<br>`ManifestStore_RejectsInvalidSourceFields`<br>`ManifestStore_RejectsInvalidChecksumOrNegativeSize`<br>`ManifestStore_RejectsOutOfRangeOrOverlappingArchiveLayout` | 단위 |
+| 21. 이전 매니페스트 관계 검증 | `ManifestStore_RejectsInvalidSourcePath`<br>`ManifestStore_RejectsDuplicateGroupsOrEntries`<br>`ManifestStore_RejectsInvalidArtifactNameOrVersion`<br>`ManifestStore_RejectsInvalidSourceFields`<br>`ManifestStore_RejectsInvalidChecksumOrNegativeSize`<br>`ManifestStore_RejectsOutOfRangeOrOverlappingArchiveLayout` | 단위 |
 
 테스트 이름은 구현 시 실제 대상 타입에 맞춰 조정할 수 있지만, 각 완료 조건을 검증하는 시나리오는 삭제하지 않는다.
 
@@ -679,7 +705,8 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 - PRD 완료 조건 21개가 모두 자동 테스트 또는 RID별 smoke 검증에 연결되어 있다.
 - `dotnet restore`, `dotnet build`, `dotnet test`가 성공한다.
 - `win-x64`, `linux-x64`, `osx-arm64` 네이티브 환경에서 zstd 빌드가 실행된다.
+- `GamePatchKit.Cli`가 framework-dependent NuGet .NET tool로 패키징되어 세 환경에서 `gpk` 명령으로 설치·실행되고, GitHub Release 게시 workflow가 RID 매트릭스 성공 후 nuget.org에 게시한다.
 - 동일 HEAD에서 다시 실행했을 때 새 산출물이 없고 매니페스트 바이트가 같다.
 - 증분 전제 위반 세 가지가 모두 산출물을 쓰기 전에 중단되고 `--output`을 바꾸지 않는다.
-- 현재 범위에서 제외한 업로드·런타임·서명·정리·병렬 처리·재시도·로깅 코드가 들어오지 않는다.
+- 현재 범위에서 제외한 패치 산출물 업로드·런타임·서명·정리·병렬 처리·재시도·로깅 코드가 들어오지 않는다.
 - 구현 diff의 모든 파일이 PRD 요구사항, 테스트, 또는 필수 프로젝트 연결 코드로 추적된다.
