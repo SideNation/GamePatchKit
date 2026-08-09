@@ -139,13 +139,14 @@ groups:
 | --- | --- |
 | 루트 | `schemaVersion`, `sourceCommit`, `groups` |
 | 그룹 | `id`, `version`, `packing`, `compression`, `archive`(있을 때), `entries` |
-| 아카이브 | `name`, `payloadSize`, `storedSize` |
+| 아카이브 | `name`, `payloadSize`, `storedSize`, `checksum` |
 | 엔트리 | `path`, `version`, `size`, `source`(`archive` \| `file`) |
 | `source: archive` | `offset`, `length` |
-| `source: file` | `name`, `storedSize` |
+| `source: file` | `name`, `storedSize`, `checksum` |
 
 - 그룹은 `id` 오름차순, 엔트리는 `path` 오름차순으로 쓴다.
 - 필드 이름은 `[JsonProperty]`로 고정한다. Unity 클라이언트가 같은 모델을 읽게 되므로 이름 자동 추론에 기대지 않는다.
+- `checksum`은 저장된 산출물 바이트 그대로의 SHA-256(소문자 hex)이다. 아카이브는 `.gpka` 파일 전체, 파일 객체는 저장된 객체 파일 전체가 대상이다. 전송받는 단위마다 하나씩이므로 클라이언트가 내려받은 바이트가 잘리거나 손상되지 않았는지 이것으로 확인한다. 손상 감지용이지 위조 방지가 아니다. SHA-256은 .NET 내장이라 새 의존성이 없다.
 
 ### 빌드 요약 출력
 
@@ -322,7 +323,8 @@ files/group2/1/b.bin.v1.1
 9. 워킹 트리에 커밋되지 않은 변경이 있으면 빌드가 중단되고 이유를 알린다.
 10. 매니페스트에 빌드한 커밋이 기록되고, 다음 빌드가 그 커밋을 기준으로 변경을 판정한다.
 11. `compression: none` 그룹의 산출물이 원본 바이트와 같다.
-12. `win-x64`, `linux-x64`, `osx-arm64`에서 빌드와 실행이 된다.
+12. 매니페스트의 `checksum`이 해당 아카이브·파일 객체의 실제 바이트를 SHA-256으로 해시한 값과 일치한다.
+13. `win-x64`, `linux-x64`, `osx-arm64`에서 빌드와 실행이 된다.
 
 ## 제외 범위
 
@@ -330,7 +332,7 @@ files/group2/1/b.bin.v1.1
 
 - 업로드·CDN·캐시 정책, 채널·롤아웃
 - 클라이언트 런타임(다운로드·검증·적용·롤백)
-- 서명·키 관리, 다운로드 무결성 검증
+- 서명·키 관리 — 매니페스트의 체크섬은 전송 손상 감지용이다. 위조 방지가 필요해지면 서명을 별도로 다룬다
 - 미참조 객체 정리, 보존 정책
 - Zstandard 사전, 델타 압축, 콘텐츠 정의 청킹
 - 병렬 처리, 재시도
