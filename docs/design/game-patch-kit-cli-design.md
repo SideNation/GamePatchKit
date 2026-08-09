@@ -113,7 +113,7 @@
 | `PatchManifest` 계열 | JSON DTO | PRD의 루트·그룹·아카이브·엔트리 계약 |
 | `ManifestStore` | Loader/Writer | 이전 매니페스트 읽기와 정렬된 새 매니페스트 쓰기 |
 | `ArtifactWriter` | File writer | 임시 후보 쓰기, zstd 적용, stored size와 SHA-256 계산, 아카이브 재사용·충돌 판정, 파일 리비전 확정, 아카이브 엔트리별 offset·length 산출 |
-| `IncrementalPrecondition` 검사 | `BuildCommand` 내부 절차 | 증분 대상이 있을 때의 이전 커밋 객체 존재 여부, 승계 산출물 존재 여부, `packing`·`compression` 동일 여부 확인 |
+| `IncrementalPrecondition` 검사 | `BuildCommand` 내부 절차 | 증분 대상이 있을 때의 이전 커밋 객체 존재 여부, 승계 산출물의 존재 여부·저장 크기·SHA-256, `packing`·`compression` 동일 여부 확인 |
 | `BuildSummary` / `GroupBuildSummary` | Output model | 그룹별·전체 빌드 요약과 자동 파일 리비전 증가 내역 |
 | `BuildException` | Error | 사용자가 조치할 수 있는 빌드 중단 사유 전달 |
 
@@ -422,9 +422,10 @@ tests/
   → YAML 로드 및 그룹 검증
   → 이전 manifest 로드
   → 그룹별 첫 빌드·전체 빌드·증분 빌드 대상 판정
-  → 증분 전제 검증 (아래 표) — 산출물을 쓰기 전에 전부 판정한다
+  → 이전 커밋 객체와 설정에 대한 증분 전제 검증
   → tracked 파일 탐색 및 가장 깊은 그룹 할당
   → 증분 대상이 있으면 이전 sourceCommit 대비 changed path 계산
+  → 새 매니페스트가 승계할 산출물 확정 및 무결성 검증
   → 판정한 방식으로 그룹별 빌드
   → 그룹/엔트리 ordinal 정렬
   → manifest.json을 마지막에 기록
@@ -434,17 +435,17 @@ tests/
 
 ### 증분 전제 검증
 
-PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는 이전 상태를 이어받고 식별이 해시가 아니므로, 전제가 깨졌을 때 다시 계산해 복구할 수단이 없다. 산출물을 하나도 쓰기 전에 전부 판정해 실패 시 `--output`이 변하지 않게 한다.
+PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는 이전 상태를 이어받고 식별이 해시가 아니므로, 전제가 깨졌을 때 다시 계산해 복구할 수단이 없다. 이전 커밋 객체와 설정은 그룹 분류 직후 검사하고, 승계 산출물은 tracked 파일과 changed path로 새 매니페스트의 승계 대상을 확정한 뒤 검사한다. 모든 검사는 산출물을 하나도 쓰기 전에 끝내 실패 시 `--output`이 변하지 않게 한다.
 
 아래 "통과 조건"은 **성립해야 정상인 상태**다. 성립하지 않을 때만 중단한다.
 
 | 검사 | 통과 조건 (성립해야 정상) | 위반 시 |
 | --- | --- | --- |
 | 이전 커밋 객체 존재 | 증분 대상 그룹이 하나 이상이면 이전 매니페스트의 `sourceCommit`을 git diff 입력으로 쓸 수 있게 현재 저장소에 **있다** (`git cat-file -e <commit>^{commit}`) | 중단. `이전 상태가 없습니다.`라고만 알리고 이후 조치는 사용자에게 맡김 |
-| 승계 산출물 존재 | 증분 대상 그룹이 승계할 아카이브·파일 객체가 `--output`에 **실재한다** | 중단. 없는 경로를 나열 |
+| 승계 산출물 무결성 | 증분 대상 그룹이 승계할 아카이브·파일 객체가 `--output`에 **실재하고**, 실제 크기와 SHA-256이 이전 매니페스트의 `storedSize`·`checksum`과 **일치한다** | 중단. 누락 또는 불일치 경로와 이유를 나열 |
 | 설정 동일 | 그룹 버전을 그대로 둔 그룹은 `packing`·`compression`이 이전 매니페스트와 **같다** | 중단. 바뀐 그룹 id와 함께 그룹 버전을 올리도록 안내 |
 
-이전 매니페스트와 `id`·`version`이 같은 그룹만 증분 대상이다. 증분 대상이 하나도 없으면 이전 커밋 객체 확인과 git diff를 생략한다. 승계 산출물 검사도 증분 대상 그룹에만 수행한다. 그룹 버전 변경 여부는 yaml 설정값으로 판단하며 CLI가 자동으로 버전을 바꾸지 않는다.
+이전 매니페스트와 `id`·`version`이 같은 그룹만 증분 대상이다. 증분 대상이 하나도 없으면 이전 커밋 객체 확인과 git diff를 생략한다. 승계 산출물 검사도 증분 대상 그룹에만 수행한다. 각 승계 산출물은 존재 여부 → 실제 크기 → SHA-256 순서로 검사하며, 크기가 다르면 해시 계산 없이 실패로 판정한다. 그룹 버전 변경 여부는 yaml 설정값으로 판단하며 CLI가 자동으로 버전을 바꾸지 않는다.
 
 ### 그룹 판단 규칙
 
@@ -465,6 +466,15 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 3. 파일 객체는 요청 버전 이상의 정식 객체 중 가장 높은 리비전을 숫자로 비교한다. 해당 객체가 없으면 요청 버전으로 게시한다. 있으면 후보와 저장 크기·SHA-256을 비교해 같을 때 그 버전을 재사용하고, 다를 때 가장 높은 리비전 + 1의 새 경로로 게시한다.
 4. 아카이브와 파일 객체 모두 기존 최종 파일을 덮어쓰지 않는다. 파일 리비전만 자동 증가할 수 있으며 그룹 버전은 항상 yaml 값과 같다.
 5. 매니페스트를 마지막에 기록하므로 중간 실패 시 `--output`에는 미참조 객체만 남을 수 있다. 같은 후보는 다음 실행에서 재사용하며 미참조 객체 정리는 제외 범위다.
+
+### 실패 후 재실행
+
+빌드가 중간에 실패했을 때 어느 커밋부터 다시 계산하는지는 `manifest.json`의 기록 시점 하나로 결정된다.
+
+1. `manifest.json`은 모든 산출물을 쓴 뒤 성공 경로에서만 기록한다. 실패하면 기록하지 않는다.
+2. 따라서 `sourceCommit`은 **마지막으로 성공한 빌드의 커밋**으로 남는다. 다음 빌드는 그 커밋과 현재 `HEAD`를 diff하므로 실패한 빌드 구간에서 바뀐 경로가 모두 다시 잡힌다. 실패 이후 커밋이 더 쌓여도 같다.
+3. 실패한 빌드가 이미 쓴 산출물은 공통 쓰기 규칙의 저장 바이트 비교로 재사용한다. 재실행이 처음부터 다시 계산해도 실제로 다시 쓰는 파일은 아직 안 쓴 것뿐이다.
+4. 진행 상황을 담는 별도 상태 파일을 만들지 않는다. 복구 기준점이 `sourceCommit` 하나여야 이 성질이 성립하고, 중간 상태를 기록하면 그 파일과 실제 산출물이 어긋나는 새 실패 모드가 생긴다.
 
 ### 파일 소유 그룹 결정
 
@@ -566,7 +576,7 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 
 - 수행:
   - 같은 그룹 버전이면 이전 아카이브를 다시 쓰지 않는다.
-  - 승계 대상 아카이브·파일 객체가 `--output`에 실재하는지 확인하고, 없으면 없는 경로를 나열하며 중단한다.
+  - 승계 대상 아카이브·파일 객체의 존재 여부, 실제 크기, SHA-256을 이전 매니페스트와 대조하고 누락 또는 불일치 경로와 이유를 나열하며 중단한다.
   - 그룹 버전이 같은데 `packing` 또는 `compression`이 이전 매니페스트와 다르면 그룹 id와 함께 중단한다.
   - 변경 파일은 이전 리비전 + 1, 신규 파일은 리비전 0을 요청한다. 이전 리비전은 이전 매니페스트 엔트리 `version`의 `.` 뒤 정수를 파싱해 얻고, 실제 리비전은 산출물 충돌 규칙으로 확정한다.
   - 미변경 엔트리의 버전과 위치를 그대로 승계하고 삭제 파일은 제외한다.
@@ -576,7 +586,9 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - 추가는 같은 경로의 기존 파일 객체가 없으면 `<그룹 버전>.0`, 삭제는 매니페스트 제거로 반영된다.
   - 요청 버전 이상의 마지막 오버레이가 같은 바이트면 재사용하고, 다른 바이트면 마지막 리비전 + 1을 사용하며 기존 객체는 유지된다.
   - 같은 HEAD 재실행 전후의 파일 목록과 매니페스트 바이트가 같다.
-  - 승계 대상 `.gpka`를 지운 뒤 빌드하면 중단되고 매니페스트가 바뀌지 않는다.
+  - 승계 대상 아카이브와 파일 객체를 각각 삭제한 경우 빌드가 중단되고 산출물과 매니페스트가 바뀌지 않는다.
+  - 승계 대상 아카이브와 파일 객체를 각각 truncate해 실제 크기를 바꾸면 빌드가 중단되고 산출물과 매니페스트가 바뀌지 않는다.
+  - 승계 대상 아카이브와 파일 객체의 크기는 유지한 채 바이트를 바꾸면 SHA-256 불일치로 빌드가 중단되고 산출물과 매니페스트가 바뀌지 않는다.
   - `packing`을 `group`에서 `file`로 바꾸고 버전을 두면 중단되고 그룹 버전을 올리라는 안내가 나온다. `compression`도 같다.
   - 그룹의 마지막 파일을 지우면 `archive` 없이 빈 `entries`로 기록된다.
 - 완료 조건 연결: 3, 4, 7, 8, 14, 15, 16, 19
@@ -601,13 +613,15 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - 그룹별 요약과 합계를 출력한다.
   - 파일 리비전 자동 증가가 있으면 모든 정상 요약 뒤에 그룹 id, 경로, 요청 버전, 실제 버전을 경고 한 묶음으로 출력한다.
   - 사용자가 조치할 수 있는 실패에는 원인과 대상 경로/그룹을 포함한다.
-  - 산출물 작성 후 매니페스트를 마지막에 기록한다.
+  - 산출물 작성 후 매니페스트를 마지막에 기록한다. 성공 경로가 아니면 기록하지 않는다.
 - 검증:
   - PRD 예시의 최초→수정→재수정→추가→삭제→버전 변경 흐름을 하나의 임시 Git 저장소에서 순서대로 실행한다.
   - 각 단계의 출력 파일 집합, 매니페스트, 요약 값이 기대와 같다.
   - 자동 증가 항목이 여러 개여도 경고 헤더는 마지막에 한 번만 출력되고 모든 조정 항목이 포함된다.
   - dirty 상태에서는 산출물과 매니페스트가 바뀌지 않는다.
-- 완료 조건 연결: 1~12, 18, 19
+  - 산출물을 일부 쓴 뒤 실패시킨 다음 `manifest.json`의 `sourceCommit`이 직전 성공 빌드의 커밋 그대로인지 확인한다.
+  - 그 상태에서 커밋을 더 쌓고 다시 빌드하면 실패 구간의 변경까지 모두 반영되고, 실패한 빌드가 이미 쓴 산출물은 재사용된다.
+- 완료 조건 연결: 1~12, 18, 19, 20
 
 ### P9. RID별 빌드·실행 검증
 
@@ -640,16 +654,17 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 | 13. 세 RID 실행 | `PublishAndSmoke_<rid>` | CI 매트릭스 |
 | 14. 설정 변경 중단 | `Build_PackingOrCompressionChangeWithSameVersionFails` | 통합 |
 | 15. 빈 그룹 | `Build_EmptyGroupOmitsArchiveAndWritesEmptyEntries` | 통합 |
-| 16. 조건부 이전 커밋 검증·승계 산출물 누락 | `Build_MissingPreviousCommitWithIncrementalGroupFailsWithoutOutputChanges`<br>`Build_MissingPreviousCommitWithOnlyFullBuildGroupsSucceeds`<br>`Build_MissingInheritedArtifactFailsWithoutOutputChanges` | 통합 |
+| 16. 조건부 이전 커밋 검증·승계 산출물 무결성 | `Build_MissingPreviousCommitWithIncrementalGroupFailsWithoutOutputChanges`<br>`Build_MissingPreviousCommitWithOnlyFullBuildGroupsSucceeds`<br>`Build_MissingInheritedArtifactFailsWithoutOutputChanges`<br>`Build_TruncatedInheritedArtifactFailsWithoutOutputChanges`<br>`Build_CorruptedInheritedArtifactFailsWithoutOutputChanges` | 통합 |
 | 17. source 저장소 내부 output 거부 | `Build_OutputInsideSourceRepositoryFailsWithoutArtifacts` | 통합 |
 | 18. 아카이브 재사용·그룹 버전 충돌 | `Build_ExistingArchiveWithSameBytesIsReused`<br>`Build_ExistingArchiveWithDifferentBytesFailsWithoutOutputChanges` | 통합 |
 | 19. 파일 리비전 충돌 자동 증가 | `Build_ExistingFileWithSameBytesReusesHighestRevisionAndWarnsWhenAdjusted`<br>`Build_ExistingFileWithDifferentBytesUsesNextRevisionAndWarnsOnce` | 통합 |
+| 20. 실패 후 재실행이 실패 구간을 포함 | `Build_FailedRunKeepsPreviousSourceCommit`<br>`Build_RerunAfterFailureIncludesCommitsFromFailedRange` | 통합 |
 
 테스트 이름은 구현 시 실제 대상 타입에 맞춰 조정할 수 있지만, 각 완료 조건을 검증하는 시나리오는 삭제하지 않는다.
 
 ## 18. 완료 정의
 
-- PRD 완료 조건 19개가 모두 자동 테스트 또는 RID별 smoke 검증에 연결되어 있다.
+- PRD 완료 조건 20개가 모두 자동 테스트 또는 RID별 smoke 검증에 연결되어 있다.
 - `dotnet restore`, `dotnet build`, `dotnet test`가 성공한다.
 - `win-x64`, `linux-x64`, `osx-arm64` 네이티브 환경에서 zstd 빌드가 실행된다.
 - 동일 HEAD에서 다시 실행했을 때 새 산출물이 없고 매니페스트 바이트가 같다.
