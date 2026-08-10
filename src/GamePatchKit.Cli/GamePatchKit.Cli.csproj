@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>gpk</AssemblyName>
+    <RootNamespace>GamePatchKit.Cli</RootNamespace>
+    <PackageId>GamePatchKit.Cli</PackageId>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>gpk</ToolCommandName>
+    <PackageOutputPath>$(MSBuildProjectDirectory)/../../artifacts</PackageOutputPath>
+    <Description>Build and verify GamePatchKit patch data.</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NativeCompressions.Zstandard.Core" />
+    <PackageReference Include="NativeCompressions.Zstandard.Runtime.win-x64" />
+    <PackageReference Include="NativeCompressions.Zstandard.Runtime.linux-x64" />
+    <PackageReference Include="NativeCompressions.Zstandard.Runtime.osx-arm64" />
+    <PackageReference Include="Newtonsoft.Json" />
+    <PackageReference Include="YamlDotNet" />
+    <PackageReference Include="Supabase.Storage" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>GamePatchKit.Cli.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+</Project>
