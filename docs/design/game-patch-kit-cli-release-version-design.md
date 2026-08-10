@@ -171,7 +171,7 @@ docs/cli/
 - 테스트: 기존 xUnit 통합 테스트 구조 안에서 작성한다. 새 테스트 프레임워크나 테스트 대역은 추가하지 않는다.
 - 구현 완료 후 [`docs/cli/build.md`](../cli/build.md)에 새 필드와 증가 규칙을 반영한다.
 - `releaseVersion` 구현과 검증이 끝난 뒤 upload 계획을 진행한다.
-- 지정된 수동 배포 스크립트는 [`upload 계획`](game-patch-kit-cli-upload-design.md)의 상태 Git 저장소 복원·단일 commit 저장·동시 실행 금지·같은 SHA 재실행 순서를 적용한다.
+- 지정된 수동 배포 스크립트는 [`upload 계획`](game-patch-kit-cli-upload-design.md)의 상태 Git 저장소 복원·단일 commit 저장·동시 실행 금지·같은 SHA 재실행 순서를 적용한다. 이 스크립트는 releaseVersion·upload 구현과 별도 작업이지만 운영 배포의 필수 선행 조건이다.
 
 ## 15. 단계별 구현 계획
 
