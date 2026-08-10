@@ -98,3 +98,24 @@ Git 저장소(gamepatchkit.yml + 데이터 파일, 모두 커밋됨)
 ```
 
 세 명령은 각각 독립 실행되는 CLI 명령이며, `gpk build` 완료 후 `gpk upload`가 자동으로 이어지지는 않는다. 같은 데이터 루트를 다시 빌드하면 `gpk build`가 이전 `manifest.json`을 읽어 마지막 성공 커밋 이후의 변경만 반영하고, `gpk upload`도 마지막 업로드 성공 상태를 읽어 새로 생긴 산출물만 다시 올린다.
+
+## 관련 문서
+
+### 요구사항 (PRD)
+
+- [`gamepatch-kit-cli-prd.md`](prd/gamepatch-kit-cli-prd.md) — `gpk build`·`gpk verify`의 요구사항과 완료 조건
+- [`gamepatch-kit-cli-upload-prd.md`](prd/gamepatch-kit-cli-upload-prd.md) — `gpk upload`의 요구사항과 완료 조건
+- [`gamepatch-kit-distribution-prd.md`](prd/gamepatch-kit-distribution-prd.md) — 게시된 패치 데이터를 서버·클라이언트가 받는 방식. 아직 CLI 코드로 구현되지 않은 계획 단계 문서다.
+
+### 개발 계획 (설계 문서)
+
+- [`game-patch-kit-cli-design.md`](design/game-patch-kit-cli-design.md) — `gpk build`·`gpk verify` 구현 계획
+- [`game-patch-kit-cli-release-version-design.md`](design/game-patch-kit-cli-release-version-design.md) — 매니페스트 `releaseVersion` 필드 구현 계획
+- [`game-patch-kit-cli-upload-design.md`](design/game-patch-kit-cli-upload-design.md) — `gpk upload` 구현 계획
+
+### 명령 사용법
+
+- [`build.md`](cli/build.md) — `gpk build` 사용법
+- [`verify.md`](cli/verify.md) — `gpk verify` 사용법
+- [`upload.md`](cli/upload.md) — `gpk upload` 사용법
+- [`distribution.md`](cli/distribution.md) — CLI 설치와 NuGet 배포
