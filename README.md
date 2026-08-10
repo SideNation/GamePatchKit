@@ -1,6 +1,6 @@
 # GamePatchKit CLI
 
-Git이 추적하는 게임 데이터를 버전별 패치 아카이브와 파일 객체로 만들고, 배포 전 산출물의 무결성을 검사하는 .NET tool이다.
+Git이 추적하는 게임 데이터를 버전별 패치 아카이브와 파일 객체로 만들고, 산출물의 무결성을 검사하고, Supabase Storage에 게시하는 .NET tool이다.
 
 ## 설치
 
@@ -31,8 +31,20 @@ gpk build --source ./data --output ../patches
 gpk verify --output ../patches
 ```
 
+## 업로드
+
+빌드한 패치 데이터를 Supabase Storage 버킷에 올린다. 대상 버킷과 인증 정보는 환경 변수로 전달한다.
+
+```shell
+export GPK_SUPABASE_URL=https://<project-ref>.storage.supabase.co/storage/v1
+export GPK_SUPABASE_KEY=sb_secret_...
+export GPK_SUPABASE_BUCKET=<버킷 이름>
+gpk upload --output ../patches
+```
+
 자세한 내용은 다음 문서를 참고한다.
 
 - [설치와 배포](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/distribution.md)
 - [`gpk build`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/build.md)
 - [`gpk verify`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/verify.md)
+- [`gpk upload`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/upload.md)
