@@ -19,51 +19,58 @@
 
 ## 게시 측 전제
 
-이 문서는 아래를 전제하며, 셋 다 게시 측 PRD에 반영돼 있다.
+이 문서는 아래를 전제하며, 게시 측 PRD에 반영돼 있다.
 
 | 전제 | 위치 |
 | --- | --- |
 | 매니페스트 루트의 `releaseVersion`을 `gpk build`가 부여한다 | [gamepatch-kit-cli-prd.md](gamepatch-kit-cli-prd.md) 매니페스트, 완료 조건 23 |
-| `gpk upload`가 `manifests/<releaseVersion>.json`을 불변으로 게시한다 | [gamepatch-kit-cli-upload-prd.md](gamepatch-kit-cli-upload-prd.md) 업로드 순서, 완료 조건 14 |
+| `gpk upload`가 `manifests/<releaseVersion>.json`을 create-only로 게시하고 중복이면 같은 바이트만 재사용한다 | [gamepatch-kit-cli-upload-prd.md](gamepatch-kit-cli-upload-prd.md) 업로드 순서, 완료 조건 14 |
 | `gpk upload`가 게시한 릴리스 버전을 출력한다 | 같은 문서 업로드 요약, 완료 조건 15 |
+| 별도 private Git 저장소가 성공한 `manifest.json`과 `.gpk-upload-state.json`만 보존한다 | 같은 문서 상태 Git 저장소, 완료 조건 20 |
+| 지정된 수동 배포 환경 한 곳에서 게시를 동시에 실행하지 않고 실패 후 같은 `sourceCommit` SHA를 재실행한다 | 같은 문서 운영 전제, 완료 조건 21 |
 
 ## 요구사항
 
 ### 릴리스 버전
 
 - 0 이상의 단조 증가 정수다. 매니페스트 루트의 `releaseVersion`에 기록한다.
-- `gpk build`가 이전 매니페스트의 값 + 1로 정한다. 그룹 버전과 달리 사용자가 결정할 것이 없어 CLI가 올린다.
+- `releaseVersion`을 제외한 매니페스트 내용이 이전 성공 매니페스트와 다르면 `gpk build`가 이전 값보다 1 증가시킨다. 그룹 버전과 달리 사용자가 결정할 것이 없어 CLI가 정한다.
 - 새 매니페스트가 `releaseVersion`을 뺀 나머지에서 이전과 같으면 값을 유지한다. 아무것도 바꾸지 않고 다시 빌드하면 매니페스트가 이전과 같아야 한다는 기존 규칙을 깨지 않기 위해서다.
 - 매니페스트가 자기 버전을 담으므로 소비자는 파일 하나만 갖고도 자기가 어느 세대인지 안다.
 
 ### 매니페스트 게시
 
-- 각 세대는 `manifests/<releaseVersion>.json`에 게시하고 덮어쓰지 않는다. 다른 산출물과 같은 규칙이다.
+- 각 세대는 `manifests/<releaseVersion>.json`에 create-only로 게시한다. 경로가 이미 있으면 기존 원격 파일과 현재 매니페스트를 바이트 단위로 비교해 같을 때만 재사용하고, 다르면 기존 객체를 바꾸지 않은 채 버전 충돌로 중단한다.
+- 게시된 세대 경로는 절대 overwrite하지 않는다. 새 내용은 새 `releaseVersion` 경로에만 게시하므로 CDN 캐시 무효화나 overwrite 전파 시간에 의존하지 않는다.
 - 소비자는 이 경로만 읽는다. 받는 도중에 내용이 바뀌지 않고, 지난 세대를 그대로 다시 받을 수 있다.
+- 원격 루트 `manifest.json`은 게시하지 않는다. 현재 세대 선택은 Postgres 포인터, 업로드 델타 계산은 로컬 `.gpk-upload-state.json`이 각각 담당한다.
 
 ### 버전 포인터
 
 - 현재 릴리스 버전을 Postgres 테이블 한 줄에 둔다. 소비자가 감시하는 유일한 가변 값이다.
-- `gpk upload`가 성공한 뒤 CI가 갱신한다. CLI는 Postgres를 건드리지 않는다.
+- `gpk upload`와 두 상태 파일의 Git push가 성공한 뒤 지정된 수동 배포 스크립트가 갱신한다. CLI는 Postgres를 건드리지 않는다.
 - 롤백은 포인터에 이전 값을 쓰는 것이다. 산출물과 매니페스트가 불변이라 되돌릴 대상이 그대로 남아 있다.
 
 ### 게시 순서
 
-```
+```text
 1. 산출물 업로드
 2. manifests/<N>.json 업로드
-3. 포인터에 N 기록          ← 마지막
+3. manifest.json과 .gpk-upload-state.json을 상태 Git 저장소에 한 commit으로 push
+4. 포인터에 N 기록          ← 마지막
 ```
 
 **포인터가 N이면 `manifests/<N>.json`과 그것이 참조하는 모든 산출물이 이미 올라가 있다.** 이 성질이 소비 측 전체의 전제다. 중간에 실패하면 포인터는 이전 값을 가리킨 채 남고 소비자는 아무 영향을 받지 않는다.
 
+첫 Storage 호출 뒤 게시가 실패하면 배포 스크립트가 미리 기록한 `manifest.json.sourceCommit`의 정확한 SHA를 checkout해 같은 CLI·압축 구현 버전으로 다시 빌드하고 게시한다. 이 게시가 상태 Git push와 포인터 갱신까지 끝나기 전에는 더 새로운 SHA를 게시하지 않는다. CLI에 별도 commit 재빌드 옵션은 두지 않는다.
+
 ### 산출물 주소
 
-```
+```text
 https://<project>.supabase.co/storage/v1/object/public/<bucket>/<매니페스트의 name>
 ```
 
-매니페스트의 `name`이 이미 `/` 구분자의 상대 경로이므로 그대로 이어 붙인다. 소비자가 알아야 하는 것은 URL prefix 하나뿐이다.
+업로더가 버킷 이름과 모든 `name`을 ASCII 영문 대소문자·숫자·`.`·`_`·`-`, 그리고 객체 경로의 `/` 구분자만 쓰도록 선검증하므로 URL prefix에 그대로 이어 붙인다. 공백, 비 ASCII 문자와 URL 예약문자는 게시 전에 거부되어 소비 측 URI escaping 규칙을 별도로 두지 않는다. 소비자가 알아야 하는 것은 URL prefix 하나뿐이다.
 
 ### 서버
 
@@ -103,6 +110,7 @@ https://<project>.supabase.co/storage/v1/object/public/<bucket>/<매니페스트
 8. 서버가 세대를 교체하는 동안 처리 중이던 요청이 한 세대의 데이터만 본다.
 9. 소비자가 아카이브를 `offset`·`length`로 잘라낸 결과가 원본 파일과 바이트 단위로 같다.
 10. 매니페스트만 갖고도 그것이 어느 릴리스 버전인지 알 수 있다.
+11. 게시된 모든 산출물 `name`은 안전한 ASCII 원격 경로 규칙을 만족해 URL prefix에 그대로 붙여 같은 객체를 받을 수 있다.
 
 ## 제외 범위
 
@@ -115,3 +123,4 @@ https://<project>.supabase.co/storage/v1/object/public/<bucket>/<매니페스트
 - 서명 URL, 접근 제어, 버킷 비공개 전환 — 게임 데이터가 공개돼도 되므로 공개 버킷을 쓴다
 - 채널, A/B, 점진 배포
 - 서버 구현 프레임워크와 Unity 통합 방식
+- 실제 산출물의 별도 object storage 백업 — 상태 Git 저장소는 두 상태 파일만 보존하며 산출물 백업은 별도 범위다
