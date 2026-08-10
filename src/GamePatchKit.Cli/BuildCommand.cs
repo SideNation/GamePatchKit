@@ -91,16 +91,45 @@ internal sealed class BuildCommand
             groupSummaries.Add(result.Summary);
         }
 
+        var candidateManifest = new PatchManifest
+        {
+            SchemaVersion = PatchManifest.CURRENT_SCHEMA_VERSION,
+            SourcePath = repository.SourcePath,
+            SourceCommit = currentCommit,
+            Groups = manifestGroups
+        };
+        int releaseVersion = ResolveReleaseVersion(previousManifest, candidateManifest);
         ManifestStore.WriteAtomically(
             outputPath,
             new PatchManifest
             {
-                SchemaVersion = PatchManifest.CURRENT_SCHEMA_VERSION,
-                SourcePath = repository.SourcePath,
-                SourceCommit = currentCommit,
-                Groups = manifestGroups
+                SchemaVersion = candidateManifest.SchemaVersion,
+                ReleaseVersion = releaseVersion,
+                SourcePath = candidateManifest.SourcePath,
+                SourceCommit = candidateManifest.SourceCommit,
+                Groups = candidateManifest.Groups
             });
         return new BuildSummary(groupSummaries, fileRevisionAdjustments);
+    }
+
+    private static int ResolveReleaseVersion(PatchManifest? previousManifest, PatchManifest candidateManifest)
+    {
+        if (previousManifest is null)
+        {
+            return 0;
+        }
+
+        if (ManifestStore.HasSameReleaseContent(previousManifest, candidateManifest))
+        {
+            return previousManifest.ReleaseVersion;
+        }
+
+        if (previousManifest.ReleaseVersion == int.MaxValue)
+        {
+            throw new BuildException("releaseVersion을 더 늘릴 수 없습니다.");
+        }
+
+        return previousManifest.ReleaseVersion + 1;
     }
 
     private static (ManifestGroup Manifest, GroupBuildSummary Summary) BuildArchiveGroup(

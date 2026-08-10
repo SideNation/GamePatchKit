@@ -15,6 +15,15 @@ gpk build --source <데이터 루트> --output <패치 데이터 폴더>
 - source 아래의 추적 파일과 추적 중인 `gamepatchkit.yml`만 빌드 입력으로 사용한다.
 - source 아래의 추적 파일에 커밋되지 않은 변경이 있으면 빌드를 중단한다. untracked 파일과 source 바깥 변경은 무시한다.
 
+## releaseVersion
+
+`manifest.json` 루트의 `releaseVersion`은 매니페스트 전체의 세대를 가리키는 0 이상의 정수다. 그룹 버전과 달리 사용자가 yaml이나 옵션으로 정하지 않고 CLI가 계산한다.
+
+- 이전 매니페스트가 없는 첫 빌드는 `releaseVersion: 0`을 쓴다.
+- `releaseVersion`을 제외한 매니페스트 내용이 이전 성공 매니페스트와 같으면 이전 값을 그대로 쓴다. 아무것도 바꾸지 않고 다시 빌드해도 매니페스트 바이트가 이전과 같다.
+- 내용이 다르면 이전 값보다 1 증가시킨다. `sourceCommit`만 바뀐 경우도 내용 변경으로 본다.
+- 증가시켜야 하는데 이전 값이 `int.MaxValue`이면 빌드를 중단하고 기존 `manifest.json`을 바꾸지 않는다.
+
 ## 성공 출력
 
 성공하면 그룹별 요약과 전체 합계를 출력한다.

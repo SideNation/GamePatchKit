@@ -8,6 +8,7 @@ namespace GamePatchKit.Cli;
 internal static class ManifestStore
 {
     private const string ManifestFileName = "manifest.json";
+    private const string UploadStateFileName = ".gpk-upload-state.json";
     private const int ChecksumLength = 64;
     private static readonly Encoding _utf8WithoutBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
     private static readonly JsonSerializerSettings _serializerSettings = new()
@@ -20,13 +21,88 @@ internal static class ManifestStore
     public static PatchManifest? ReadPrevious(string outputPath)
     {
         string manifestPath = Path.Combine(outputPath, ManifestFileName);
+        return ReadManifestFile(manifestPath, "이전 매니페스트가 올바르지 않습니다.");
+    }
 
+    public static PatchManifest? ReadUploadState(string outputPath)
+    {
+        string statePath = Path.Combine(outputPath, UploadStateFileName);
+
+        try
+        {
+            return ReadManifestFile(statePath, "업로드 상태가 올바르지 않습니다.");
+        }
+        catch (BuildException)
+        {
+            return null;
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    public static void WriteAtomically(string outputPath, PatchManifest manifest)
+    {
+        const string errorPrefix = "매니페스트가 올바르지 않습니다.";
+        Validate(manifest, errorPrefix, rawRoot: null);
+        byte[] bytes = SerializeSorted(manifest);
+        Directory.CreateDirectory(outputPath);
+        string manifestPath = Path.Combine(outputPath, ManifestFileName);
+        string temporaryPath = Path.Combine(outputPath, $".{ManifestFileName}.{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            File.WriteAllBytes(temporaryPath, bytes);
+            File.Move(temporaryPath, manifestPath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+    }
+
+    public static void WriteUploadStateAtomically(string outputPath)
+    {
+        string manifestPath = Path.Combine(outputPath, ManifestFileName);
+        byte[] bytes = File.ReadAllBytes(manifestPath);
+        string statePath = Path.Combine(outputPath, UploadStateFileName);
+        string temporaryPath = Path.Combine(outputPath, $".{UploadStateFileName}.{Guid.NewGuid():N}.tmp");
+
+        try
+        {
+            File.WriteAllBytes(temporaryPath, bytes);
+            File.Move(temporaryPath, statePath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+    }
+
+    internal static bool HasSameReleaseContent(PatchManifest left, PatchManifest right)
+    {
+        byte[] leftBytes = SerializeForComparison(left);
+        byte[] rightBytes = SerializeForComparison(right);
+        return leftBytes.AsSpan().SequenceEqual(rightBytes);
+    }
+
+    private static PatchManifest? ReadManifestFile(string manifestPath, string errorPrefix)
+    {
         if (!File.Exists(manifestPath))
         {
             return null;
         }
-
-        const string errorPrefix = "이전 매니페스트가 올바르지 않습니다.";
 
         try
         {
@@ -57,36 +133,16 @@ internal static class ManifestStore
         }
     }
 
-    public static void WriteAtomically(string outputPath, PatchManifest manifest)
-    {
-        const string errorPrefix = "매니페스트가 올바르지 않습니다.";
-        Validate(manifest, errorPrefix, rawRoot: null);
-        PatchManifest sortedManifest = Sort(manifest);
-        string json = JsonConvert.SerializeObject(sortedManifest, Formatting.None, _serializerSettings);
-        byte[] bytes = _utf8WithoutBom.GetBytes(json);
-        Directory.CreateDirectory(outputPath);
-        string manifestPath = Path.Combine(outputPath, ManifestFileName);
-        string temporaryPath = Path.Combine(outputPath, $".{ManifestFileName}.{Guid.NewGuid():N}.tmp");
-
-        try
-        {
-            File.WriteAllBytes(temporaryPath, bytes);
-            File.Move(temporaryPath, manifestPath, overwrite: true);
-        }
-        finally
-        {
-            if (File.Exists(temporaryPath))
-            {
-                File.Delete(temporaryPath);
-            }
-        }
-    }
-
     private static void Validate(PatchManifest manifest, string errorPrefix, JObject? rawRoot)
     {
         if (manifest.SchemaVersion != PatchManifest.CURRENT_SCHEMA_VERSION)
         {
             throw Invalid(errorPrefix, "schemaVersion", $"지원 값은 {PatchManifest.CURRENT_SCHEMA_VERSION}입니다.");
+        }
+
+        if (manifest.ReleaseVersion < 0)
+        {
+            throw Invalid(errorPrefix, "releaseVersion", "0 이상이어야 합니다.");
         }
 
         if (!RelativePathValidator.IsNormalized(manifest.SourcePath, allowRepositoryRoot: true))
@@ -433,6 +489,7 @@ internal static class ManifestStore
         return new PatchManifest
         {
             SchemaVersion = manifest.SchemaVersion,
+            ReleaseVersion = manifest.ReleaseVersion,
             SourcePath = manifest.SourcePath,
             SourceCommit = manifest.SourceCommit,
             Groups = manifest.Groups
@@ -449,6 +506,26 @@ internal static class ManifestStore
                     })
                 .ToArray()
         };
+    }
+
+    private static byte[] SerializeSorted(PatchManifest manifest)
+    {
+        PatchManifest sortedManifest = Sort(manifest);
+        string json = JsonConvert.SerializeObject(sortedManifest, Formatting.None, _serializerSettings);
+        return _utf8WithoutBom.GetBytes(json);
+    }
+
+    private static byte[] SerializeForComparison(PatchManifest manifest)
+    {
+        var normalizedManifest = new PatchManifest
+        {
+            SchemaVersion = manifest.SchemaVersion,
+            ReleaseVersion = 0,
+            SourcePath = manifest.SourcePath,
+            SourceCommit = manifest.SourceCommit,
+            Groups = manifest.Groups
+        };
+        return SerializeSorted(normalizedManifest);
     }
 
     private static BuildException Invalid(string prefix, string path, string reason)

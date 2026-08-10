@@ -2,6 +2,8 @@ using Newtonsoft.Json;
 
 namespace GamePatchKit.Cli;
 
+internal sealed record ManifestArtifact(string Name, long StoredSize, string Checksum);
+
 [JsonObject(MemberSerialization.OptIn)]
 internal sealed class PatchManifest
 {
@@ -10,14 +12,36 @@ internal sealed class PatchManifest
     [JsonProperty("schemaVersion", Required = Required.Always, Order = 0)]
     public int SchemaVersion { get; init; } = CURRENT_SCHEMA_VERSION;
 
-    [JsonProperty("sourcePath", Required = Required.Always, Order = 1)]
+    [JsonProperty("releaseVersion", Required = Required.Always, Order = 1)]
+    public int ReleaseVersion { get; init; }
+
+    [JsonProperty("sourcePath", Required = Required.Always, Order = 2)]
     public string SourcePath { get; init; } = null!;
 
-    [JsonProperty("sourceCommit", Required = Required.Always, Order = 2)]
+    [JsonProperty("sourceCommit", Required = Required.Always, Order = 3)]
     public string SourceCommit { get; init; } = null!;
 
-    [JsonProperty("groups", Required = Required.Always, Order = 3)]
+    [JsonProperty("groups", Required = Required.Always, Order = 4)]
     public IReadOnlyList<ManifestGroup> Groups { get; init; } = null!;
+
+    public IEnumerable<ManifestArtifact> EnumerateArtifacts()
+    {
+        foreach (ManifestGroup group in Groups)
+        {
+            if (group.Archive is not null)
+            {
+                yield return new ManifestArtifact(group.Archive.Name, group.Archive.StoredSize, group.Archive.Checksum);
+            }
+
+            foreach (ManifestEntry entry in group.Entries)
+            {
+                if (entry.Source == EntrySource.File)
+                {
+                    yield return new ManifestArtifact(entry.Name!, entry.StoredSize!.Value, entry.Checksum!);
+                }
+            }
+        }
+    }
 }
 
 [JsonObject(MemberSerialization.OptIn)]

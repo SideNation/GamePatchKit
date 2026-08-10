@@ -8,7 +8,7 @@ public sealed class TestVerifyCommand
     private readonly VerifyCommand _sut = new();
 
     [Fact]
-    public void Execute_IntactOutputOutsideGitWithoutConfiguration_IgnoresUnreferencedFileAndSucceedsWithoutChanges()
+    public async Task Execute_IntactOutputOutsideGitWithoutConfiguration_IgnoresUnreferencedFileAndSucceedsWithoutChanges()
     {
         using var environment = new VerifyTestEnvironment();
         string unreferencedPath = Path.Combine(environment.OutputPath, "unreferenced.bin");
@@ -21,7 +21,7 @@ public sealed class TestVerifyCommand
         using var error = new StringWriter();
 
         IReadOnlyList<ArtifactMismatch> mismatches = _sut.Execute(new VerifyArguments(environment.OutputPath));
-        int exitCode = Program.Run(
+        int exitCode = await Program.RunAsync(
             new[] { "verify", "--output", environment.OutputPath },
             standardOutput,
             error);
@@ -75,7 +75,7 @@ public sealed class TestVerifyCommand
     }
 
     [Fact]
-    public void Run_MultipleMismatches_WritesEveryMismatchAndReturnsNonZeroExitCode()
+    public async Task Run_MultipleMismatches_WritesEveryMismatchAndReturnsNonZeroExitCode()
     {
         using var environment = new VerifyTestEnvironment();
         environment.Damage(VerifyTestEnvironment.ARCHIVE_NAME, "missing");
@@ -83,7 +83,7 @@ public sealed class TestVerifyCommand
         using var standardOutput = new StringWriter();
         using var error = new StringWriter();
 
-        int exitCode = Program.Run(
+        int exitCode = await Program.RunAsync(
             new[] { "verify", "--output", environment.OutputPath },
             standardOutput,
             error);

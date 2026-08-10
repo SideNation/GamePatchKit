@@ -14,7 +14,7 @@ public sealed class TestManifestStore
 
         try
         {
-            ManifestStore.WriteAtomically(outputPath, CreateValidManifest(reverseOrder: true));
+            ManifestStore.WriteAtomically(outputPath, CreateValidManifest(reverseOrder: true, releaseVersion: 5));
 
             string manifestPath = Path.Combine(outputPath, "manifest.json");
             byte[] bytes = File.ReadAllBytes(manifestPath);
@@ -26,10 +26,11 @@ public sealed class TestManifestStore
             Assert.DoesNotContain('\n', json);
             Assert.NotEqual((byte)'\r', bytes[^1]);
             Assert.NotEqual((byte)'\n', bytes[^1]);
-            Assert.Contains("\"schemaVersion\":1", json, StringComparison.Ordinal);
+            Assert.StartsWith("{\"schemaVersion\":1,\"releaseVersion\":5,", json, StringComparison.Ordinal);
             Assert.Contains("\"packing\":\"group\"", json, StringComparison.Ordinal);
             Assert.Contains("\"compression\":\"zstd\"", json, StringComparison.Ordinal);
             Assert.Contains("\"source\":\"archive\"", json, StringComparison.Ordinal);
+            Assert.Equal(5, result.ReleaseVersion);
             Assert.Equal("data", result.SourcePath);
             Assert.Equal("group-a", result.Groups[0].Id);
             Assert.Equal("a.bin", result.Groups[0].Entries[0].Path);
@@ -82,10 +83,70 @@ public sealed class TestManifestStore
     }
 
     [Fact]
+    public void ReadUploadState_StateFileIsMissing_ReturnsNull()
+    {
+        string outputPath = CreateOutputPath();
+
+        try
+        {
+            Assert.Null(ManifestStore.ReadUploadState(outputPath));
+        }
+        finally
+        {
+            Directory.Delete(outputPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ReadUploadState_StateFileIsLocked_ReturnsNullInsteadOfThrowing()
+    {
+        string outputPath = CreateOutputPath();
+        string statePath = Path.Combine(outputPath, ".gpk-upload-state.json");
+        File.WriteAllText(statePath, "{}");
+
+        try
+        {
+            using (new FileStream(statePath, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                Assert.Null(ManifestStore.ReadUploadState(outputPath));
+            }
+        }
+        finally
+        {
+            Directory.Delete(outputPath, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void WriteUploadStateAtomically_CopiesCurrentManifestBytesAndReadUploadStateReturnsEquivalentManifest()
+    {
+        string outputPath = CreateOutputPath();
+
+        try
+        {
+            ManifestStore.WriteAtomically(outputPath, CreateValidManifest(reverseOrder: false, releaseVersion: 3));
+            byte[] manifestBytes = File.ReadAllBytes(Path.Combine(outputPath, "manifest.json"));
+
+            ManifestStore.WriteUploadStateAtomically(outputPath);
+
+            byte[] stateBytes = File.ReadAllBytes(Path.Combine(outputPath, ".gpk-upload-state.json"));
+            PatchManifest? state = ManifestStore.ReadUploadState(outputPath);
+            Assert.Equal(manifestBytes, stateBytes);
+            Assert.NotNull(state);
+            Assert.Equal(3, state.ReleaseVersion);
+        }
+        finally
+        {
+            Directory.Delete(outputPath, recursive: true);
+        }
+    }
+
+    [Fact]
     public void ReadPrevious_SchemaOrRequiredFieldIsInvalid_ThrowsWithoutChangingManifest()
     {
         AssertInvalid(root => root["schemaVersion"] = 2, "schemaVersion");
         AssertInvalid(root => root.Remove("sourceCommit"), "sourceCommit");
+        AssertInvalid(root => root.Remove("releaseVersion"), "releaseVersion");
     }
 
     [Fact]
@@ -128,6 +189,47 @@ public sealed class TestManifestStore
         AssertInvalid(root => GetArchive(root, 0)["checksum"] = new string('A', 64), "archive.checksum");
         AssertInvalid(root => GetEntry(root, 1, 0)["storedSize"] = -1, "entries[0].storedSize");
         AssertInvalid(root => GetEntry(root, 0, 0)["size"] = -1, "entries[0].size");
+        AssertInvalid(root => root["releaseVersion"] = -1, "releaseVersion");
+    }
+
+    [Fact]
+    public void HasSameReleaseContent_OnlyReleaseVersionDiffers_ReturnsTrue()
+    {
+        PatchManifest left = CreateValidManifest(reverseOrder: false, releaseVersion: 0);
+        PatchManifest right = CreateValidManifest(reverseOrder: false, releaseVersion: 7);
+
+        Assert.True(ManifestStore.HasSameReleaseContent(left, right));
+    }
+
+    [Fact]
+    public void HasSameReleaseContent_GroupOrEntryOrderDiffers_ReturnsTrue()
+    {
+        PatchManifest left = CreateValidManifest(reverseOrder: false);
+        PatchManifest right = CreateValidManifest(reverseOrder: true);
+
+        Assert.True(ManifestStore.HasSameReleaseContent(left, right));
+    }
+
+    [Theory]
+    [InlineData("sourcePath")]
+    [InlineData("sourceCommit")]
+    [InlineData("groupSetting")]
+    [InlineData("archive")]
+    [InlineData("entry")]
+    public void HasSameReleaseContent_ContentFieldDiffers_ReturnsFalse(string field)
+    {
+        PatchManifest left = CreateValidManifest(reverseOrder: false);
+        PatchManifest right = field switch
+        {
+            "sourcePath" => CreateValidManifest(reverseOrder: false, sourcePath: "other-data"),
+            "sourceCommit" => CreateValidManifest(reverseOrder: false, sourceCommit: "def456"),
+            "groupSetting" => CreateValidManifest(reverseOrder: false, groupACompression: CompressionKind.None),
+            "archive" => CreateValidManifest(reverseOrder: false, archiveChecksum: new string('c', 64)),
+            "entry" => CreateValidManifest(reverseOrder: false, fileEntryChecksum: new string('d', 64)),
+            _ => throw new InvalidOperationException()
+        };
+
+        Assert.False(ManifestStore.HasSameReleaseContent(left, right));
     }
 
     [Fact]
@@ -162,8 +264,17 @@ public sealed class TestManifestStore
         }
     }
 
-    private static PatchManifest CreateValidManifest(bool reverseOrder)
+    private static PatchManifest CreateValidManifest(
+        bool reverseOrder,
+        int releaseVersion = 0,
+        string sourcePath = "data",
+        string sourceCommit = "abc123",
+        CompressionKind groupACompression = CompressionKind.Zstd,
+        string? archiveChecksum = null,
+        string? fileEntryChecksum = null)
     {
+        archiveChecksum ??= new string('a', 64);
+        fileEntryChecksum ??= new string('b', 64);
         var archiveEntries = new[]
         {
             new ManifestEntry
@@ -190,13 +301,13 @@ public sealed class TestManifestStore
             Id = "group-a",
             Version = 1,
             Packing = PackingKind.Group,
-            Compression = CompressionKind.Zstd,
+            Compression = groupACompression,
             Archive = new ManifestArchive
             {
                 Name = "archives/group-a/1.gpka",
                 PayloadSize = 30,
                 StoredSize = 18,
-                Checksum = new string('a', 64)
+                Checksum = archiveChecksum
             },
             Entries = reverseOrder ? archiveEntries.Reverse().ToArray() : archiveEntries
         };
@@ -216,7 +327,7 @@ public sealed class TestManifestStore
                     Source = EntrySource.File,
                     Name = "files/group-b/2/file.txt.v2.3",
                     StoredSize = 12,
-                    Checksum = new string('b', 64)
+                    Checksum = fileEntryChecksum
                 }
             }
         };
@@ -225,8 +336,9 @@ public sealed class TestManifestStore
         return new PatchManifest
         {
             SchemaVersion = 1,
-            SourcePath = "data",
-            SourceCommit = "abc123",
+            ReleaseVersion = releaseVersion,
+            SourcePath = sourcePath,
+            SourceCommit = sourceCommit,
             Groups = groups
         };
     }

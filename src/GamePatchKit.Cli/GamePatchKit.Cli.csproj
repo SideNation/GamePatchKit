@@ -19,6 +19,7 @@
     <PackageReference Include="NativeCompressions.Zstandard.Runtime.osx-arm64" />
     <PackageReference Include="Newtonsoft.Json" />
     <PackageReference Include="YamlDotNet" />
+    <PackageReference Include="Supabase.Storage" />
   </ItemGroup>
 
   <ItemGroup>

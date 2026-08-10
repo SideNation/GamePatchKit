@@ -10,30 +10,9 @@ internal sealed class VerifyCommand
             ?? throw new BuildException("manifest.json이 없습니다.");
         var mismatches = new List<ArtifactMismatch>();
 
-        foreach (ManifestGroup group in manifest.Groups)
+        foreach (ManifestArtifact artifact in manifest.EnumerateArtifacts())
         {
-            if (group.Archive is not null)
-            {
-                VerifyArtifact(
-                    arguments.OutputPath,
-                    group.Archive.Name,
-                    group.Archive.StoredSize,
-                    group.Archive.Checksum,
-                    mismatches);
-            }
-
-            foreach (ManifestEntry entry in group.Entries)
-            {
-                if (entry.Source == EntrySource.File)
-                {
-                    VerifyArtifact(
-                        arguments.OutputPath,
-                        entry.Name!,
-                        entry.StoredSize!.Value,
-                        entry.Checksum!,
-                        mismatches);
-                }
-            }
+            VerifyArtifact(arguments.OutputPath, artifact.Name, artifact.StoredSize, artifact.Checksum, mismatches);
         }
 
         return mismatches;

@@ -2,18 +2,18 @@ namespace GamePatchKit.Cli;
 
 public static class Program
 {
-    public static int Main(string[] arguments)
+    public static async Task<int> Main(string[] arguments)
     {
-        return Run(arguments, Console.Out, Console.Error);
+        return await RunAsync(arguments, Console.Out, Console.Error);
     }
 
-    internal static int Run(string[] arguments, TextWriter output, TextWriter error)
+    internal static async Task<int> RunAsync(string[] arguments, TextWriter output, TextWriter error)
     {
         try
         {
             if (arguments.Length == 0)
             {
-                throw new BuildException("명령을 지정해야 합니다. build 또는 verify를 사용하세요.");
+                throw new BuildException("명령을 지정해야 합니다. build, verify 또는 upload를 사용하세요.");
             }
 
             string command = arguments[0];
@@ -39,6 +39,14 @@ public static class Program
                         return 1;
                     }
 
+                    break;
+                case "upload":
+                    UploadArguments uploadArguments = ArgumentsParser.ParseUpload(commandArguments);
+                    UploadSettings uploadSettings = UploadSettingsResolver.Resolve(uploadArguments.EnvFilePath);
+                    var storage = new SupabaseUploadStorage(uploadSettings);
+                    var uploadCommand = new UploadCommand(storage, uploadSettings.Bucket);
+                    UploadSummary uploadSummary = await uploadCommand.ExecuteAsync(uploadArguments.OutputPath);
+                    WriteUploadSummary(output, uploadSummary);
                     break;
                 default:
                     throw new BuildException($"알 수 없는 명령입니다: {command}");
@@ -88,5 +96,13 @@ public static class Program
             output.Write($"  group='{adjustment.GroupId}', path='{adjustment.Path}', ");
             output.WriteLine($"requested={adjustment.RequestedVersion}, actual={adjustment.ActualVersion}");
         }
+    }
+
+    private static void WriteUploadSummary(TextWriter output, UploadSummary summary)
+    {
+        output.WriteLine(
+            $"업로드 산출물: uploaded={summary.UploadedCount}, uploadedBytes={summary.UploadedBytes}, "
+            + $"skipped={summary.SkippedCount}");
+        output.WriteLine($"세대 매니페스트: releaseVersion={summary.ReleaseVersion}");
     }
 }
