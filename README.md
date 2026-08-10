@@ -12,6 +12,8 @@ dotnet tool install --global GamePatchKit.Cli
 
 설치 후 명령 이름은 `gpk`다.
 
+.NET 런타임 없이 실행하려면 [GitHub Releases](https://github.com/SideNation/GamePatchKit/releases)에서 플랫폼별 self-contained 아카이브를 내려받는다.
+
 ## 빌드
 
 Git 저장소의 데이터 루트에 `gamepatchkit.yml`을 만든다.

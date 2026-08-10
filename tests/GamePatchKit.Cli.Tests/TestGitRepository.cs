@@ -80,6 +80,11 @@ public sealed class TestGitRepository
     [Fact]
     public void GetTrackedPaths_SourceContainsPathspecMagic_UsesLiteralSourcePath()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
         using var testRepository = new GitTestRepository();
         testRepository.WriteFile("data*/inside.txt", "inside");
         testRepository.WriteFile("data-other/outside.txt", "outside");
@@ -165,7 +170,16 @@ internal sealed class GitTestRepository : IDisposable
 
     public void Dispose()
     {
+        ClearReadOnlyAttributes(_testPath);
         Directory.Delete(_testPath, recursive: true);
+    }
+
+    private static void ClearReadOnlyAttributes(string path)
+    {
+        foreach (string file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
+        {
+            File.SetAttributes(file, FileAttributes.Normal);
+        }
     }
 
     public string GetExternalPath(string relativePath)

@@ -101,11 +101,49 @@ jobs:
           TOOL_COMMAND: ${{ steps.install.outputs.tool-command }}
         run: bash .github/scripts/smoke-test.sh "$TOOL_COMMAND" .gpk-smoke
 
+      - name: Publish and test standalone executable
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ needs.version.outputs.package-version }}
+          RID: ${{ matrix.rid }}
+        run: |
+          publish_dir=.gpk-standalone/publish
+          asset_dir=.gpk-standalone/assets
+          executable=gpk
+
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            executable=gpk.exe
+          fi
+
+          dotnet publish src/GamePatchKit.Cli/GamePatchKit.Cli.csproj \
+            --configuration Release \
+            --runtime "$RID" \
+            --self-contained true \
+            --output "$publish_dir" \
+            "-p:Version=$PACKAGE_VERSION" \
+            -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:DebugType=None \
+            -p:DebugSymbols=false
+
+          bash .github/scripts/smoke-test.sh "$publish_dir/$executable" .gpk-standalone/smoke
+
+          mkdir -p "$asset_dir"
+          tar -czf "$asset_dir/GamePatchKit.Cli-$PACKAGE_VERSION-$RID.tar.gz" \
+            -C "$publish_dir" "$executable"
+
       - name: Upload smoke result
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: smoke-${{ matrix.rid }}
           path: .gpk-smoke/output
+          if-no-files-found: error
+
+      - name: Upload standalone release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: standalone-${{ matrix.rid }}
+          path: .gpk-standalone/assets/*.tar.gz
           if-no-files-found: error
 
   compare:
@@ -128,6 +166,8 @@ jobs:
     if: github.event_name == 'release'
     needs: [version, test, compare]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -144,8 +184,22 @@ jobs:
           PACKAGE_VERSION: ${{ needs.version.outputs.package-version }}
         run: dotnet pack src/GamePatchKit.Cli/GamePatchKit.Cli.csproj --configuration Release --no-restore --output artifacts "-p:PackageVersion=$PACKAGE_VERSION"
 
+      - name: Download standalone release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: standalone-*
+          path: release-assets
+          merge-multiple: true
+
       - name: Publish to nuget.org
         shell: bash
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: dotnet nuget push "artifacts/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+
+      - name: Upload packages to GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" artifacts/*.nupkg release-assets/*.tar.gz
