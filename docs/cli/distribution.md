@@ -44,11 +44,15 @@ dotnet tool install GamePatchKit.Cli --tool-path <임시 tool 폴더> --add-sour
 
 각 환경의 테스트는 zstd 산출물을 원본으로 해제해 확인한다. smoke build 결과는 별도 job에서 매니페스트와 아카이브 SHA-256을 비교한다.
 
-## NuGet 게시
+## NuGet 및 GitHub Release 게시
 
-저장소 secret `NUGET_API_KEY`를 등록하고 `v<NuGet version>` 형식의 GitHub Release를 게시한다. 예를 들어 `v1.2.3` Release는 `GamePatchKit.Cli` 버전 `1.2.3`을 만든다.
+저장소 secret `NUGET_API_KEY`를 등록한다. `main`에 merge하거나 직접 push하면 `Directory.Build.props`의 `<Version>`을 NuGet 버전으로 사용하고 `v<Version>` 태그의 GitHub Release를 자동 생성한다. 예를 들어 `<Version>1.2.3</Version>`인 commit은 `GamePatchKit.Cli` 버전 `1.2.3`과 `v1.2.3` Release를 만든다.
 
-세 환경 검증과 결과 비교가 모두 성공한 경우에만 패키지를 다시 만들고 nuget.org에 게시한다. 같은 버전이 이미 있으면 `--skip-duplicate`로 건너뛴다.
+`v<NuGet version>` 형식의 tag를 직접 push해도 게시한다. 이 경로에서는 `Directory.Build.props`보다 tag가 우선하며, 예를 들어 `v0.1.6` tag는 패키지와 standalone 자산을 버전 `0.1.6`으로 만들어 nuget.org에 게시하고 기존 tag를 사용하는 `v0.1.6` GitHub Release를 생성한다. `v`로 시작하지 않는 tag push는 이 workflow의 실행 대상이 아니다.
+
+main 자동 게시 경로의 Release 대상 변경은 merge 전에 `<Version>`을 아직 게시하지 않은 값으로 올려야 한다. publish job은 한 번에 하나만 실행하며, main 경로에서는 원격에 같은 tag가 있으면 NuGet 게시 전에 중단한다. version tag 경로에서는 push된 기존 tag를 그대로 검증해 Release에 사용한다.
+
+세 환경 검증과 결과 비교가 모두 성공한 경우에만 패키지를 다시 만들어 nuget.org에 게시한 뒤 GitHub Release를 생성한다. NuGet 게시까지 성공하고 Release 생성만 실패한 실행을 재개할 수 있도록 같은 NuGet 버전은 `--skip-duplicate`로 건너뛴다.
 
 같은 GitHub Release에는 `.nupkg`와 세 플랫폼의 검증된 standalone 아카이브를 asset으로 첨부한다. Release asset을 쓰기 위해 publish job에 `contents: write` 권한을 부여하며, 인증에는 해당 job의 `GITHUB_TOKEN`만 사용한다.
 
