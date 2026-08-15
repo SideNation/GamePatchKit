@@ -157,7 +157,58 @@ Storage 요청이 실패했습니다. stage=artifact-upsert, remotePath=files/gr
 - 같은 `--output`을 사용하는 `build`·`verify`·`upload`는 동시에 실행하지 않는다. CLI는 락이나 동시성 제어를 넣지 않으므로, 지정된 수동 배포 환경 한 곳이 전체 흐름을 직렬화해야 한다.
 - 원격 객체를 다른 프로그램이 수정하거나 삭제하지 않는다는 전제를 사용한다.
 
-이 배포 스크립트와 상태 저장소 자체는 `gpk upload` 구현 범위 밖이며, 별도의 코드 관리 배포 스크립트 작업으로 완료해야 한다.
+이 배포 스크립트와 상태 저장소 자체는 `gpk upload` 구현 범위 밖이며, 별도의 코드 관리 배포 스크립트 작업으로 완료해야 한다. 아래 절차는 위 전제를 그대로 구현한 예이며 CLI가 강제하거나 검사하지 않는다.
+
+### 상태 저장소 설정
+
+최초 1회만 수행한다. `--output` 폴더 자체를 상태 저장소로 만든다.
+
+```shell
+cd <패치 데이터 폴더>
+git init -b main
+git remote add origin <private 저장소 주소>
+printf '/archives/\n/files/\n.*.tmp\n' > .gitignore
+git add .gitignore
+git commit -m "chore: 상태 저장소 초기화"
+git push -u origin main
+```
+
+- `--output`은 source가 속한 Git 저장소 바깥이어야 하므로 원본 저장소와 상태 저장소는 항상 분리된다.
+- 추적 대상은 `manifest.json`, `.gpk-upload-state.json`, `.gitignore`뿐이다. 산출물은 `.gitignore`가 제외한다.
+- `.*.tmp`는 `ManifestStore`가 원자적 교체에 쓰는 임시 파일이다. 정상 종료에서는 남지 않지만 프로세스가 강제 종료되면 남을 수 있다.
+- `gpk`는 Git 원격을 설정하거나 호출하지 않는다. 상태 저장소의 주소를 CLI에 알려주는 설정 값은 없다.
+
+### 배포 1회 절차
+
+```shell
+git -C <패치 데이터 폴더> pull --ff-only          # 1. 두 상태 파일 복원(첫 배포 제외)
+
+gpk build  --source <데이터 루트> --output <패치 데이터 폴더>   # 2.
+gpk verify --output <패치 데이터 폴더>
+gpk upload --output <패치 데이터 폴더> --env-file <env 파일>
+
+cd <패치 데이터 폴더>                              # 3. 두 파일을 한 commit으로
+git add manifest.json .gpk-upload-state.json
+git commit -m "release: releaseVersion <N>"
+git push
+```
+
+4단계로 Postgres 버전 포인터에 `N`을 기록한다. 이 순서를 지켜야 "포인터가 `N`이면 그 세대가 전부 게시돼 있다"는 소비 측 전제가 성립한다. 자세한 내용은 [배포 PRD의 버전 포인터](../prd/gamepatch-kit-distribution-prd.md)를 따른다.
+
+### 산출물은 상태 저장소에서 복원되지 않는다
+
+상태 저장소는 두 상태 파일만 추적하므로, 산출물이 없는 빈 `--output`에 두 파일만 복원하면 증분 빌드가 실패한다.
+
+```text
+승계 산출물이 없습니다: files/content/1/a.txt.v1.1
+```
+
+`gpk build`는 그룹 버전이 그대로인 그룹을 증분 처리할 때 승계 대상 산출물의 실제 바이트를 `--output`에서 확인한다. 따라서 다음 중 하나가 성립해야 한다.
+
+- 배포 환경이 `--output` 폴더를 계속 보존한다.
+- 또는 복원할 때 버킷에서 매니페스트가 참조하는 산출물을 함께 내려받아 트리를 채운다.
+
+상태 저장소만으로 복원되는 것은 릴리스 계보(`sourceCommit`, 그룹·파일 버전, 업로드 완료 지점)이지 산출물이 아니다.
 
 ## `sourceCommit` 기반 실패 복구
 

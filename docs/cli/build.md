@@ -14,6 +14,7 @@ gpk build --source <데이터 루트> --output <패치 데이터 폴더>
 - `--output`은 필수이며 source가 속한 Git 저장소 바깥이어야 한다.
 - source 아래의 추적 파일과 추적 중인 `gamepatchkit.yml`만 빌드 입력으로 사용한다.
 - source 아래의 추적 파일에 커밋되지 않은 변경이 있으면 빌드를 중단한다. untracked 파일과 source 바깥 변경은 무시한다.
+- `--output` 폴더를 상태 Git 저장소로 운영하는 절차는 [`upload.md`의 상태 저장소 설정](upload.md#상태-저장소-설정)을 따른다.
 
 ## releaseVersion
 
