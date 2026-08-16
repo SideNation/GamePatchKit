@@ -2,6 +2,7 @@ using GamePatchKit.Cli;
 
 namespace GamePatchKit.Cli.Tests;
 
+[Collection(SupabaseSettingsCollection.NAME)]
 public sealed class TestUploadSettings
 {
     private const string UrlName = "GPK_SUPABASE_URL";

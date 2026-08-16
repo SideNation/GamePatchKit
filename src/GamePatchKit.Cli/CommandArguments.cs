@@ -6,6 +6,8 @@ internal sealed record VerifyArguments(string OutputPath);
 
 internal sealed record UploadArguments(string OutputPath, string? EnvFilePath);
 
+internal sealed record SyncArguments(string OutputPath, string? EnvFilePath);
+
 internal static class ArgumentsParser
 {
     private const string SourceOption = "--source";
@@ -36,6 +38,16 @@ internal static class ArgumentsParser
             acceptsSource: false,
             acceptsEnvFile: true);
         return new UploadArguments(outputPath, envFilePath);
+    }
+
+    public static SyncArguments ParseSync(string[] arguments)
+    {
+        (_, string outputPath, string? envFilePath) = ParseOptions(
+            "sync",
+            arguments,
+            acceptsSource: false,
+            acceptsEnvFile: true);
+        return new SyncArguments(outputPath, envFilePath);
     }
 
     private static (string? SourcePath, string OutputPath, string? EnvFilePath) ParseOptions(

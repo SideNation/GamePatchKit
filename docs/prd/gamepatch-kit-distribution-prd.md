@@ -15,7 +15,7 @@
 | Newtonsoft.Json 13.0.2 | 매니페스트 파싱. 서버와 Unity 클라이언트가 같은 모델을 쓴다 |
 
 - 게임 데이터는 공개돼도 되므로 버킷을 공개로 둔다. 클라이언트가 키 없이 받는다.
-- 소비 측 읽기 로직은 서버(.NET)와 Unity 클라이언트가 공유한다. CLI는 쓰기, 소비 측은 읽기다.
+- 소비 측 읽기 로직은 서버(.NET)와 Unity 클라이언트가 공유한다. 게시는 CLI(`gpk build`·`gpk upload`)가, 소비는 서버·클라이언트와 CLI 미러(`gpk sync`)가 담당한다.
 
 ## 게시 측 전제
 
@@ -48,8 +48,30 @@
 ### 버전 포인터
 
 - 현재 릴리스 버전을 Postgres 테이블 한 줄에 둔다. 소비자가 감시하는 유일한 가변 값이다.
-- `gpk upload`와 두 상태 파일의 Git push가 성공한 뒤 지정된 수동 배포 스크립트가 갱신한다. CLI는 Postgres를 건드리지 않는다.
+- `gpk upload`와 두 상태 파일의 Git push가 성공한 뒤 지정된 수동 배포 스크립트가 갱신한다. **포인터를 쓰는 것은 배포 스크립트뿐이며 CLI는 쓰지 않는다.** `gpk sync`는 읽기만 한다.
 - 롤백은 포인터에 이전 값을 쓰는 것이다. 산출물과 매니페스트가 불변이라 되돌릴 대상이 그대로 남아 있다.
+- 테이블은 운영자가 1회 만든다. CLI는 테이블을 만들지 않으며, 없으면 사전 조건 SQL을 안내하고 중단한다.
+
+```sql
+create table public.gamepatch_pointer (
+  bucket text primary key,
+  release_version integer not null check (release_version >= 0),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.gamepatch_pointer enable row level security;
+
+-- GRANT와 RLS는 별개 계층이다. 2026-05-30 이후 만든 프로젝트는 public 스키마의 새 테이블에 자동
+-- 권한을 주지 않으므로, 명시하지 않으면 RLS에 닿기도 전에 42501 permission denied로 거부된다.
+grant select on public.gamepatch_pointer to anon;                         -- gpk sync (publishable key)
+grant select, insert, update on public.gamepatch_pointer to service_role; -- 배포 스크립트 (secret key)
+
+-- 읽기만 공개한다. 쓰기 정책은 만들지 않는다 - 갱신은 배포 스크립트가 secret key로만 한다.
+create policy gamepatch_pointer_read on public.gamepatch_pointer
+  for select to anon using (true);
+```
+
+seed 행은 넣지 않는다. `releaseVersion` 0이 실제 첫 세대라 미리 0을 넣으면 아직 게시되지 않은 세대를 가리키게 된다.
 
 ### 게시 순서
 
@@ -89,6 +111,18 @@ https://<project>.supabase.co/storage/v1/object/public/<bucket>/<매니페스트
 2. 올라가는 것과 내려가는 것을 같게 처리한다. 서버마다 버전이 다를 수 있어 접속한 서버가 이전 세대일 수 있고, 지난 세대의 매니페스트가 불변으로 남아 있어 특별한 처리가 필요 없다.
 3. 서버와 같은 방식으로 델타만 받는다.
 4. 공개 URL로 직접 받는다. 서버를 거치지 않는다.
+
+### CLI 미러 (`gpk sync`)
+
+서버·클라이언트가 프로세스 안에서 데이터를 쓰는 것과 달리, CLI가 설치된 머신의 **디스크 폴더**를 게시된 세대로 맞추는 세 번째 소비자다. 게시 트리와 같은 배치를 만들므로 그 폴더에 `gpk verify`를 그대로 쓸 수 있다.
+
+1. 포인터를 읽는다. 주기 실행은 스케줄러(cron 등)가 맡고, 상주하지 않으며 구독도 쓰지 않는다.
+2. 로컬 `manifest.json`의 `releaseVersion`과 **다르면**(크든 작든) 동기화한다. 롤백이 같은 경로로 처리된다.
+3. 서버·클라이언트와 같은 방식으로 새 매니페스트에만 있는 `name`만 받는다.
+4. 모든 산출물을 받아 검증한 뒤에야 `manifest.json`을 원자적으로 교체한다. 중단되면 이전 세대가 그대로 남는다.
+5. 읽기용 publishable key만 쓴다. secret key를 소비 머신에 두지 않는다.
+
+같은 폴더에 대한 동시 실행은 배타 파일 락으로 하나만 진행한다. 자세한 것은 [`docs/cli/sync.md`](../cli/sync.md)를 따른다.
 
 ### 데이터 복원
 

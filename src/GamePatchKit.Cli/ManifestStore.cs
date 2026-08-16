@@ -50,14 +50,20 @@ internal static class ManifestStore
     {
         const string errorPrefix = "매니페스트가 올바르지 않습니다.";
         Validate(manifest, errorPrefix, rawRoot: null);
-        byte[] bytes = SerializeSorted(manifest);
+        WriteBytesAtomically(outputPath, SerializeSorted(manifest));
+    }
+
+    // sync가 받은 세대 매니페스트를 재직렬화 없이 그대로 교체할 때 쓴다. 게시된 바이트를 그대로 두면
+    // 로컬 manifest.json이 원격 manifests/<releaseVersion>.json과 바이트까지 같아진다.
+    internal static void WriteBytesAtomically(string outputPath, byte[] manifestBytes)
+    {
         Directory.CreateDirectory(outputPath);
         string manifestPath = Path.Combine(outputPath, ManifestFileName);
         string temporaryPath = Path.Combine(outputPath, $".{ManifestFileName}.{Guid.NewGuid():N}.tmp");
 
         try
         {
-            File.WriteAllBytes(temporaryPath, bytes);
+            File.WriteAllBytes(temporaryPath, manifestBytes);
             File.Move(temporaryPath, manifestPath, overwrite: true);
         }
         finally
@@ -104,9 +110,19 @@ internal static class ManifestStore
             return null;
         }
 
+        return ParseManifest(File.ReadAllText(manifestPath, _utf8WithoutBom), errorPrefix);
+    }
+
+    // sync가 받은 세대 매니페스트에 파일 읽기와 똑같은 파싱·검증을 적용한다.
+    internal static PatchManifest ReadFromBytes(byte[] bytes, string errorPrefix)
+    {
+        return ParseManifest(_utf8WithoutBom.GetString(bytes), errorPrefix);
+    }
+
+    private static PatchManifest ParseManifest(string json, string errorPrefix)
+    {
         try
         {
-            string json = File.ReadAllText(manifestPath, _utf8WithoutBom);
             var loadSettings = new JsonLoadSettings
             {
                 DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error

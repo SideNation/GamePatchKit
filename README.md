@@ -1,6 +1,6 @@
 # GamePatchKit CLI
 
-Git이 추적하는 게임 데이터를 버전별 패치 아카이브와 파일 객체로 만들고, 산출물의 무결성을 검사하고, Supabase Storage에 게시하는 .NET tool이다.
+Git이 추적하는 게임 데이터를 버전별 패치 아카이브와 파일 객체로 만들고, 산출물의 무결성을 검사하고, Supabase Storage에 게시하고, 게시된 세대를 다시 내려받는 .NET tool이다.
 
 ## 설치
 
@@ -44,9 +44,29 @@ export GPK_SUPABASE_BUCKET=<버킷 이름>
 gpk upload --output ../patches
 ```
 
+## 동기화
+
+게시된 세대를 CLI가 설치된 머신의 폴더로 내려받는다. 릴리스 버전 포인터(Supabase Postgres)를 읽어 로컬과 다를 때만 바뀐 산출물을 받는다. 읽기용 key만 쓰며 게시 상태를 바꾸지 않는다.
+
+```shell
+export GPK_SUPABASE_PROJECT_URL=https://<project-ref>.supabase.co
+export GPK_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+export GPK_SUPABASE_BUCKET=<버킷 이름>
+gpk sync --output /srv/gamedata
+```
+
+주기 실행은 스케줄러에 맡기고, 게시 직후 바로 반영하려면 같은 명령을 손으로 실행한다. 동시 실행은 배타 락으로 하나만 진행한다.
+
+```text
+*/5 * * * *  gpk sync --output /srv/gamedata --env-file /etc/gpk/sync.env
+```
+
+포인터 테이블은 최초 1회 만들어야 한다. SQL은 [`gpk sync` 문서](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/sync.md)에 있다.
+
 자세한 내용은 다음 문서를 참고한다.
 
 - [설치와 배포](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/distribution.md)
 - [`gpk build`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/build.md)
 - [`gpk verify`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/verify.md)
 - [`gpk upload`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/upload.md)
+- [`gpk sync`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/sync.md)

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace GamePatchKit.Cli;
 
 public static class Program
@@ -13,7 +15,7 @@ public static class Program
         {
             if (arguments.Length == 0)
             {
-                throw new BuildException("명령을 지정해야 합니다. build, verify 또는 upload를 사용하세요.");
+                throw new BuildException("명령을 지정해야 합니다. build, verify, upload 또는 sync를 사용하세요.");
             }
 
             string command = arguments[0];
@@ -47,6 +49,17 @@ public static class Program
                     var uploadCommand = new UploadCommand(storage, uploadSettings.Bucket);
                     UploadSummary uploadSummary = await uploadCommand.ExecuteAsync(uploadArguments.OutputPath);
                     WriteUploadSummary(output, uploadSummary);
+                    break;
+                case "sync":
+                    SyncArguments syncArguments = ArgumentsParser.ParseSync(commandArguments);
+                    SyncSettings syncSettings = SyncSettingsResolver.Resolve(syncArguments.EnvFilePath);
+
+                    using (var remote = new SupabaseSyncRemote(syncSettings))
+                    {
+                        SyncSummary syncSummary = await new SyncCommand(remote).ExecuteAsync(syncArguments.OutputPath);
+                        WriteSyncSummary(output, syncSummary);
+                    }
+
                     break;
                 default:
                     throw new BuildException($"알 수 없는 명령입니다: {command}");
@@ -104,5 +117,27 @@ public static class Program
             $"업로드 산출물: uploaded={summary.UploadedCount}, uploadedBytes={summary.UploadedBytes}, "
             + $"skipped={summary.SkippedCount}");
         output.WriteLine($"세대 매니페스트: releaseVersion={summary.ReleaseVersion}");
+    }
+
+    private static void WriteSyncSummary(TextWriter output, SyncSummary summary)
+    {
+        switch (summary.Outcome)
+        {
+            case SyncOutcome.SkippedBecauseLocked:
+                output.WriteLine("다른 sync가 진행 중입니다. 건너뜁니다.");
+                return;
+            case SyncOutcome.AlreadyUpToDate:
+                output.WriteLine($"이미 최신입니다: releaseVersion={summary.PointerVersion}");
+                return;
+            default:
+                string previousVersion = summary.PreviousVersion is null
+                    ? "없음"
+                    : summary.PreviousVersion.Value.ToString(CultureInfo.InvariantCulture);
+                output.Write($"동기화 완료: releaseVersion={summary.PointerVersion} (이전: {previousVersion}), ");
+                output.WriteLine(
+                    $"downloaded={summary.DownloadedCount}, reused={summary.ReusedCount}, "
+                    + $"downloadedBytes={summary.DownloadedBytes}");
+                return;
+        }
     }
 }

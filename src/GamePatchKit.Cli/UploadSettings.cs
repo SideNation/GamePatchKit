@@ -77,7 +77,8 @@ internal static class UploadSettingsResolver
         return new UploadSettings(url!, key!, bucket!);
     }
 
-    private static IEnumerable<(string Name, string Value)> ReadEnvFile(string path)
+    // sync도 같은 --env-file 형식을 쓴다.
+    internal static IEnumerable<(string Name, string Value)> ReadEnvFile(string path)
     {
         foreach (string line in File.ReadAllLines(path))
         {

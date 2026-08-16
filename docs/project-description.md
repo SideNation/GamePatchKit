@@ -84,6 +84,25 @@ dotnet tool install --global GamePatchKit.Cli
 
 - 참고: 산출물 하나는 1 GiB(1,073,741,824바이트)를 넘을 수 없다. 원격 객체 경로에는 ASCII 영문 대소문자·숫자·`.`·`_`·`-`만 허용한다. API key는 `apikey` 헤더로만 전달하고 표준 출력·표준 에러·예외 메시지 어디에도 노출하지 않는다. `--source`, Git 저장소, `gamepatchkit.yml`은 요구하지 않는다. 원격 루트 `manifest.json`은 올리지 않으며, 소비자는 세대별 매니페스트(`manifests/<releaseVersion>.json`)만 받는다. 같은 `--output`을 대상으로 하는 `build`·`verify`·`upload`의 동시 실행은 CLI가 아니라 운영 배포 절차가 직렬화해야 한다.
 
+### 게시된 세대 동기화 (`gpk sync`)
+
+- 하는 일: Supabase Postgres의 릴리스 버전 포인터를 읽고, 로컬 폴더가 그 세대와 다르면 공개 Storage에서 세대 매니페스트와 없는 산출물만 받아 게시된 세대로 맞춘다. 게시 상태는 바꾸지 않는 소비 측 명령이다.
+- 사용 방법:
+
+  ```shell
+  gpk sync --output <동기화 대상 폴더> [--env-file <환경 변수 파일>]
+  ```
+
+  `GPK_SUPABASE_PROJECT_URL`(`https://<project-ref>.supabase.co` 형식), `GPK_SUPABASE_PUBLISHABLE_KEY`(`sb_publishable_...` 형식의 읽기 key), `GPK_SUPABASE_BUCKET` 세 값이 필요하다. 업로드용 설정(`GPK_SUPABASE_URL`, `GPK_SUPABASE_KEY`)과 분리돼 있어 소비 머신에 secret key를 두지 않는다. 포인터 테이블은 운영자가 사전 조건 SQL로 1회 만들며 CLI는 만들지 않는다.
+
+- 동작 결과: 포인터와 로컬 `releaseVersion`이 같으면 원격 객체를 받지 않고 끝낸다. 다르면(크든 작든) 세대 매니페스트를 받아 검증하고, 로컬에 없거나 크기가 다른 산출물만 이름 순서로 받아 SHA-256·크기를 대조한 뒤 최종 이름으로 옮기며, 전부 성공한 뒤에만 `manifest.json`을 원자적으로 교체한다.
+
+  ```text
+  동기화 완료: releaseVersion=7 (이전: 6), downloaded=3, reused=12, downloadedBytes=48213
+  ```
+
+- 참고: 주기 실행은 스케줄러(cron 등)가 맡고 CLI는 상주하지 않으며, 강제 실행은 같은 명령을 손으로 돌리는 것이다. `<output>/.gpk-sync.lock` 배타 락으로 동시 실행을 막고, 락을 못 잡으면 원격을 호출하지 않고 종료 코드 0으로 건너뛴다. 포인터와 "다르면" 동기화하므로 포인터를 이전 값으로 되돌리는 롤백이 그대로 지원된다. 재시도·백오프는 넣지 않으며 다음 스케줄 실행이 재시도 역할을 한다.
+
 ## 전체 동작 흐름
 
 ```text
@@ -105,17 +124,19 @@ Git 저장소(gamepatchkit.yml + 데이터 파일, 모두 커밋됨)
 
 - [`gamepatch-kit-cli-prd.md`](prd/gamepatch-kit-cli-prd.md) — `gpk build`·`gpk verify`의 요구사항과 완료 조건
 - [`gamepatch-kit-cli-upload-prd.md`](prd/gamepatch-kit-cli-upload-prd.md) — `gpk upload`의 요구사항과 완료 조건
-- [`gamepatch-kit-distribution-prd.md`](prd/gamepatch-kit-distribution-prd.md) — 게시된 패치 데이터를 서버·클라이언트가 받는 방식. 아직 CLI 코드로 구현되지 않은 계획 단계 문서다.
+- [`gamepatch-kit-distribution-prd.md`](prd/gamepatch-kit-distribution-prd.md) — 게시된 패치 데이터를 서버·클라이언트가 받는 방식. 소비 측 중 CLI 미러(`gpk sync`)는 구현됐고, 서버·클라이언트 구현은 계획 단계다.
 
 ### 개발 계획 (설계 문서)
 
 - [`game-patch-kit-cli-design.md`](design/game-patch-kit-cli-design.md) — `gpk build`·`gpk verify` 구현 계획
 - [`game-patch-kit-cli-release-version-design.md`](design/game-patch-kit-cli-release-version-design.md) — 매니페스트 `releaseVersion` 필드 구현 계획
 - [`game-patch-kit-cli-upload-design.md`](design/game-patch-kit-cli-upload-design.md) — `gpk upload` 구현 계획
+- [`game-patch-kit-cli-sync-design.md`](design/game-patch-kit-cli-sync-design.md) — `gpk sync` 구현 계획
 
 ### 명령 사용법
 
 - [`build.md`](cli/build.md) — `gpk build` 사용법
 - [`verify.md`](cli/verify.md) — `gpk verify` 사용법
 - [`upload.md`](cli/upload.md) — `gpk upload` 사용법
+- [`sync.md`](cli/sync.md) — `gpk sync` 사용법
 - [`distribution.md`](cli/distribution.md) — CLI 설치와 NuGet 배포
