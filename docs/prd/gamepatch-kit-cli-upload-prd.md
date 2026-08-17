@@ -48,13 +48,13 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 
 | 이름 | 의미 |
 | --- | --- |
-| `GPK_SUPABASE_URL` | `https://<project-ref>.storage.supabase.co/storage/v1` 형식의 직접 Storage API URL |
-| `GPK_SUPABASE_KEY` | 대상 프로젝트의 `sb_secret_...` API key |
+| `GPK_SUPABASE_STORAGE_URL` | `https://<project-ref>.storage.supabase.co/storage/v1` 형식의 직접 Storage API URL |
+| `GPK_SUPABASE_SECRET_KEY` | 대상 프로젝트의 `sb_secret_...` API key |
 | `GPK_SUPABASE_BUCKET` | 업로드할 기존 버킷 이름 |
 
-- `GPK_SUPABASE_URL`은 일반 프로젝트 URL이 아니라 `/storage/v1`까지 포함한 직접 Storage API URL이다. 큰 파일에는 직접 Storage hostname 사용을 권장하는 Supabase 지침을 따른다.
+- `GPK_SUPABASE_STORAGE_URL`은 일반 프로젝트 URL이 아니라 `/storage/v1`까지 포함한 직접 Storage API URL이다. 큰 파일에는 직접 Storage hostname 사용을 권장하는 Supabase 지침을 따른다.
 - `Supabase.Storage.Client`에는 URL 끝의 `/`를 제거한 값을 넘긴다. 라이브러리가 여기에 `/object/...`와 `/upload/resumable`을 붙인다.
-- `GPK_SUPABASE_KEY`는 `sb_secret_`로 시작해야 하며 다른 key 형식은 네트워크 요청 전에 거부한다.
+- `GPK_SUPABASE_SECRET_KEY`는 `sb_secret_`로 시작해야 하며 다른 key 형식은 네트워크 요청 전에 거부한다.
 - API key는 `apikey` 요청 헤더로만 전달한다. `sb_secret_...` key는 JWT가 아니므로 `Authorization: Bearer`에 넣지 않는다. 이 키는 `service_role`로 동작하고 RLS를 우회하므로 Storage policy가 필요하지 않지만 프로젝트 전체에 강한 권한을 가진다. [`Supabase API key`](https://supabase.com/docs/guides/getting-started/api-keys)
 - 키는 지정된 수동 배포 환경에서만 사용한다. 저장소·패키지·로그에 절대 포함하지 않고 운영 환경의 secret 저장소나 프로세스 환경 변수로 전달한다.
 - 세 값을 모두 요구한다. 하나라도 비어 있으면 빠진 이름을 모두 나열하고 아무것도 올리지 않은 채 중단한다.
@@ -137,10 +137,10 @@ Storage 호출이 실패하면 표준 에러에 실패 단계(`artifact-upsert`,
 3. 파일 하나를 고쳐 증분 빌드한 뒤 업로드하면 새로 생긴 파일 객체와 세대 매니페스트만 올라가고 기존 아카이브는 건너뛴다.
 4. `.gpk-upload-state.json`이 없거나 읽을 수 없으면 참조 산출물을 모두 upsert한다. 기존 `manifests/<releaseVersion>.json`이 같으면 재사용하고 다르면 덮어쓰지 않고 중단하며, 성공 시 새 상태를 기록한다.
 5. Pro 또는 Team 프로젝트에서 전역·버킷 제한을 가장 큰 `storedSize` 이상으로 설정하면 50 MB를 넘고 1 GiB 이하인 아카이브도 `UploadOrResume`으로 올라간다. `storedSize`가 1,073,741,824바이트를 넘는 산출물은 첫 Storage 호출 전에 거부한다.
-6. `GPK_SUPABASE_URL`·`GPK_SUPABASE_KEY`·`GPK_SUPABASE_BUCKET` 중 하나라도 없으면 빠진 이름이 모두 나열되고 아무것도 올라가지 않은 채 0이 아닌 종료 코드로 끝난다.
+6. `GPK_SUPABASE_STORAGE_URL`·`GPK_SUPABASE_SECRET_KEY`·`GPK_SUPABASE_BUCKET` 중 하나라도 없으면 빠진 이름이 모두 나열되고 아무것도 올라가지 않은 채 0이 아닌 종료 코드로 끝난다.
 7. 같은 이름이 프로세스 환경 변수와 `--env-file`에 모두 있으면 `--env-file`의 값이 쓰인다. `--env-file`을 주지 않으면 프로세스 환경 변수만 쓴다.
 8. `--env-file`의 경로가 없으면 아무것도 올리지 않고 중단한다.
-9. `GPK_SUPABASE_KEY`가 `sb_secret_`로 시작하지 않으면 아무것도 올리지 않고 중단한다. 유효한 값은 성공·실패 어느 경우에도 표준 출력과 표준 에러에 나타나지 않고 API 요청의 `apikey` 헤더로만 전달된다.
+9. `GPK_SUPABASE_SECRET_KEY`가 `sb_secret_`로 시작하지 않으면 아무것도 올리지 않고 중단한다. 유효한 값은 성공·실패 어느 경우에도 표준 출력과 표준 에러에 나타나지 않고 API 요청의 `apikey` 헤더로만 전달된다.
 10. 매니페스트가 참조하는 산출물이 로컬에 없거나 실제 크기가 `storedSize`와 다르면 아무것도 올리지 않고 중단한다.
 11. 로컬 `manifest.json`이 관계 검증을 통과하지 못하면 아무것도 올리지 않고 중단한다.
 12. `gpk upload`에 `--source`를 주면 거부하고, Git 저장소와 `gamepatchkit.yml` 없이 실행된다.

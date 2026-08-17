@@ -136,6 +136,8 @@ internal sealed class GitRepository
         {
             RedirectStandardError = true,
             RedirectStandardOutput = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
+            StandardErrorEncoding = System.Text.Encoding.UTF8,
             UseShellExecute = false
         };
         startInfo.ArgumentList.Add("-C");

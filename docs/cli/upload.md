@@ -36,13 +36,13 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 
 | 이름 | 의미 |
 | --- | --- |
-| `GPK_SUPABASE_URL` | `https://<project-ref>.storage.supabase.co/storage/v1` 형식의 직접 Storage API URL |
-| `GPK_SUPABASE_KEY` | 대상 프로젝트의 `sb_secret_...` API key |
+| `GPK_SUPABASE_STORAGE_URL` | `https://<project-ref>.storage.supabase.co/storage/v1` 형식의 직접 Storage API URL |
+| `GPK_SUPABASE_SECRET_KEY` | 대상 프로젝트의 `sb_secret_...` API key |
 | `GPK_SUPABASE_BUCKET` | 업로드할 기존 버킷 이름 |
 
-- `GPK_SUPABASE_URL`은 HTTPS이고 `/storage/v1`로 끝나는 직접 Storage API URL이어야 한다. 일반 프로젝트 URL, HTTP URL은 거부한다. 큰 파일에는 직접 Storage hostname 사용을 권장하는 Supabase 지침을 따른다.
+- `GPK_SUPABASE_STORAGE_URL`은 HTTPS이고 `/storage/v1`로 끝나는 직접 Storage API URL이어야 한다. 일반 프로젝트 URL, HTTP URL은 거부한다. 큰 파일에는 직접 Storage hostname 사용을 권장하는 Supabase 지침을 따른다.
 - `Supabase.Storage.Client`에는 URL 끝의 `/`를 제거한 값을 넘긴다. 라이브러리가 여기에 `/object/...`와 `/upload/resumable`을 붙인다.
-- `GPK_SUPABASE_KEY`는 `sb_secret_`로 시작해야 한다. 다른 형식의 key(publishable, legacy `anon`, 사용자 JWT 등)는 네트워크 요청 전에 거부한다. `sb_secret_...` key는 `service_role`로 동작해 RLS를 우회하므로 Storage policy가 필요 없지만 프로젝트 전체에 강한 권한을 가진다.
+- `GPK_SUPABASE_SECRET_KEY`는 `sb_secret_`로 시작해야 한다. 다른 형식의 key(publishable, legacy `anon`, 사용자 JWT 등)는 네트워크 요청 전에 거부한다. `sb_secret_...` key는 `service_role`로 동작해 RLS를 우회하므로 Storage policy가 필요 없지만 프로젝트 전체에 강한 권한을 가진다.
 - API key는 `apikey` 요청 헤더로만 전달한다. `sb_secret_...` key는 JWT가 아니므로 `Authorization: Bearer`에는 넣지 않는다.
 - `GPK_SUPABASE_BUCKET`은 이 단계에서는 비어 있지 않은지만 확인한다. 문자·세그먼트 규칙은 [원격 경로 허용 문자 규칙](#원격-경로-허용-문자-규칙)에서 다른 모든 원격 경로와 함께 검사한다.
 
@@ -54,9 +54,16 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 - 파일은 줄마다 `KEY=VALUE` 하나를 적는다. 빈 줄과 `#`으로 시작하는 줄은 건너뛰고, 키와 값의 앞뒤 공백은 제거하며, 첫 `=`까지가 키다. 위 세 이름 외의 키는 무시한다.
 - 환경 변수 파일은 key를 담으므로 저장소에 커밋하지 않는다.
 
+> **한 머신에서 여러 프로젝트를 다룬다면 env 파일에 세 값을 모두 적는다.**
+> `--env-file`은 프로세스 환경 변수를 **덮어쓰는 것이지 대체하는 것이 아니다.** 파일에서 빠뜨린
+> 이름은 주변 환경 값이 그대로 쓰인다. 예를 들어 `GPK_SUPABASE_BUCKET`을 전역에 export해 둔
+> 상태에서 그 이름이 없는 env 파일로 실행하면, **다른 프로젝트의 버킷에 올라간다.** 값이 유효한
+> 이름이면 오류도 나지 않으므로 조용히 잘못된 곳에 게시된다. 프로젝트마다 세 값을 모두 적은
+> env 파일을 두거나, 전역 환경에 이 이름들을 남기지 않는다.
+
 ## key 노출 금지
 
-`GPK_SUPABASE_KEY` 값은 표준 출력·표준 에러·예외 메시지 어디에도 나타나지 않는다. 실패 메시지는 값이 아니라 이름만 가리킨다. Storage 실패 진단에도 API key, 원시 요청·응답 헤더는 포함하지 않는다.
+`GPK_SUPABASE_SECRET_KEY` 값은 표준 출력·표준 에러·예외 메시지 어디에도 나타나지 않는다. 실패 메시지는 값이 아니라 이름만 가리킨다. Storage 실패 진단에도 API key, 원시 요청·응답 헤더는 포함하지 않는다.
 
 ## 원격 경로 허용 문자 규칙
 
@@ -157,7 +164,58 @@ Storage 요청이 실패했습니다. stage=artifact-upsert, remotePath=files/gr
 - 같은 `--output`을 사용하는 `build`·`verify`·`upload`는 동시에 실행하지 않는다. CLI는 락이나 동시성 제어를 넣지 않으므로, 지정된 수동 배포 환경 한 곳이 전체 흐름을 직렬화해야 한다.
 - 원격 객체를 다른 프로그램이 수정하거나 삭제하지 않는다는 전제를 사용한다.
 
-이 배포 스크립트와 상태 저장소 자체는 `gpk upload` 구현 범위 밖이며, 별도의 코드 관리 배포 스크립트 작업으로 완료해야 한다.
+이 배포 스크립트와 상태 저장소 자체는 `gpk upload` 구현 범위 밖이며, 별도의 코드 관리 배포 스크립트 작업으로 완료해야 한다. 아래 절차는 위 전제를 그대로 구현한 예이며 CLI가 강제하거나 검사하지 않는다.
+
+### 상태 저장소 설정
+
+최초 1회만 수행한다. `--output` 폴더 자체를 상태 저장소로 만든다.
+
+```shell
+cd <패치 데이터 폴더>
+git init -b main
+git remote add origin <private 저장소 주소>
+printf '/archives/\n/files/\n.*.tmp\n' > .gitignore
+git add .gitignore
+git commit -m "chore: 상태 저장소 초기화"
+git push -u origin main
+```
+
+- `--output`은 source가 속한 Git 저장소 바깥이어야 하므로 원본 저장소와 상태 저장소는 항상 분리된다.
+- 추적 대상은 `manifest.json`, `.gpk-upload-state.json`, `.gitignore`뿐이다. 산출물은 `.gitignore`가 제외한다.
+- `.*.tmp`는 `ManifestStore`가 원자적 교체에 쓰는 임시 파일이다. 정상 종료에서는 남지 않지만 프로세스가 강제 종료되면 남을 수 있다.
+- `gpk`는 Git 원격을 설정하거나 호출하지 않는다. 상태 저장소의 주소를 CLI에 알려주는 설정 값은 없다.
+
+### 배포 1회 절차
+
+```shell
+git -C <패치 데이터 폴더> pull --ff-only          # 1. 두 상태 파일 복원(첫 배포 제외)
+
+gpk build  --source <데이터 루트> --output <패치 데이터 폴더>   # 2.
+gpk verify --output <패치 데이터 폴더>
+gpk upload --output <패치 데이터 폴더> --env-file <env 파일>
+
+cd <패치 데이터 폴더>                              # 3. 두 파일을 한 commit으로
+git add manifest.json .gpk-upload-state.json
+git commit -m "release: releaseVersion <N>"
+git push
+```
+
+4단계로 Postgres 버전 포인터에 `N`을 기록한다. 이 순서를 지켜야 "포인터가 `N`이면 그 세대가 전부 게시돼 있다"는 소비 측 전제가 성립한다. 자세한 내용은 [배포 PRD의 버전 포인터](../prd/gamepatch-kit-distribution-prd.md)를 따른다.
+
+### 산출물은 상태 저장소에서 복원되지 않는다
+
+상태 저장소는 두 상태 파일만 추적하므로, 산출물이 없는 빈 `--output`에 두 파일만 복원하면 증분 빌드가 실패한다.
+
+```text
+승계 산출물이 없습니다: files/content/1/a.txt.v1.1
+```
+
+`gpk build`는 그룹 버전이 그대로인 그룹을 증분 처리할 때 승계 대상 산출물의 실제 바이트를 `--output`에서 확인한다. 따라서 다음 중 하나가 성립해야 한다.
+
+- 배포 환경이 `--output` 폴더를 계속 보존한다.
+- 또는 복원할 때 버킷에서 매니페스트가 참조하는 산출물을 함께 내려받아 트리를 채운다.
+
+상태 저장소만으로 복원되는 것은 릴리스 계보(`sourceCommit`, 그룹·파일 버전, 업로드 완료 지점)이지 산출물이 아니다.
 
 ## `sourceCommit` 기반 실패 복구
 

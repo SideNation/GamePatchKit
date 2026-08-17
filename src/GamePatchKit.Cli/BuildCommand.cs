@@ -98,7 +98,7 @@ internal sealed class BuildCommand
             SourceCommit = currentCommit,
             Groups = manifestGroups
         };
-        int releaseVersion = ResolveReleaseVersion(previousManifest, candidateManifest);
+        long releaseVersion = ResolveReleaseVersion(previousManifest, candidateManifest);
         ManifestStore.WriteAtomically(
             outputPath,
             new PatchManifest
@@ -112,7 +112,7 @@ internal sealed class BuildCommand
         return new BuildSummary(groupSummaries, fileRevisionAdjustments);
     }
 
-    private static int ResolveReleaseVersion(PatchManifest? previousManifest, PatchManifest candidateManifest)
+    private static long ResolveReleaseVersion(PatchManifest? previousManifest, PatchManifest candidateManifest)
     {
         if (previousManifest is null)
         {
@@ -124,7 +124,7 @@ internal sealed class BuildCommand
             return previousManifest.ReleaseVersion;
         }
 
-        if (previousManifest.ReleaseVersion == int.MaxValue)
+        if (previousManifest.ReleaseVersion == long.MaxValue)
         {
             throw new BuildException("releaseVersion을 더 늘릴 수 없습니다.");
         }

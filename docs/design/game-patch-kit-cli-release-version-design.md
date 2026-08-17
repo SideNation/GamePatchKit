@@ -47,7 +47,7 @@
 - 사용자가 yaml이나 명령 옵션으로 값을 지정하지 않는다.
 - `releaseVersion`은 `[JsonProperty]`로 이름과 직렬화 순서를 고정하고 필수 필드로 읽는다.
 - 음수 값은 그룹 판단과 산출물 쓰기 전에 이전 매니페스트 검증에서 거부한다.
-- 변경된 빌드에서 이전 값이 `int.MaxValue`이면 더 늘릴 수 없다는 `BuildException`으로 중단하고 기존 매니페스트를 유지한다.
+- 변경된 빌드에서 이전 값이 `long.MaxValue`이면 더 늘릴 수 없다는 `BuildException`으로 중단하고 기존 매니페스트를 유지한다.
 - `schemaVersion`은 1을 유지한다.
 - 매니페스트 비교와 최종 쓰기는 같은 정렬·JSON 설정을 사용해야 한다.
 - CLI는 `manifest.json` 부재가 실제 첫 배포인지 상태 유실인지 원격 조회로 판정하지 않는다. 별도 상태 Git 저장소 복원과 수동 배포 직렬화가 이 전제를 보장한다.
@@ -123,7 +123,7 @@ internal sealed class BuildCommand
 1. 이전 매니페스트가 없으면 0을 쓴다.
 2. 이전 매니페스트가 있고 릴리스 내용이 같으면 이전 값을 쓴다.
 3. 내용이 다르면 이전 값보다 1 큰 값을 쓴다.
-4. 3번에서 이전 값이 `int.MaxValue`이면 사용자 메시지가 있는 `BuildException`으로 중단한다.
+4. 3번에서 이전 값이 `long.MaxValue`이면 사용자 메시지가 있는 `BuildException`으로 중단한다.
 
 ## 11. 파일·폴더 배치 제안
 
@@ -210,7 +210,7 @@ docs/cli/
   - 같은 `HEAD`에서 다시 빌드하면 값과 매니페스트 바이트가 그대로다.
   - source 밖의 새 커밋으로 `sourceCommit`만 바뀌어도 값이 증가한다.
   - 실패한 빌드는 이전 매니페스트와 그 `releaseVersion`을 유지하고, 다음 성공 빌드는 마지막 성공 값에서 한 번만 증가한다.
-  - 변경이 필요한 상태에서 이전 값이 `int.MaxValue`이면 기존 매니페스트를 바꾸지 않고 중단한다.
+  - 변경이 필요한 상태에서 이전 값이 `long.MaxValue`이면 기존 매니페스트를 바꾸지 않고 중단한다.
   - 실제 첫 배포가 아닌 실행은 상태 Git 저장소의 이전 `manifest.json`을 복원한 뒤 빌드해 마지막 성공 값에서 이어진다.
   - 첫 Storage 호출 뒤 실패한 배포는 기록된 `sourceCommit` SHA를 checkout하고 같은 CLI·압축 구현 버전으로 다시 빌드했을 때 같은 `releaseVersion`과 매니페스트 바이트를 만든다.
   - `dotnet test`와 `dotnet pack`이 통과한다.

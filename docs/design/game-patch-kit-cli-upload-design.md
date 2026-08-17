@@ -18,8 +18,8 @@
 - 하나의 `--output`은 하나의 고정된 Supabase 프로젝트·버킷에만 게시한다.
 - 지정된 수동 배포 환경 한 곳만 게시하며 같은 패치 데이터 프로젝트의 `build`·`verify`·`upload` 흐름을 동시에 실행하지 않는다. 업로드 선검증부터 로컬 상태 교체까지 다른 프로세스가 같은 output의 매니페스트·산출물을 수정하지 않고, 원격 객체도 다른 프로그램이 수정하거나 삭제하지 않는다.
 - `<output>/.gpk-upload-state.json`이 산출물 델타의 마지막 성공 상태이며, 없거나 읽을 수 없으면 산출물을 전량 upsert한다. 원격 세대 매니페스트는 create-only 업로드가 중복 오류로 거부됐을 때만 정확한 바이트 비교를 위해 읽는다.
-- `GPK_SUPABASE_URL`은 `https://<project-ref>.storage.supabase.co/storage/v1` 형식의 직접 Storage API URL이다.
-- `GPK_SUPABASE_KEY`는 `sb_secret_...` key만 허용하고 `apikey` 헤더로 전달한다.
+- `GPK_SUPABASE_STORAGE_URL`은 `https://<project-ref>.storage.supabase.co/storage/v1` 형식의 직접 Storage API URL이다.
+- `GPK_SUPABASE_SECRET_KEY`는 `sb_secret_...` key만 허용하고 `apikey` 헤더로 전달한다.
 - 버킷 이름, 현재 매니페스트가 참조하는 모든 산출물과 세대 매니페스트의 원격 경로는 첫 Storage 호출 전에 허용 문자 규칙으로 검증한다.
 - 소스 저장소와 분리된 private Git 저장소가 성공적으로 게시된 `manifest.json`과 `.gpk-upload-state.json` 두 상태 파일만 보존한다.
 - 지정된 배포 환경은 전체 Git 이력을 유지하며 이전 성공 `sourceCommit`과 재실행 대상 SHA를 모두 checkout할 수 있다.
@@ -38,7 +38,7 @@
 ### 입력
 
 - 명령: `gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>]`
-- 설정: `GPK_SUPABASE_URL`, `GPK_SUPABASE_KEY`, `GPK_SUPABASE_BUCKET`
+- 설정: `GPK_SUPABASE_STORAGE_URL`, `GPK_SUPABASE_SECRET_KEY`, `GPK_SUPABASE_BUCKET`
 - 현재 데이터: `<output>/manifest.json`과 참조 산출물
 - 이전 업로드 성공 상태: `<output>/.gpk-upload-state.json`; 없거나 읽을 수 없으면 `null`
 
@@ -55,7 +55,7 @@
 - 산출물은 파일 경로 `UploadOrResume` 오버로드와 `Upsert=true`를 사용한다.
 - 세대 매니페스트는 일반 파일 업로드와 `Upsert=false`로 생성한다. HTTP 409의 `AlreadyExists`·`ResourceAlreadyExists`·`KeyAlreadyExists` 또는 legacy HTTP 400의 정확한 `Asset Already Exists`만 중복 객체 오류로 인정한다. 이때만 원격 바이트를 내려받아 로컬 `manifest.json`과 정확히 비교하고, 동일하면 재사용하며 다르면 버전 충돌로 중단한다.
 - URL은 직접 Storage API URL이어야 하며 일반 프로젝트 URL은 입력 오류로 거부한다.
-- `GPK_SUPABASE_KEY`가 `sb_secret_`로 시작하지 않으면 네트워크 요청 전에 거부한다. 유효한 key는 `Authorization: Bearer`로 보내지 않고 `apikey` 헤더로만 전달한다.
+- `GPK_SUPABASE_SECRET_KEY`가 `sb_secret_`로 시작하지 않으면 네트워크 요청 전에 거부한다. 유효한 key는 `Authorization: Bearer`로 보내지 않고 `apikey` 헤더로만 전달한다.
 - `sb_secret_...` key는 RLS를 우회한다. publishable·legacy `anon`·사용자 JWT를 이용한 제한 권한 업로드는 지원하지 않는다.
 - 키 값은 표준 출력·표준 에러·예외 메시지에 나타나지 않는다.
 - Storage 실패는 단계(`artifact-upsert`, `manifest-create`, `manifest-download`)·원격 경로·SDK 예외 타입과 확인 가능한 HTTP 상태·Supabase 오류 코드·메시지를 표준 에러에 남긴다. 원시 요청·응답 헤더, API key, 환경 변수 파일 내용과 전체 원시 응답 본문은 출력하지 않는다.
@@ -372,8 +372,8 @@ gpk upload --output <폴더> [--env-file <경로>]
 - 수행:
   - `UploadArguments`, `ArgumentsParser.ParseUpload`, `UploadSettingsResolver`를 추가한다.
   - env 파일 우선순위와 누락 값 전체 보고를 구현한다.
-  - `GPK_SUPABASE_URL`이 HTTPS 직접 Storage API URL이고 `/storage/v1`로 끝나는지 검증한다.
-  - `GPK_SUPABASE_KEY`가 `sb_secret_`로 시작하는지 검증한다.
+  - `GPK_SUPABASE_STORAGE_URL`이 HTTPS 직접 Storage API URL이고 `/storage/v1`로 끝나는지 검증한다.
+  - `GPK_SUPABASE_SECRET_KEY`가 `sb_secret_`로 시작하는지 검증한다.
   - `docs/cli/upload.md` 초안에 Pro·Team, 파일 제한, `apikey`와 secret key 전용 계약을 기록한다.
 - 검증:
   - `--output` 누락, `--source`, 중복 옵션, 값 누락을 거부한다.

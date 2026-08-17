@@ -50,14 +50,20 @@ internal static class ManifestStore
     {
         const string errorPrefix = "매니페스트가 올바르지 않습니다.";
         Validate(manifest, errorPrefix, rawRoot: null);
-        byte[] bytes = SerializeSorted(manifest);
+        WriteBytesAtomically(outputPath, SerializeSorted(manifest));
+    }
+
+    // sync가 받은 세대 매니페스트를 재직렬화 없이 그대로 교체할 때 쓴다. 게시된 바이트를 그대로 두면
+    // 로컬 manifest.json이 원격 manifests/<releaseVersion>.json과 바이트까지 같아진다.
+    internal static void WriteBytesAtomically(string outputPath, byte[] manifestBytes)
+    {
         Directory.CreateDirectory(outputPath);
         string manifestPath = Path.Combine(outputPath, ManifestFileName);
         string temporaryPath = Path.Combine(outputPath, $".{ManifestFileName}.{Guid.NewGuid():N}.tmp");
 
         try
         {
-            File.WriteAllBytes(temporaryPath, bytes);
+            File.WriteAllBytes(temporaryPath, manifestBytes);
             File.Move(temporaryPath, manifestPath, overwrite: true);
         }
         finally
@@ -104,9 +110,19 @@ internal static class ManifestStore
             return null;
         }
 
+        return ParseManifest(File.ReadAllText(manifestPath, _utf8WithoutBom), errorPrefix);
+    }
+
+    // sync가 받은 세대 매니페스트에 파일 읽기와 똑같은 파싱·검증을 적용한다.
+    internal static PatchManifest ReadFromBytes(byte[] bytes, string errorPrefix)
+    {
+        return ParseManifest(_utf8WithoutBom.GetString(bytes), errorPrefix);
+    }
+
+    private static PatchManifest ParseManifest(string json, string errorPrefix)
+    {
         try
         {
-            string json = File.ReadAllText(manifestPath, _utf8WithoutBom);
             var loadSettings = new JsonLoadSettings
             {
                 DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error
@@ -129,6 +145,13 @@ internal static class ManifestStore
         }
         catch (JsonException exception)
         {
+            throw Invalid(errorPrefix, "$", exception.Message);
+        }
+        catch (OverflowException exception)
+        {
+            // long 범위를 넘는 정수 리터럴은 Newtonsoft가 BigInteger로 읽고, 이를 좁은 정수 필드로
+            // 변환할 때 JsonException이 아니라 날것의 OverflowException을 던진다. 손상된 매니페스트가
+            // 처리되지 않은 예외로 프로세스를 죽이지 않도록 다른 잘못된 값과 똑같이 다룬다.
             throw Invalid(errorPrefix, "$", exception.Message);
         }
     }

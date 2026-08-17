@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Numerics;
 using System.Text;
 using GamePatchKit.Cli;
 using Newtonsoft.Json;
@@ -190,6 +192,19 @@ public sealed class TestManifestStore
         AssertInvalid(root => GetEntry(root, 1, 0)["storedSize"] = -1, "entries[0].storedSize");
         AssertInvalid(root => GetEntry(root, 0, 0)["size"] = -1, "entries[0].size");
         AssertInvalid(root => root["releaseVersion"] = -1, "releaseVersion");
+    }
+
+    // long 범위를 넘는 정수 리터럴은 Newtonsoft가 BigInteger로 읽고, 좁은 정수 필드로 변환할 때
+    // JsonException이 아니라 날것의 OverflowException을 던진다. 손상되거나 조작된 매니페스트가 처리되지
+    // 않은 예외로 프로세스를 죽이지 않고, 다른 잘못된 값과 똑같이 BuildException이 돼야 한다.
+    [Fact]
+    public void ReadPrevious_IntegerIsBeyondLongRange_ThrowsWithoutChangingManifest()
+    {
+        BigInteger beyondLongRange = BigInteger.Parse("99999999999999999999", CultureInfo.InvariantCulture);
+
+        AssertInvalid(root => root["releaseVersion"] = new JValue(beyondLongRange), "$");
+        AssertInvalid(root => GetGroup(root, 0)["version"] = new JValue(beyondLongRange), "$");
+        AssertInvalid(root => GetEntry(root, 0, 0)["size"] = new JValue(beyondLongRange), "$");
     }
 
     [Fact]

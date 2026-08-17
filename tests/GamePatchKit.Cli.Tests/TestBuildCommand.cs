@@ -1322,7 +1322,7 @@ public sealed class TestBuildCommand
         string sourcePath = testRepository.GetRepositoryPath("data");
         string outputPath = testRepository.GetExternalPath("patches");
         _sut.Execute(new BuildArguments(sourcePath, outputPath));
-        int releaseVersionBefore = ManifestStore.ReadPrevious(outputPath)!.ReleaseVersion;
+        long releaseVersionBefore = ManifestStore.ReadPrevious(outputPath)!.ReleaseVersion;
         byte[] manifestBefore = File.ReadAllBytes(Path.Combine(outputPath, "manifest.json"));
 
         _sut.Execute(new BuildArguments(sourcePath, outputPath));
@@ -1344,7 +1344,7 @@ public sealed class TestBuildCommand
             new PatchManifest
             {
                 SchemaVersion = builtManifest.SchemaVersion,
-                ReleaseVersion = int.MaxValue,
+                ReleaseVersion = long.MaxValue,
                 SourcePath = builtManifest.SourcePath,
                 SourceCommit = builtManifest.SourceCommit,
                 Groups = builtManifest.Groups
