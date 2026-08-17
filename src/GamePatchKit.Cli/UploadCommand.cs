@@ -1,6 +1,6 @@
 namespace GamePatchKit.Cli;
 
-internal sealed record UploadSummary(int UploadedCount, long UploadedBytes, int SkippedCount, int ReleaseVersion);
+internal sealed record UploadSummary(int UploadedCount, long UploadedBytes, int SkippedCount, long ReleaseVersion);
 
 internal sealed class UploadCommand
 {

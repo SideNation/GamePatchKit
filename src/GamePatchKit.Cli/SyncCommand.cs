@@ -11,8 +11,8 @@ internal enum SyncOutcome
 
 internal sealed record SyncSummary(
     SyncOutcome Outcome,
-    int? PointerVersion,
-    int? PreviousVersion,
+    long? PointerVersion,
+    long? PreviousVersion,
     int DownloadedCount,
     long DownloadedBytes,
     int ReusedCount);
@@ -46,14 +46,14 @@ internal sealed class SyncCommand
         return await SynchronizeAsync(outputPath);
     }
 
-    internal static string GetManifestObjectPath(int releaseVersion)
+    internal static string GetManifestObjectPath(long releaseVersion)
     {
         return $"manifests/{releaseVersion}.json";
     }
 
     private async Task<SyncSummary> SynchronizeAsync(string outputPath)
     {
-        int pointerVersion = await _remote.GetReleaseVersionAsync();
+        long pointerVersion = await _remote.GetReleaseVersionAsync();
         PatchManifest? localManifest = ManifestStore.ReadPrevious(outputPath);
 
         if (localManifest is not null && localManifest.ReleaseVersion == pointerVersion)

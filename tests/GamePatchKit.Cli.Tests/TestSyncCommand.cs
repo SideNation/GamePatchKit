@@ -208,7 +208,7 @@ public sealed class TestSyncCommand
     {
         private readonly Dictionary<string, byte[]> _objectsByPath = new(StringComparer.Ordinal);
 
-        public int ReleaseVersion { get; set; }
+        public long ReleaseVersion { get; set; }
 
         public List<string> RequestedObjectPaths { get; } = new();
 
@@ -227,7 +227,7 @@ public sealed class TestSyncCommand
             return _objectsByPath[objectPath];
         }
 
-        public Task<int> GetReleaseVersionAsync()
+        public Task<long> GetReleaseVersionAsync()
         {
             return Task.FromResult(ReleaseVersion);
         }

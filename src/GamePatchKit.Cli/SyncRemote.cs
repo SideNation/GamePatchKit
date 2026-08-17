@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -6,7 +7,7 @@ namespace GamePatchKit.Cli;
 
 internal interface ISyncRemote
 {
-    Task<int> GetReleaseVersionAsync();
+    Task<long> GetReleaseVersionAsync();
     Task<Stream> OpenObjectAsync(string objectPath);
 }
 
@@ -32,7 +33,7 @@ internal sealed class SupabaseSyncRemote : ISyncRemote, IDisposable
         _httpClient = new HttpClient(handler);
     }
 
-    public async Task<int> GetReleaseVersionAsync()
+    public async Task<long> GetReleaseVersionAsync()
     {
         string requestUri =
             $"{BaseUrl()}/rest/v1/{PointerTableName}"
@@ -107,7 +108,7 @@ internal sealed class SupabaseSyncRemote : ISyncRemote, IDisposable
         _httpClient.Dispose();
     }
 
-    internal static int ParseReleaseVersion(string content, string bucket)
+    internal static long ParseReleaseVersion(string content, string bucket)
     {
         JArray rows;
 
@@ -133,14 +134,23 @@ internal sealed class SupabaseSyncRemote : ISyncRemote, IDisposable
             throw new BuildException($"포인터의 {ReleaseVersionColumnName} 값이 정수가 아닙니다.");
         }
 
-        long releaseVersion = value.Value<long>();
+        // long 범위를 넘는 정수는 Newtonsoft가 BigInteger로 읽어 Value<long>()이 InvalidCastException을
+        // 던진다. 그러면 아래 범위 검사에 닿기도 전에 처리되지 않은 예외가 되므로 문자열을 거쳐 읽는다.
+        if (!long.TryParse(
+                value.ToString(),
+                NumberStyles.AllowLeadingSign,
+                CultureInfo.InvariantCulture,
+                out long releaseVersion))
+        {
+            throw new BuildException($"포인터의 {ReleaseVersionColumnName} 값이 범위를 벗어났습니다.");
+        }
 
-        if (releaseVersion is < 0 or > int.MaxValue)
+        if (releaseVersion < 0)
         {
             throw new BuildException($"포인터의 {ReleaseVersionColumnName} 값이 범위를 벗어났습니다: {releaseVersion}");
         }
 
-        return (int)releaseVersion;
+        return releaseVersion;
     }
 
     private string BaseUrl()

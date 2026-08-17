@@ -33,7 +33,7 @@
 
 ### 릴리스 버전
 
-- 0 이상의 단조 증가 정수다. 매니페스트 루트의 `releaseVersion`에 기록한다.
+- 0 이상의 단조 증가 **64비트** 정수다. 매니페스트 루트의 `releaseVersion`에 기록하고, 포인터 테이블은 `bigint`로 둔다. 소비 측(서버·Unity 클라이언트)이 공유하는 매니페스트 모델도 64비트로 맞춘다.
 - `releaseVersion`을 제외한 매니페스트 내용이 이전 성공 매니페스트와 다르면 `gpk build`가 이전 값보다 1 증가시킨다. 그룹 버전과 달리 사용자가 결정할 것이 없어 CLI가 정한다.
 - 새 매니페스트가 `releaseVersion`을 뺀 나머지에서 이전과 같으면 값을 유지한다. 아무것도 바꾸지 않고 다시 빌드하면 매니페스트가 이전과 같아야 한다는 기존 규칙을 깨지 않기 위해서다.
 - 매니페스트가 자기 버전을 담으므로 소비자는 파일 하나만 갖고도 자기가 어느 세대인지 안다.
@@ -55,7 +55,7 @@
 ```sql
 create table public.gamepatch_pointer (
   bucket text primary key,
-  release_version integer not null check (release_version >= 0),
+  release_version bigint not null check (release_version >= 0),
   updated_at timestamptz not null default now()
 );
 

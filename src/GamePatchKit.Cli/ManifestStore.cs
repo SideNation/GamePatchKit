@@ -147,6 +147,13 @@ internal static class ManifestStore
         {
             throw Invalid(errorPrefix, "$", exception.Message);
         }
+        catch (OverflowException exception)
+        {
+            // long 범위를 넘는 정수 리터럴은 Newtonsoft가 BigInteger로 읽고, 이를 좁은 정수 필드로
+            // 변환할 때 JsonException이 아니라 날것의 OverflowException을 던진다. 손상된 매니페스트가
+            // 처리되지 않은 예외로 프로세스를 죽이지 않도록 다른 잘못된 값과 똑같이 다룬다.
+            throw Invalid(errorPrefix, "$", exception.Message);
+        }
     }
 
     private static void Validate(PatchManifest manifest, string errorPrefix, JObject? rawRoot)

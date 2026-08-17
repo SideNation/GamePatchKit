@@ -51,10 +51,21 @@ public sealed class TestSupabaseSyncRemote
         Assert.Throws<BuildException>(() => SupabaseSyncRemote.ParseReleaseVersion(content, Bucket));
     }
 
+    // int 상한을 넘는 값은 이제 정상이다. releaseVersion은 long이다.
+    [Fact]
+    public void ParseReleaseVersion_ValueBeyondIntRange_IsAccepted()
+    {
+        Assert.Equal(2147483648L, SupabaseSyncRemote.ParseReleaseVersion("[{\"release_version\":2147483648}]", Bucket));
+    }
+
+    // long 범위를 넘는 정수는 Newtonsoft가 BigInteger로 읽는다. 예전에는 이 경로가 InvalidCastException으로
+    // 터져 처리되지 않은 예외가 됐다.
     [Theory]
     [InlineData("[{\"release_version\":-1}]")]
-    [InlineData("[{\"release_version\":2147483648}]")]
-    public void ParseReleaseVersion_ValueIsOutOfRange_Throws(string content)
+    [InlineData("[{\"release_version\":9223372036854775808}]")]
+    [InlineData("[{\"release_version\":99999999999999999999}]")]
+    [InlineData("[{\"release_version\":-99999999999999999999}]")]
+    public void ParseReleaseVersion_ValueIsOutOfRange_ThrowsBuildException(string content)
     {
         Assert.Throws<BuildException>(() => SupabaseSyncRemote.ParseReleaseVersion(content, Bucket));
     }
@@ -67,7 +78,7 @@ public sealed class TestSupabaseSyncRemote
         var handler = new FakeHandler(_ => JsonResponse(HttpStatusCode.OK, "[{\"release_version\":3}]"));
         using var sut = new SupabaseSyncRemote(CreateSettings(), handler);
 
-        int result = await sut.GetReleaseVersionAsync();
+        long result = await sut.GetReleaseVersionAsync();
 
         Assert.Equal(3, result);
         Assert.Equal(

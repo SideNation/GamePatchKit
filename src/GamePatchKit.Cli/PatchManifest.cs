@@ -13,7 +13,7 @@ internal sealed class PatchManifest
     public int SchemaVersion { get; init; } = CURRENT_SCHEMA_VERSION;
 
     [JsonProperty("releaseVersion", Required = Required.Always, Order = 1)]
-    public int ReleaseVersion { get; init; }
+    public long ReleaseVersion { get; init; }
 
     [JsonProperty("sourcePath", Required = Required.Always, Order = 2)]
     public string SourcePath { get; init; } = null!;

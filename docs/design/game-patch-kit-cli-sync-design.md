@@ -66,7 +66,7 @@
 ```sql
 create table public.gamepatch_pointer (
   bucket text primary key,
-  release_version integer not null check (release_version >= 0),
+  release_version bigint not null check (release_version >= 0),
   updated_at timestamptz not null default now()
 );
 
