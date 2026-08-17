@@ -4,8 +4,8 @@ internal sealed record UploadSettings(string StorageUrl, string Key, string Buck
 
 internal static class UploadSettingsResolver
 {
-    private const string UrlName = "GPK_SUPABASE_URL";
-    private const string KeyName = "GPK_SUPABASE_KEY";
+    private const string StorageUrlName = "GPK_SUPABASE_STORAGE_URL";
+    private const string SecretKeyName = "GPK_SUPABASE_SECRET_KEY";
     private const string BucketName = "GPK_SUPABASE_BUCKET";
     private const string SecretKeyPrefix = "sb_secret_";
     private const string StorageApiUrlPath = "/storage/v1";
@@ -13,8 +13,8 @@ internal static class UploadSettingsResolver
 
     public static UploadSettings Resolve(string? envFilePath)
     {
-        string? url = Environment.GetEnvironmentVariable(UrlName);
-        string? key = Environment.GetEnvironmentVariable(KeyName);
+        string? url = Environment.GetEnvironmentVariable(StorageUrlName);
+        string? key = Environment.GetEnvironmentVariable(SecretKeyName);
         string? bucket = Environment.GetEnvironmentVariable(BucketName);
 
         if (envFilePath is not null)
@@ -28,10 +28,10 @@ internal static class UploadSettingsResolver
             {
                 switch (name)
                 {
-                    case UrlName:
+                    case StorageUrlName:
                         url = value;
                         break;
-                    case KeyName:
+                    case SecretKeyName:
                         key = value;
                         break;
                     case BucketName:
@@ -45,12 +45,12 @@ internal static class UploadSettingsResolver
 
         if (string.IsNullOrWhiteSpace(url))
         {
-            missingNames.Add(UrlName);
+            missingNames.Add(StorageUrlName);
         }
 
         if (string.IsNullOrWhiteSpace(key))
         {
-            missingNames.Add(KeyName);
+            missingNames.Add(SecretKeyName);
         }
 
         if (string.IsNullOrWhiteSpace(bucket))
@@ -66,12 +66,12 @@ internal static class UploadSettingsResolver
         if (!IsDirectStorageApiUrl(url!))
         {
             throw new BuildException(
-                $"{UrlName}은 https://<project-ref>{StorageApiHostSuffix}{StorageApiUrlPath} 형식의 직접 Storage API URL이어야 합니다.");
+                $"{StorageUrlName}은 https://<project-ref>{StorageApiHostSuffix}{StorageApiUrlPath} 형식의 직접 Storage API URL이어야 합니다.");
         }
 
         if (!key!.StartsWith(SecretKeyPrefix, StringComparison.Ordinal))
         {
-            throw new BuildException($"{KeyName}은 {SecretKeyPrefix}로 시작해야 합니다.");
+            throw new BuildException($"{SecretKeyName}은 {SecretKeyPrefix}로 시작해야 합니다.");
         }
 
         return new UploadSettings(url!, key!, bucket!);

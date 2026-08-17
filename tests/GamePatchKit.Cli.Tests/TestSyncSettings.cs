@@ -127,8 +127,8 @@ public sealed class TestSyncSettings
     {
         using var scope = EnvironmentScope.Set(projectUrl: null, key: null, bucket: null);
         using var envFile = new TemporaryEnvFile(
-            "GPK_SUPABASE_URL=https://project-ref.storage.supabase.co/storage/v1",
-            "GPK_SUPABASE_KEY=sb_secret_abcdefghijklmnop");
+            "GPK_SUPABASE_STORAGE_URL=https://project-ref.storage.supabase.co/storage/v1",
+            "GPK_SUPABASE_SECRET_KEY=sb_secret_abcdefghijklmnop");
 
         BuildException exception = Assert.Throws<BuildException>(() => SyncSettingsResolver.Resolve(envFile.Path));
 

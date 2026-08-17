@@ -52,7 +52,7 @@ gpk sync --output <동기화 대상 폴더> [--env-file <환경 변수 파일>]
 
 ## 설정 값
 
-업로드용 설정과 분리돼 있다. `GPK_SUPABASE_URL`과 `GPK_SUPABASE_KEY`는 sync에서 쓰지 않는다.
+업로드용 설정과 분리돼 있다. `GPK_SUPABASE_STORAGE_URL`과 `GPK_SUPABASE_SECRET_KEY`는 sync에서 쓰지 않는다.
 
 | 이름 | 형식 | 의미 |
 | --- | --- | --- |
@@ -61,6 +61,19 @@ gpk sync --output <동기화 대상 폴더> [--env-file <환경 변수 파일>]
 | `GPK_SUPABASE_BUCKET` | 영숫자와 `.`, `_`, `-` | 공개 버킷 이름이자 포인터 행의 키 |
 
 환경 변수로 주거나 `--env-file`로 파일을 지정한다. 같은 이름이 양쪽에 있으면 파일 값이 이긴다.
+
+> **한 머신에서 여러 프로젝트를 동기화한다면 env 파일에 세 값을 모두 적는다.**
+> `--env-file`은 프로세스 환경 변수를 **덮어쓰는 것이지 대체하는 것이 아니다.** 파일에서 빠뜨린
+> 이름은 주변 환경 값이 그대로 쓰인다. 예를 들어 `GPK_SUPABASE_BUCKET`을 전역에 export해 둔
+> 상태에서 그 이름이 없는 env 파일로 실행하면, **다른 프로젝트의 버킷에서 이 폴더로 동기화된다.**
+> 값이 유효한 이름이면 오류도 나지 않으므로 조용히 잘못된 데이터가 들어간다. 프로젝트마다 세 값을
+> 모두 적은 env 파일을 두거나, 전역 환경에 이 이름들을 남기지 않는다.
+
+```shell
+# 프로젝트마다 완전한 env 파일 하나씩
+gpk sync --output /srv/gameA --env-file /etc/gpk/gameA.env
+gpk sync --output /srv/gameB --env-file /etc/gpk/gameB.env
+```
 
 ```shell
 export GPK_SUPABASE_PROJECT_URL=https://<project-ref>.supabase.co

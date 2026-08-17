@@ -36,13 +36,13 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 
 | 이름 | 의미 |
 | --- | --- |
-| `GPK_SUPABASE_URL` | `https://<project-ref>.storage.supabase.co/storage/v1` 형식의 직접 Storage API URL |
-| `GPK_SUPABASE_KEY` | 대상 프로젝트의 `sb_secret_...` API key |
+| `GPK_SUPABASE_STORAGE_URL` | `https://<project-ref>.storage.supabase.co/storage/v1` 형식의 직접 Storage API URL |
+| `GPK_SUPABASE_SECRET_KEY` | 대상 프로젝트의 `sb_secret_...` API key |
 | `GPK_SUPABASE_BUCKET` | 업로드할 기존 버킷 이름 |
 
-- `GPK_SUPABASE_URL`은 HTTPS이고 `/storage/v1`로 끝나는 직접 Storage API URL이어야 한다. 일반 프로젝트 URL, HTTP URL은 거부한다. 큰 파일에는 직접 Storage hostname 사용을 권장하는 Supabase 지침을 따른다.
+- `GPK_SUPABASE_STORAGE_URL`은 HTTPS이고 `/storage/v1`로 끝나는 직접 Storage API URL이어야 한다. 일반 프로젝트 URL, HTTP URL은 거부한다. 큰 파일에는 직접 Storage hostname 사용을 권장하는 Supabase 지침을 따른다.
 - `Supabase.Storage.Client`에는 URL 끝의 `/`를 제거한 값을 넘긴다. 라이브러리가 여기에 `/object/...`와 `/upload/resumable`을 붙인다.
-- `GPK_SUPABASE_KEY`는 `sb_secret_`로 시작해야 한다. 다른 형식의 key(publishable, legacy `anon`, 사용자 JWT 등)는 네트워크 요청 전에 거부한다. `sb_secret_...` key는 `service_role`로 동작해 RLS를 우회하므로 Storage policy가 필요 없지만 프로젝트 전체에 강한 권한을 가진다.
+- `GPK_SUPABASE_SECRET_KEY`는 `sb_secret_`로 시작해야 한다. 다른 형식의 key(publishable, legacy `anon`, 사용자 JWT 등)는 네트워크 요청 전에 거부한다. `sb_secret_...` key는 `service_role`로 동작해 RLS를 우회하므로 Storage policy가 필요 없지만 프로젝트 전체에 강한 권한을 가진다.
 - API key는 `apikey` 요청 헤더로만 전달한다. `sb_secret_...` key는 JWT가 아니므로 `Authorization: Bearer`에는 넣지 않는다.
 - `GPK_SUPABASE_BUCKET`은 이 단계에서는 비어 있지 않은지만 확인한다. 문자·세그먼트 규칙은 [원격 경로 허용 문자 규칙](#원격-경로-허용-문자-규칙)에서 다른 모든 원격 경로와 함께 검사한다.
 
@@ -54,9 +54,16 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 - 파일은 줄마다 `KEY=VALUE` 하나를 적는다. 빈 줄과 `#`으로 시작하는 줄은 건너뛰고, 키와 값의 앞뒤 공백은 제거하며, 첫 `=`까지가 키다. 위 세 이름 외의 키는 무시한다.
 - 환경 변수 파일은 key를 담으므로 저장소에 커밋하지 않는다.
 
+> **한 머신에서 여러 프로젝트를 다룬다면 env 파일에 세 값을 모두 적는다.**
+> `--env-file`은 프로세스 환경 변수를 **덮어쓰는 것이지 대체하는 것이 아니다.** 파일에서 빠뜨린
+> 이름은 주변 환경 값이 그대로 쓰인다. 예를 들어 `GPK_SUPABASE_BUCKET`을 전역에 export해 둔
+> 상태에서 그 이름이 없는 env 파일로 실행하면, **다른 프로젝트의 버킷에 올라간다.** 값이 유효한
+> 이름이면 오류도 나지 않으므로 조용히 잘못된 곳에 게시된다. 프로젝트마다 세 값을 모두 적은
+> env 파일을 두거나, 전역 환경에 이 이름들을 남기지 않는다.
+
 ## key 노출 금지
 
-`GPK_SUPABASE_KEY` 값은 표준 출력·표준 에러·예외 메시지 어디에도 나타나지 않는다. 실패 메시지는 값이 아니라 이름만 가리킨다. Storage 실패 진단에도 API key, 원시 요청·응답 헤더는 포함하지 않는다.
+`GPK_SUPABASE_SECRET_KEY` 값은 표준 출력·표준 에러·예외 메시지 어디에도 나타나지 않는다. 실패 메시지는 값이 아니라 이름만 가리킨다. Storage 실패 진단에도 API key, 원시 요청·응답 헤더는 포함하지 않는다.
 
 ## 원격 경로 허용 문자 규칙
 

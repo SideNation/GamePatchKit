@@ -5,8 +5,8 @@ namespace GamePatchKit.Cli.Tests;
 [Collection(SupabaseSettingsCollection.NAME)]
 public sealed class TestUploadSettings
 {
-    private const string UrlName = "GPK_SUPABASE_URL";
-    private const string KeyName = "GPK_SUPABASE_KEY";
+    private const string StorageUrlName = "GPK_SUPABASE_STORAGE_URL";
+    private const string SecretKeyName = "GPK_SUPABASE_SECRET_KEY";
     private const string BucketName = "GPK_SUPABASE_BUCKET";
     private const string ValidUrl = "https://project-ref.storage.supabase.co/storage/v1";
     private const string ValidKey = "sb_secret_abcdefghijklmnop";
@@ -32,8 +32,8 @@ public sealed class TestUploadSettings
         BuildException exception = Assert.Throws<BuildException>(
             () => UploadSettingsResolver.Resolve(envFilePath: null));
 
-        Assert.Contains(UrlName, exception.Message, StringComparison.Ordinal);
-        Assert.Contains(KeyName, exception.Message, StringComparison.Ordinal);
+        Assert.Contains(StorageUrlName, exception.Message, StringComparison.Ordinal);
+        Assert.Contains(SecretKeyName, exception.Message, StringComparison.Ordinal);
         Assert.Contains(BucketName, exception.Message, StringComparison.Ordinal);
     }
 
@@ -46,8 +46,8 @@ public sealed class TestUploadSettings
             () => UploadSettingsResolver.Resolve(envFilePath: null));
 
         Assert.Contains(BucketName, exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain(UrlName, exception.Message, StringComparison.Ordinal);
-        Assert.DoesNotContain(KeyName, exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(StorageUrlName, exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain(SecretKeyName, exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -55,8 +55,8 @@ public sealed class TestUploadSettings
     {
         using var scope = EnvironmentScope.Set(ValidUrl, ValidKey, "environment-bucket");
         string envFilePath = CreateEnvFile(
-            $"{UrlName}={ValidUrl}",
-            $"{KeyName}={ValidKey}",
+            $"{StorageUrlName}={ValidUrl}",
+            $"{SecretKeyName}={ValidKey}",
             $"{BucketName}=file-bucket");
 
         try
@@ -99,8 +99,8 @@ public sealed class TestUploadSettings
             "# comment line",
             "",
             "UNKNOWN_KEY=ignored",
-            $"  {UrlName}  =  {ValidUrl}  ",
-            $"{KeyName}={ValidKey}",
+            $"  {StorageUrlName}  =  {ValidUrl}  ",
+            $"{SecretKeyName}={ValidKey}",
             $"{BucketName}={ValidBucket}");
 
         try
@@ -203,19 +203,19 @@ public sealed class TestUploadSettings
         public static EnvironmentScope Set(string? url, string? key, string? bucket)
         {
             var scope = new EnvironmentScope(
-                Environment.GetEnvironmentVariable(UrlName),
-                Environment.GetEnvironmentVariable(KeyName),
+                Environment.GetEnvironmentVariable(StorageUrlName),
+                Environment.GetEnvironmentVariable(SecretKeyName),
                 Environment.GetEnvironmentVariable(BucketName));
-            Environment.SetEnvironmentVariable(UrlName, url);
-            Environment.SetEnvironmentVariable(KeyName, key);
+            Environment.SetEnvironmentVariable(StorageUrlName, url);
+            Environment.SetEnvironmentVariable(SecretKeyName, key);
             Environment.SetEnvironmentVariable(BucketName, bucket);
             return scope;
         }
 
         public void Dispose()
         {
-            Environment.SetEnvironmentVariable(UrlName, _previousUrl);
-            Environment.SetEnvironmentVariable(KeyName, _previousKey);
+            Environment.SetEnvironmentVariable(StorageUrlName, _previousUrl);
+            Environment.SetEnvironmentVariable(SecretKeyName, _previousKey);
             Environment.SetEnvironmentVariable(BucketName, _previousBucket);
         }
     }
