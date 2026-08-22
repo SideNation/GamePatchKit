@@ -86,7 +86,7 @@ dotnet tool install --global GamePatchKit.Cli
 
 ### 게시된 세대 동기화 (`gpk sync`)
 
-- 하는 일: Supabase Postgres의 릴리스 버전 포인터를 읽고, 로컬 폴더가 그 세대와 다르면 공개 Storage에서 세대 매니페스트와 없는 산출물만 받아 게시된 세대로 맞춘다. 게시 상태는 바꾸지 않는 소비 측 명령이다.
+- 하는 일: Supabase Postgres의 릴리스 버전 포인터를 읽고, 로컬 폴더가 그 세대와 다르면 공개 Storage에서 세대 매니페스트와 없는 산출물만 받아 게시된 세대로 맞춘다. 받은 산출물은 `<output>/data` 아래에 원본 트리로 풀어 그 머신의 다른 서버가 바로 읽게 한다. 게시 상태는 바꾸지 않는 소비 측 명령이다.
 - 사용 방법:
 
   ```shell
@@ -95,13 +95,14 @@ dotnet tool install --global GamePatchKit.Cli
 
   `GPK_SUPABASE_PROJECT_URL`(`https://<project-ref>.supabase.co` 형식), `GPK_SUPABASE_PUBLISHABLE_KEY`(`sb_publishable_...` 형식의 읽기 key), `GPK_SUPABASE_BUCKET` 세 값이 필요하다. 업로드용 설정(`GPK_SUPABASE_STORAGE_URL`, `GPK_SUPABASE_SECRET_KEY`)과 분리돼 있어 소비 머신에 secret key를 두지 않는다. 포인터 테이블은 운영자가 사전 조건 SQL로 1회 만들며 CLI는 만들지 않는다.
 
-- 동작 결과: 포인터와 로컬 `releaseVersion`이 같으면 원격 객체를 받지 않고 끝낸다. 다르면(크든 작든) 세대 매니페스트를 받아 검증하고, 로컬에 없거나 크기가 다른 산출물만 이름 순서로 받아 SHA-256·크기를 대조한 뒤 최종 이름으로 옮기며, 전부 성공한 뒤에만 `manifest.json`을 원자적으로 교체한다.
+- 동작 결과: 포인터와 로컬 `releaseVersion`이 같으면 원격 객체를 받지 않고 끝낸다. 다르면(크든 작든) 세대 매니페스트를 받아 검증하고, 로컬에 없거나 크기가 다른 산출물만 이름 순서로 받아 SHA-256·크기를 대조한 뒤 최종 이름으로 옮긴다. 이어서 `<output>/data`를 새 매니페스트에 맞춘 뒤(없어진 파일 삭제 → 바뀐 엔트리만 해제), 전부 성공한 뒤에만 `manifest.json`을 원자적으로 교체한다.
 
   ```text
   동기화 완료: releaseVersion=7 (이전: 6), downloaded=3, reused=12, downloadedBytes=48213
+  데이터 해제: extracted=5, removed=1
   ```
 
-- 참고: 주기 실행은 스케줄러(cron 등)가 맡고 CLI는 상주하지 않으며, 강제 실행은 같은 명령을 손으로 돌리는 것이다. `<output>/.gpk-sync.lock` 배타 락으로 동시 실행을 막고, 락을 못 잡으면 원격을 호출하지 않고 종료 코드 0으로 건너뛴다. 포인터와 "다르면" 동기화하므로 포인터를 이전 값으로 되돌리는 롤백이 그대로 지원된다. 재시도·백오프는 넣지 않으며 다음 스케줄 실행이 재시도 역할을 한다.
+- 참고: 주기 실행은 스케줄러(cron 등)가 맡고 CLI는 상주하지 않으며, 강제 실행은 같은 명령을 손으로 돌리는 것이다. `<output>/.gpk-sync.lock` 배타 락으로 동시 실행을 막고, 락을 못 잡으면 원격을 호출하지 않고 종료 코드 0으로 건너뛴다. 포인터와 "다르면" 동기화하므로 포인터를 이전 값으로 되돌리는 롤백이 그대로 지원된다. 재시도·백오프는 넣지 않으며 다음 스케줄 실행이 재시도 역할을 한다. `<output>/data`는 gpk가 소유하는 폴더로 매니페스트에 없는 파일은 지우며, 압축 미러(`archives/`, `files/`)는 다음 세대의 델타 다운로드와 `gpk verify`를 위해 남긴다.
 
 ## 전체 동작 흐름
 

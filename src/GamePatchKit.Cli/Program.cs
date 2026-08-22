@@ -137,6 +137,7 @@ public static class Program
                 output.WriteLine(
                     $"downloaded={summary.DownloadedCount}, reused={summary.ReusedCount}, "
                     + $"downloadedBytes={summary.DownloadedBytes}");
+                output.WriteLine($"데이터 해제: extracted={summary.ExtractedCount}, removed={summary.RemovedCount}");
                 return;
         }
     }

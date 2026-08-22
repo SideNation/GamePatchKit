@@ -15,11 +15,13 @@ internal sealed record SyncSummary(
     long? PreviousVersion,
     int DownloadedCount,
     long DownloadedBytes,
-    int ReusedCount);
+    int ReusedCount,
+    int ExtractedCount,
+    int RemovedCount);
 
 // 스케줄러가 주기적으로 돌리는 것과 사람이 강제로 돌리는 것이 같은 멱등 실행이다. 포인터가 가리키는 세대와
-// 로컬이 다르면 없는 산출물만 받고, 마지막에 manifest.json을 원자적으로 교체한다. 어느 지점에서 멈춰도
-// 로컬 manifest.json이 가리키는 세대는 그대로 완전하다.
+// 로컬이 다르면 없는 산출물만 받아 data 아래에 풀고, 마지막에 manifest.json을 원자적으로 교체한다. 어느
+// 지점에서 멈춰도 로컬 manifest.json이 가리키는 세대는 그대로 완전하다.
 internal sealed class SyncCommand
 {
     private const string LockFileName = ".gpk-sync.lock";
@@ -40,7 +42,7 @@ internal sealed class SyncCommand
 
         if (lockStream is null)
         {
-            return new SyncSummary(SyncOutcome.SkippedBecauseLocked, null, null, 0, 0, 0);
+            return new SyncSummary(SyncOutcome.SkippedBecauseLocked, null, null, 0, 0, 0, 0, 0);
         }
 
         return await SynchronizeAsync(outputPath);
@@ -58,7 +60,7 @@ internal sealed class SyncCommand
 
         if (localManifest is not null && localManifest.ReleaseVersion == pointerVersion)
         {
-            return new SyncSummary(SyncOutcome.AlreadyUpToDate, pointerVersion, pointerVersion, 0, 0, 0);
+            return new SyncSummary(SyncOutcome.AlreadyUpToDate, pointerVersion, pointerVersion, 0, 0, 0, 0, 0);
         }
 
         byte[] manifestBytes = await ReadObjectBytesAsync(GetManifestObjectPath(pointerVersion));
@@ -92,7 +94,9 @@ internal sealed class SyncCommand
             downloadedCount++;
         }
 
-        // 모든 산출물이 자리를 잡은 뒤에만 세대를 전환한다.
+        ExtractSummary extracted = DataExtractor.Execute(outputPath, targetManifest, localManifest);
+
+        // 모든 산출물이 자리를 잡고 해제까지 끝난 뒤에만 세대를 전환한다.
         ManifestStore.WriteBytesAtomically(outputPath, manifestBytes);
         return new SyncSummary(
             SyncOutcome.Synced,
@@ -100,7 +104,9 @@ internal sealed class SyncCommand
             localManifest?.ReleaseVersion,
             downloadedCount,
             downloadedBytes,
-            reusedCount);
+            reusedCount,
+            extracted.ExtractedCount,
+            extracted.RemovedCount);
     }
 
     // 체크와 획득이 한 번에 일어나고 프로세스가 죽으면 OS가 해제하므로, 진행 중 표시 파일과 달리 경합이나

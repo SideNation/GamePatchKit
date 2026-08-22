@@ -25,6 +25,54 @@ public sealed class TestSyncCommand
         Assert.Equal(3, environment.ReadLocalManifest()!.ReleaseVersion);
     }
 
+    // 다른 서버가 바로 읽는 것은 미러가 아니라 data 아래의 원본 트리다.
+    [Fact]
+    public async Task ExecuteAsync_LocalIsEmpty_ExtractsEveryEntryUnderData()
+    {
+        using var environment = new SyncTestEnvironment(releaseVersion: 3, ("a.bin", "alpha"), ("b.bin", "beta"));
+
+        SyncSummary summary = await new SyncCommand(environment.Remote).ExecuteAsync(environment.OutputPath);
+
+        Assert.Equal(2, summary.ExtractedCount);
+        Assert.Equal(0, summary.RemovedCount);
+        environment.AssertDataContent("a.bin", "alpha");
+        environment.AssertDataContent("b.bin", "beta");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_EntryDisappearedInTheNewGeneration_RemovesItFromData()
+    {
+        using var environment = new SyncTestEnvironment(releaseVersion: 1, ("a.bin", "alpha"), ("b.bin", "beta"));
+        await new SyncCommand(environment.Remote).ExecuteAsync(environment.OutputPath);
+        environment.PublishGeneration(releaseVersion: 2, ("a.bin", "alpha"));
+        environment.Remote.ReleaseVersion = 2;
+
+        SyncSummary summary = await new SyncCommand(environment.Remote).ExecuteAsync(environment.OutputPath);
+
+        Assert.Equal(0, summary.ExtractedCount);
+        Assert.Equal(1, summary.RemovedCount);
+        environment.AssertDataContent("a.bin", "alpha");
+        Assert.False(File.Exists(environment.GetDataPath("b.bin")));
+    }
+
+    // 해제가 매니페스트 교체보다 먼저다. 해제가 실패하면 로컬은 이전 세대 그대로여야 한다.
+    [Fact]
+    public async Task ExecuteAsync_ExtractionFails_KeepsThePreviousGeneration()
+    {
+        using var environment = new SyncTestEnvironment(releaseVersion: 1, ("a.bin", "alpha"));
+        await new SyncCommand(environment.Remote).ExecuteAsync(environment.OutputPath);
+        environment.PublishGeneration(releaseVersion: 2, entrySize: 4096, ("a.bin", "gamma"));
+        environment.Remote.ReleaseVersion = 2;
+
+        BuildException exception = await Assert.ThrowsAsync<BuildException>(
+            () => new SyncCommand(environment.Remote).ExecuteAsync(environment.OutputPath));
+
+        Assert.Contains("해제한 파일의 크기가 다릅니다", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(1, environment.ReadLocalManifest()!.ReleaseVersion);
+        environment.AssertDataContent("a.bin", "alpha");
+        Assert.Empty(environment.FindTemporaryFiles());
+    }
+
     // 폴링이 대부분의 시간에 하는 일이다. 원격 객체를 한 번도 건드리지 않아야 한다.
     [Fact]
     public async Task ExecuteAsync_LocalMatchesPointer_DownloadsNothing()
@@ -287,6 +335,15 @@ public sealed class TestSyncCommand
         // 그대로 쓰고, checksum도 실제 내용으로 계산한다.
         public void PublishGeneration(int releaseVersion, params (string Path, string Content)[] artifacts)
         {
+            PublishGeneration(releaseVersion, entrySize: null, artifacts);
+        }
+
+        // entrySize를 주면 매니페스트가 실제 산출물보다 큰 크기를 말하게 되어 해제 단계에서 실패한다.
+        public void PublishGeneration(
+            int releaseVersion,
+            long? entrySize,
+            params (string Path, string Content)[] artifacts)
+        {
             var entries = new List<ManifestEntry>();
 
             foreach ((string path, string content) in artifacts)
@@ -298,7 +355,7 @@ public sealed class TestSyncCommand
                     {
                         Path = path,
                         Version = EntryVersion,
-                        Size = bytes.Length,
+                        Size = entrySize ?? bytes.Length,
                         Source = EntrySource.File,
                         Name = ArtifactName(path),
                         StoredSize = bytes.Length,
@@ -360,6 +417,20 @@ public sealed class TestSyncCommand
                 OutputPath,
                 ArtifactName(path).Replace('/', Path.DirectorySeparatorChar));
             Assert.Equal(expected, File.ReadAllText(localPath, Encoding.UTF8));
+        }
+
+        public string GetDataPath(string path)
+        {
+            return Path.Combine(
+                OutputPath,
+                DataExtractor.DATA_DIRECTORY_NAME,
+                GroupId,
+                path.Replace('/', Path.DirectorySeparatorChar));
+        }
+
+        public void AssertDataContent(string path, string expected)
+        {
+            Assert.Equal(expected, File.ReadAllText(GetDataPath(path), Encoding.UTF8));
         }
 
         public PatchManifest? ReadLocalManifest()
