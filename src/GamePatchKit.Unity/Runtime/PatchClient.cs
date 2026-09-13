@@ -1,5 +1,6 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -18,6 +19,8 @@ namespace GamePatchKit.Unity
     public sealed class PatchClient
     {
         private const string ManifestErrorPrefix = "세대 매니페스트가 올바르지 않습니다.";
+        private const string ArchivesDirectoryName = "archives";
+        private const string FilesDirectoryName = "files";
         private const long NotFoundStatusCode = 404;
 
         private readonly string _baseUrl;
@@ -75,31 +78,77 @@ namespace GamePatchKit.Unity
         {
             Directory.CreateDirectory(_rootPath);
             PatchManifest? localManifest = await Task.Run(() => ManifestStore.ReadLocal(_rootPath), cancellationToken);
+            PendingScan pending = await Task.Run(() => ManifestStore.ScanPending(_rootPath), cancellationToken);
 
-            if (localManifest is not null && localManifest.ReleaseVersion == releaseVersion)
+            // 중단된 목표가 남아 있지 않을 때만 지름길이다. 남아 있으면 트리가 두 세대로 섞여 있을 수 있다.
+            if (localManifest is not null && localManifest.ReleaseVersion == releaseVersion && pending.IsEmpty)
             {
+                await Task.Run(DeleteMirror);
                 return new PatchSyncResult(releaseVersion, releaseVersion, true, 0, 0, 0, 0, 0);
             }
 
-            byte[] manifestBytes = await DownloadBytesAsync(
-                context,
-                ManifestStore.GetManifestObjectPath(releaseVersion),
-                cancellationToken);
-            PatchManifest targetManifest = await Task.Run(
-                () => ManifestStore.ReadFromBytes(manifestBytes, ManifestErrorPrefix),
-                cancellationToken);
+            string? pendingPath = null;
+            PatchManifest targetManifest;
 
-            if (targetManifest.ReleaseVersion != releaseVersion)
+            if (localManifest is not null && localManifest.ReleaseVersion == releaseVersion)
             {
-                throw new PatchClientException(
-                    "세대 매니페스트의 releaseVersion이 요청한 값과 다릅니다. "
-                    + $"(요청: {releaseVersion}, 매니페스트: {targetManifest.ReleaseVersion})");
+                targetManifest = localManifest;
+            }
+            else
+            {
+                PendingManifest? requested = pending.Valid.FirstOrDefault(
+                    candidate => candidate.ReleaseVersion == releaseVersion);
+
+                if (requested is not null)
+                {
+                    // 중단된 목표 세대를 다시 요청했다. 매니페스트가 이미 로컬에 있으므로 받지 않는다.
+                    targetManifest = requested.Manifest;
+                    pendingPath = requested.Path;
+                }
+                else
+                {
+                    byte[] manifestBytes = await DownloadBytesAsync(
+                        context,
+                        ManifestStore.GetManifestObjectPath(releaseVersion),
+                        cancellationToken);
+                    targetManifest = await Task.Run(
+                        () => ManifestStore.ReadFromBytes(manifestBytes, ManifestErrorPrefix),
+                        cancellationToken);
+
+                    if (targetManifest.ReleaseVersion != releaseVersion)
+                    {
+                        throw new PatchClientException(
+                            "세대 매니페스트의 releaseVersion이 요청한 값과 다릅니다. "
+                            + $"(요청: {releaseVersion}, 매니페스트: {targetManifest.ReleaseVersion})");
+                    }
+
+                    // 산출물보다 먼저 <세대>.json으로 저장한다. 중간에 멈춰도 다음 실행이 이것으로 이어받는다.
+                    pendingPath = ManifestStore.GetPendingPath(_rootPath, releaseVersion);
+                    ManifestStore.WriteBytesAtomically(pendingPath, manifestBytes);
+                }
+            }
+
+            // 트리의 파일이 어느 매니페스트의 해제 결과인지 말할 수 있어야 건너뛸 수 있다. 완료된 세대가 없거나
+            // 해석 못 하는 표식이 있으면 트리의 출처를 보증할 수 없으므로 아무것도 건너뛰지 않고 전부 다시 푼다.
+            var known = new List<PatchManifest>();
+
+            if (localManifest is not null && pending.UnreadablePaths.Count == 0)
+            {
+                known.Add(localManifest);
+
+                foreach (PendingManifest candidate in pending.Valid)
+                {
+                    known.Add(candidate.Manifest);
+                }
             }
 
             ManifestArtifact[] artifacts = targetManifest.EnumerateArtifacts()
                 .OrderBy(artifact => artifact.Name, StringComparer.Ordinal)
                 .ToArray();
             ValidateRemotePaths(artifacts);
+            IReadOnlyCollection<string> requiredNames = await Task.Run(
+                () => DataExtractor.CollectRequiredArtifacts(_rootPath, targetManifest, known),
+                cancellationToken);
 
             int downloadedCount = 0;
             long downloadedBytes = 0;
@@ -107,6 +156,12 @@ namespace GamePatchKit.Unity
 
             foreach (ManifestArtifact artifact in artifacts)
             {
+                // 다시 풀 엔트리가 없는 산출물은 받지 않는다. 미러를 지우므로 이것이 유일한 다운로드 기준이다.
+                if (!requiredNames.Contains(artifact.Name))
+                {
+                    continue;
+                }
+
                 if (IsAlreadyStored(artifact))
                 {
                     reusedCount++;
@@ -118,17 +173,18 @@ namespace GamePatchKit.Unity
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-
-            // 여기서부터 data 트리를 바꾼다. 이전 세대 표식을 먼저 지워, 중간에 멈춘 트리를 다음 동기화가 이전 세대로
-            // 오인하지 않게 한다. 산출물은 그대로 남으므로 다시 받지 않고 전체를 다시 푼다.
-            ManifestStore.DeleteLocal(_rootPath);
             ExtractSummary extracted = await Task.Run(
-                () => DataExtractor.Execute(_rootPath, targetManifest, localManifest, cancellationToken),
+                () => DataExtractor.Execute(_rootPath, targetManifest, known, cancellationToken),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
-            // 모든 산출물이 자리를 잡고 해제까지 끝난 뒤에만 세대를 전환한다.
-            ManifestStore.WriteBytesAtomically(_rootPath, manifestBytes);
+            // 해제까지 끝난 뒤에만 세대를 전환한다. 목표 매니페스트를 한 번에 manifest.json으로 올린다.
+            if (pendingPath is not null)
+            {
+                ManifestStore.CommitPending(_rootPath, pendingPath);
+            }
+
+            await Task.Run(() => CleanUp(pending, pendingPath));
             return new PatchSyncResult(
                 releaseVersion,
                 localManifest?.ReleaseVersion,
@@ -138,6 +194,49 @@ namespace GamePatchKit.Unity
                 reusedCount,
                 extracted.ExtractedCount,
                 extracted.RemovedCount);
+        }
+
+        // 세대 전환이 끝난 뒤의 정리다. 실패해도 동기화를 실패로 만들지 않는다. 남은 파일은 다음 실행이 재사용하거나 지운다.
+        private void CleanUp(PendingScan pending, string? committedPath)
+        {
+            foreach (string path in pending.AllPaths)
+            {
+                if (path == committedPath)
+                {
+                    continue;
+                }
+
+                Delete(() => File.Delete(path));
+            }
+
+            DeleteMirror();
+        }
+
+        // 압축 미러는 해제가 끝나면 쓸 일이 없다. data 트리만 남긴다.
+        private void DeleteMirror()
+        {
+            Delete(() => Directory.Delete(Path.Combine(_rootPath, ArchivesDirectoryName), recursive: true));
+            Delete(() => Directory.Delete(Path.Combine(_rootPath, FilesDirectoryName), recursive: true));
+        }
+
+        private static void Delete(Action delete)
+        {
+            try
+            {
+                delete();
+            }
+            catch (DirectoryNotFoundException)
+            {
+            }
+            catch (FileNotFoundException)
+            {
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
         }
 
         private static void ValidateRemotePaths(ManifestArtifact[] artifacts)

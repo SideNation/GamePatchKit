@@ -8,7 +8,7 @@
 
 ## 1. 기능 요약
 
-게임 서버가 알려준 `releaseVersion`의 세대를 공개 Storage URL에서 받아 `<rootPath>/data` 아래에 원본 트리로 복원하는 UPM 패키지 `com.sidenation.gamepatchkit`이다. `gpk sync`와 같은 로컬 배치를 만들고 같은 델타 규칙(새 매니페스트에만 있는 `name`만 받는다)을 따른다. 네트워크는 Unity 메인 스레드의 `UnityWebRequest`가, SHA-256 검증과 zstd 해제는 백그라운드 스레드가 맡는다.
+게임 서버가 알려준 `releaseVersion`의 세대를 공개 Storage URL에서 받아 `<rootPath>/data` 아래에 원본 트리로 복원하는 UPM 패키지 `com.sidenation.gamepatchkit`이다. 다시 풀어야 하는 엔트리의 산출물만 받고, 해제가 끝나면 받은 압축 산출물을 지워 디스크에는 원본 트리만 남긴다. 네트워크는 Unity 메인 스레드의 `UnityWebRequest`가, SHA-256 검증과 zstd 해제는 백그라운드 스레드가 맡는다.
 
 ## 2. 사전 검토 결과
 
@@ -45,29 +45,34 @@
 | Q3 | UPM Git URL 설치, 패키지 이름 `com.sidenation.gamepatchkit` | 위 "NuGet 배포 가능 여부" |
 | Q4 | 패키지 루트 `src/GamePatchKit.Unity/`, 검증용 호스트 프로젝트 `unity/GamePatchKit.Unity.Host/`가 `file:../../../src/GamePatchKit.Unity`로 참조 | Git URL의 `?path=`가 짧고 패키지가 호스트 프로젝트와 분리된다. 호스트 프로젝트는 테스트와 IL2CPP 빌드를 재현하기 위해 필요하다 |
 | Q5 | CLI는 건드리지 않고 패키지 안에 매니페스트 모델·검증·해제를 순수 C#으로 둔다. `Runtime/Core/`에 격리하고 `UnityEngine`을 참조하지 않는다 | 요청 범위가 Unity 다운로드 기능이다. 서버 구현이 생기면 이 폴더를 `<Compile Include>`로 링크하는 방식을 검토한다. CLI와의 중복은 의도된 것이며 필드 이름·검증 규칙을 동일하게 유지한다 |
-| Q6 | `gpk sync`와 같은 배치(`manifest.json`, `archives/`, `files/`, `data/`)이며 압축 미러를 남긴다. 저장 루트는 생성자 인자이고 기본값이 없다 | PRD 델타 규칙("새 매니페스트에만 있는 name")과 검증 로직을 그대로 옮길 수 있고 부분 실패·롤백에서 재다운로드가 없다. 디스크가 약 2배 필요하다는 비용은 모바일에서 실제 문제로 확인되면 삭제 정책을 별도 작업으로 붙인다 |
+| Q6 | ~~`gpk sync`와 같은 배치이며 압축 미러를 남긴다~~ → **성공한 동기화 뒤 받은 압축 산출물을 지운다.** 저장 루트는 생성자 인자이고 기본값이 없다 | 사용자 요청으로 뒤집었다. 미러를 남기면 `compression: none` 그룹은 원본과 바이트가 같은 중복이고, 미참조 객체도 정리되지 않아 디스크가 계속 늘어난다. 아래 "미러 삭제" 항목이 대체 결정이다 |
 | Q7 | 일반 C# 클래스 `PatchClient(baseUrl, rootPath)` + `Task<PatchSyncResult> SyncAsync(long releaseVersion, CancellationToken)`. 포인터 조회·진행률 보고 없음. 반환은 `Task` | PRD대로 클라이언트는 서버가 알려준 버전을 쓴다. `Task`는 NUnit async 테스트와 다른 async 라이브러리에 호환되고 `Awaitable`의 재-await 불가 제약이 없다. 취소는 앱 종료 시 중단에 필요하다 |
 | Q8 | 호스트 프로젝트의 PlayMode 테스트(루프백 HTTP + 실제 `gpk build` 픽스처)를 batchmode로 실행하고, 같은 테스트를 macOS IL2CPP Player로 실행한다. Android·iOS 기기 검증은 미검증으로 명시 | 6000.4.4f1에 Mac IL2CPP 모듈이 설치돼 있다. ZstdSharp·Newtonsoft·파일 API의 IL2CPP 동작이 핵심 위험이라 Player 실행까지 넣는다 |
 | Q9 | 이 문서를 먼저 남기고 구현한다 | 저장소 관례 |
 | 후속 | 오류는 `PatchClientException` 하나로 보고하고 취소는 `OperationCanceledException`. 메시지는 CLI와 같은 한국어 | CLI의 `BuildException` 단일 예외 관례 |
 | 후속 | 임시 파일은 대상 폴더의 `.<이름>.<guid>.tmp`이며 실패 시 삭제. 시작 시 잔여 임시 파일을 훑지 않는다 | `gpk sync`와 동일 |
 | 후속 | 임시 파일의 최종 이름 교체는 대상이 있으면 `File.Replace`, 없으면 `File.Move`(`FileMover.MoveReplacing`) | Unity .NET Standard 2.1 프로필에 `File.Move(…, overwrite)`가 없다. `File.Replace`는 같은 볼륨에서 rename이라 대상이 사라지는 순간이 없다 |
-| 후속 | `data/` 트리를 바꾸기 시작할 때 이전 `manifest.json`을 먼저 지우고, 해제가 모두 끝난 뒤 새 매니페스트를 쓴다. 해제 중 실패·취소 후 다음 호출은 이전 세대를 가정하지 않고 전량 다시 푼다 | Codex 검토 F1. 이전 매니페스트를 남겨 두면 해제 중 실패한 트리를 다음 호출의 같은-세대 fast path가 완전한 것으로 오인한다. 스테이징 폴더에 새 세대를 완성한 뒤 교체하는 방식은 디스크가 세 배 필요해 별도 결정으로 미룬다 |
+| 후속 | ~~`data/`를 바꾸기 시작할 때 이전 `manifest.json`을 먼저 지운다~~ → 아래 "진행 중 표식"으로 대체 | Codex 검토 F1이 지적한 오인(해제 중 실패한 트리를 완전한 이전 세대로 보는 것)은 `<세대>.json`의 존재로 막는다. 매니페스트를 지우지 않으므로 복구가 이전 세대 정보를 잃지 않는다 |
 | 후속 | 취소 토큰을 해제 루프(파일·버퍼 단위)와 매니페스트 쓰기 직전까지 전달한다 | Codex 검토 F5. `Task.Run`의 토큰은 시작 전에만 반영된다 |
 | 후속 | 로컬 I/O 오류(`IOException`, `UnauthorizedAccessException`)와 zstd 프레임 오류(`ZstdException`)는 `PatchClientException`으로 감싸고 `InnerException`을 보존한다 | Codex 검토 F11. 문서의 예외 계약과 실제 동작을 맞춘다 |
+| 미러 삭제 | 세대 전환이 끝나면 `archives/`와 `files/`를 지운다. 정리가 실패해도 동기화는 성공으로 끝낸다 | 사용자 결정. 디스크를 `data/` 크기로 묶는다. 남은 파일은 다음 실행이 재사용하거나 지우므로 실패를 전파할 이유가 없다 |
+| 다운로드 선택 | 매니페스트가 참조하는 산출물 전량이 아니라, **다시 풀어야 하는 엔트리가 읽을 산출물만** 받는다 | 미러를 지우면 "로컬에 없는 것을 받는다"가 매 세대 전량 재다운로드가 된다. 바뀐 파일이 오버레이에만 있는 일반적인 업데이트에서는 아카이브를 받지 않아 미러를 두던 때와 다운로드량이 같다 |
+| 진행 중 표식 | 이전 `manifest.json`을 지우지 않는다. 목표 세대를 `<세대>.json`으로 **먼저 저장**하고, 해제까지 끝난 뒤 `File.Replace`로 `manifest.json`에 한 번에 올린다 | 사용자 설계. 목표 매니페스트 자체가 표식이라 상태 파일 형식을 새로 만들지 않고, 중단 후 같은 세대를 다시 요청하면 매니페스트도 산출물도 다시 받지 않는다. 지우고 다시 만드는 방식은 매니페스트가 없는 순간이 생긴다 |
+| 건너뛰기 판정 | **완료된 `manifest.json`이 있고 모든 `<세대>.json`을 해석할 수 있을 때만** 건너뛴다. 그때는 로컬에 남아 있는 모든 매니페스트에서 엔트리 identity가 목표와 같아야 한다. 하나라도 빠지면 전부 다시 푼다 | 트리의 각 파일이 어느 매니페스트의 해제 결과인지 말할 수 있어야 건너뛰기가 건전하다. 완료된 세대가 없으면 트리가 우리 것이라는 근거 자체가 없고, 해석 못 하는 표식이 있으면 섞인 출처를 알 수 없다(Codex 검토 F1·F2) |
+| 중간 세대 | 중단된 세대를 먼저 완료하지 않고 요청한 세대로 곧장 간다 | 중간 세대용으로 받은 산출물은 풀자마자 덮이므로 버리는 다운로드가 된다. 곧장 가는 쪽이 항상 같거나 적게 받는다 |
 | 후속 | `link.xml`로 패키지 어셈블리를 보존한다 | Newtonsoft가 리플렉션으로 모델을 채우므로 IL2CPP managed stripping에서 setter가 제거되면 안 된다 |
-| 후속 | 사용법 문서는 `docs/unity/patch-client.md`, 샘플 씬은 만들지 않는다 | feature-docs 관례(`docs/<카테고리>/<기능>.md`). 사용 예시는 문서의 코드로 충분하다 |
+| 후속 | 사용법 문서는 `docs/unity/patch-client.md`. 수동 시험용 샘플 씬은 패키지가 아니라 호스트 프로젝트에 둔다 | feature-docs 관례(`docs/<카테고리>/<기능>.md`). 샘플이 패키지에 들어가면 소비 프로젝트에 불필요한 코드가 따라간다 |
 | 후속 | 파일 락·동시 실행 제어를 넣지 않는다 | 단일 프로세스이며 같은 폴더의 동시 `SyncAsync`는 호출자가 하지 않는다고 문서에 적는다 |
 
 ## 4. 요구사항 정리
 
 - **입력**: 공개 URL prefix(`https://<project-ref>.supabase.co/storage/v1/object/public/<bucket>/`), 저장 루트 경로, 게임 서버가 알려준 `releaseVersion`, 선택적 `CancellationToken`
-- **출력**: `<rootPath>/manifest.json`(받은 바이트 그대로), `<rootPath>/archives/**`, `<rootPath>/files/**`, `<rootPath>/data/<그룹 id>/<엔트리 path>`; 결과 `PatchSyncResult`(이전·현재 세대, 다운로드 수·바이트, 재사용 수, 해제 수, 삭제 수)
+- **출력**: `<rootPath>/manifest.json`(받은 바이트 그대로), `<rootPath>/data/<그룹 id>/<엔트리 path>`; 결과 `PatchSyncResult`(이전·현재 세대, 다운로드 수·바이트, 재사용 수, 해제 수, 삭제 수). 동기화 중에만 `<세대>.json`과 `archives/`·`files/`가 존재한다
 - **제약**:
-  - 로컬 `manifest.json`의 `releaseVersion`이 요청 값과 같으면 원격을 호출하지 않는다. 다르면(크든 작든) 동기화하므로 롤백이 같은 경로다.
+  - 로컬 `manifest.json`의 `releaseVersion`이 요청 값과 같고 `<세대>.json`이 없으면 원격을 호출하지 않는다. 다르면(크든 작든) 동기화하므로 롤백이 같은 경로다.
   - 산출물은 임시 파일로 받아 크기와 SHA-256이 매니페스트와 같을 때만 최종 이름을 얻는다.
   - 세대 매니페스트는 CLI와 같은 관계 검증을 통과해야 하고 `releaseVersion`이 요청 값과 같아야 한다.
-  - 모든 산출물을 받고 해제까지 끝낸 뒤에만 `manifest.json`을 원자적으로 교체한다. 어느 시점에 중단돼도 로컬 세대는 완전하다.
+  - 해제까지 끝낸 뒤에만 목표 매니페스트를 `manifest.json`으로 올린다. `<세대>.json`이 없을 때 `manifest.json`이 가리키는 세대는 완전하다.
   - 재시도·백오프·`Range` 재개·진행률·포인터 조회는 넣지 않는다(PRD 제외 범위).
 - **성능 목표**: 다운로드 크기에 비례하는 managed 배열 할당 없음(`DownloadHandlerFile`), 메인 스레드에서 해시·해제를 수행하지 않음, `Update` 없음
 
@@ -98,7 +103,7 @@
 - `Awaitable` 반환 미적용 — 재-await 불가 제약과 NUnit 호환성 때문에 `Task`를 쓴다. 내부에서도 `Task.Run`과 Unity `SynchronizationContext`만 쓰고 `Awaitable`에 의존하지 않는다.
 - 진행률(`IProgress<T>`) 미적용 — 요청에 없고 별도로 붙일 수 있다.
 - 배타 파일 락 미적용 — 단일 프로세스.
-- 해제 후 압축 산출물 삭제 미적용 — Q6.
+- 압축 산출물 유지 미적용 — 성공한 동기화 뒤 지운다. Q6의 뒤집힌 결정이다.
 - 재시도·백오프·`Range` 재개 미적용 — PRD 제외 범위.
 
 ## 9. 컴포넌트 · 인터페이스 시그니처
@@ -136,13 +141,14 @@ public sealed class PatchClientException : Exception
 ### 핵심 처리 흐름
 
 1. `SynchronizationContext.Current`를 캡처한다(취소 시 `Abort`를 메인 스레드로 보내기 위해). 없으면 메인 스레드가 아니므로 `InvalidOperationException`.
-2. 로컬 `manifest.json`을 읽어 검증한다. `releaseVersion`이 같으면 `IsAlreadyUpToDate`로 끝낸다.
-3. `manifests/<releaseVersion>.json`을 `DownloadHandlerBuffer`로 받아 백그라운드에서 파싱·검증하고 `releaseVersion` 일치를 확인한다.
-4. 매니페스트가 참조하는 산출물을 이름 순으로 처리한다. 로컬에 같은 이름·크기가 있으면 재사용, 없으면 `DownloadHandlerFile`로 임시 파일에 받은 뒤 백그라운드에서 크기·SHA-256을 대조하고 최종 이름으로 옮긴다.
-5. 이전 `manifest.json`을 지운 뒤 백그라운드에서 `DataExtractor`가 `data` 트리를 새 매니페스트에 맞춘다(없어진 파일 삭제 → 바뀐 엔트리만 해제).
-6. `manifest.json`을 받은 바이트 그대로 쓴다.
+2. 로컬 `manifest.json`과 남아 있는 `<세대>.json`을 모두 읽어 검증한다. 읽히지 않거나 이름과 내용의 세대가 다른 `<세대>.json`은 지우고 없는 것으로 본다.
+3. `manifest.json`이 요청 세대이고 `<세대>.json`이 하나도 없으면 압축 산출물만 치우고 `IsAlreadyUpToDate`로 끝낸다.
+4. 목표 매니페스트를 정한다. 요청 세대가 `manifest.json`이나 남은 `<세대>.json`에 이미 있으면 그것을 쓰고 받지 않는다. 없으면 `manifests/<releaseVersion>.json`을 받아 검증하고 `<세대>.json`으로 먼저 저장한다.
+5. 로컬에 있는 모든 매니페스트와 `data/`의 파일 크기로 다시 풀어야 하는 엔트리를 정하고, 그 엔트리가 읽을 산출물만 고른다. 로컬에 같은 이름·크기가 있으면 재사용, 없으면 `DownloadHandlerFile`로 임시 파일에 받은 뒤 백그라운드에서 크기·SHA-256을 대조하고 최종 이름으로 옮긴다.
+6. 백그라운드에서 `DataExtractor`가 `data` 트리를 목표에 맞춘다(없어진 파일 삭제 → 정한 엔트리만 해제).
+7. 목표 `<세대>.json`을 `manifest.json`으로 교체하고, 남은 `<세대>.json`과 압축 산출물을 지운다.
 
-4단계까지 실패하면 이전 세대의 `manifest.json`과 `data/`가 그대로 남는다. 5단계부터는 `manifest.json`이 없는 상태이므로 실패·취소 뒤의 다음 호출은 산출물을 다시 받지 않고 `data`를 전량 다시 푼다. 취소는 각 단계 사이, 요청 대기 중, 해제 루프의 파일·버퍼 단위 경계에서 반영된다. 요청 대기 중 취소는 캡처한 컨텍스트로 `Abort`를 보내고 `OperationCanceledException`으로 끝난다. 임시 파일은 `finally`에서 삭제한다.
+5단계까지 실패하면 `manifest.json`과 `data/`가 이전 세대 그대로다. 6단계에서 멈추면 `data/`가 섞이지만 `<세대>.json`이 남아 그 사실을 알린다. 같은 세대를 다시 요청하면 매니페스트도 이미 받은 산출물도 다시 받지 않고 남은 엔트리만 푼다. 7단계의 교체가 끝난 뒤 정리에서 멈추면 파일이 남을 뿐이고 다음 호출이 치운다. 취소는 각 단계 사이, 요청 대기 중, 해제 루프의 파일·버퍼 단위 경계에서 반영된다. 요청 대기 중 취소는 캡처한 컨텍스트로 `Abort`를 보내고 `OperationCanceledException`으로 끝난다. 임시 파일은 `finally`에서 삭제한다.
 
 ## 10. 파일 · 폴더 · Asmdef 배치
 
@@ -227,6 +233,17 @@ unity/GamePatchKit.Unity.Host/                # 검증용·수동 시험용 Unit
 
 3차 검토(테스트 변경)는 Medium 이상 없음. Low 2건(테스트 서버 `Dispose`가 등록 직전의 응답 스레드를 놓칠 수 있음, 취소 테스트의 10초 타임아웃 실패 경로에서 `sync` 정리 없음)은 실패·극단 스케줄링에서만 나타나는 테스트 격리 문제라 보류했다.
 
+미러 삭제와 진행 중 표식 변경에 대한 adversarial 검토 1회에서 `Blocker` 2건, `Medium` 2건을 받았다.
+
+| 번호 | 지적 | 처리 |
+| --- | --- | --- |
+| F1 | 완료된 세대 없이 `<세대>.json`만 있을 때 그것을 트리 내용의 근거로 삼는다. 크기만 같고 내용이 다른 파일이 정식 세대로 커밋될 수 있다 | 반영 — `manifest.json`이 없으면 건너뛰기 근거를 비운다. 회귀 테스트 추가 |
+| F2 | 해석 못 하는 `<세대>.json`을 읽는 시점에 지워 혼합 트리의 유일한 증거가 사라진다. 이후 "이미 최신"으로 성공할 수 있다 | 반영 — 읽기에서 지우지 않고 별도로 보고해 지름길을 막고 근거를 무효화한다. 삭제는 동기화 성공 뒤 정리에서만. 회귀 테스트 추가 |
+| F3 | `data/` 안에 심볼릭 링크가 있으면 다운로드 전 판정과 `Remove` 이후 판정이 달라져 그 호출이 실패한다 | 거부 — `data/`는 클라이언트 소유라 링크를 두는 것이 계약 밖이다. 낡은 내용이 커밋되지는 않고, `Remove`가 링크를 지우므로 다음 호출이 정상 복구한다 |
+| F4 | macOS 외 IL2CPP에서 `File.Replace` 지원을 확인하지 못했다 (Speculative) | 보류 — macOS IL2CPP에서는 세대 전환·롤백 테스트가 이 경로를 실제로 지난다. Android·iOS는 기기 검증 대상으로 남긴다 |
+
+2차 검토에서 production 결함은 나오지 않았고, F2의 회귀 테스트가 "표식을 해석할 수 없으면 기존 매니페스트도 근거로 쓰지 않는다"는 분기를 고정하지 못한다는 Medium 1건을 받아 반영했다. 세대 0과 1의 `raw/config.txt`가 길이는 같고 내용만 달라, 그 파일을 세대 1 내용으로 심어 두면 건너뛰기 여부가 결과로 드러난다.
+
 수동 시험용 샘플(호스트 프로젝트 파일 3개와 문서 한 절)에 대한 standard 검토 1회에서 받은 7건은 모두 적용했다: 씬 빌더의 미저장 씬 확인과 `SaveScene` 실패 전파, 호스트의 `Allow downloads over HTTP`를 `Development Only`로 변경, 패널 전체 스크롤, 로그 메시지 한 줄 정규화, `GUI.matrix` 복원, 문서 스크립트 경로 통일. 이 검토에서 드러난 평문 http 거부(`InvalidOperationException: Insecure connection not allowed`)는 패키지 계약을 빠져나가므로 `PatchClient.SendAsync`에서 `PatchClientException`으로 감쌌다.
 
 ## 15. 위임 다음 단계
@@ -235,4 +252,4 @@ unity/GamePatchKit.Unity.Host/                # 검증용·수동 시험용 Unit
 - 테스트: `run-tests.sh`(PlayMode), `run-player-tests.sh`(macOS IL2CPP)
 - 사용법 문서: `docs/unity/patch-client.md`
 - 검토: `codex-collab-workflow` adversarial(네트워크·새 공개 API)
-- Android·iOS 기기 검증, 서버용 순수 C# 라이브러리 분리, 압축 미러 삭제 정책: 별도 작업
+- Android·iOS 기기 검증, 서버용 순수 C# 라이브러리 분리: 별도 작업

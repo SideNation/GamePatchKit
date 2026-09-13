@@ -106,7 +106,7 @@ dotnet tool install --global GamePatchKit.Cli
 
 ### Unity 클라이언트 동기화 (`PatchClient`)
 
-- 하는 일: `gpk upload`가 게시한 세대를 Unity 클라이언트에 내려받아 `<rootPath>/data` 아래에 원본 트리로 복원한다. 게임 서버가 알려준 `releaseVersion`을 넘기면 로컬이 그 세대와 다를 때만 세대 매니페스트와 없는 산출물을 받는다. `gpk sync`와 같은 배치·델타 규칙이며 Supabase 포인터는 읽지 않는다.
+- 하는 일: `gpk upload`가 게시한 세대를 Unity 클라이언트에 내려받아 `<rootPath>/data` 아래에 원본 트리로 복원한다. 게임 서버가 알려준 `releaseVersion`을 넘기면 로컬이 그 세대와 다를 때만 세대 매니페스트와 다시 풀어야 하는 엔트리의 산출물만 받는다. Supabase 포인터는 읽지 않는다.
 - 사용 방법: UPM 패키지 `com.sidenation.gamepatchkit`(`src/GamePatchKit.Unity`)을 Git URL로 설치한다.
 
   ```json
@@ -119,7 +119,7 @@ dotnet tool install --global GamePatchKit.Cli
   ```
 
 - 동작 결과: 모든 산출물을 받아 SHA-256·크기를 검증하고 zstd를 풀어 `data` 트리를 맞춘 뒤에만 `manifest.json`을 교체한다. 결과에는 이전·현재 세대, 다운로드·재사용·해제·삭제 수가 담긴다. 실패는 `PatchClientException`, 취소는 `OperationCanceledException`이다.
-- 참고: Unity 6(6000.x) 전용이며 네트워크는 메인 스레드의 `UnityWebRequest`, 해시·해제는 백그라운드 스레드가 맡는다. zstd 해제는 동봉한 managed `ZstdSharp.dll`을 쓴다. NuGet으로는 배포하지 않는다(Unity Package Manager가 NuGet을 소비하지 못한다). 검증용 Unity 프로젝트는 `unity/GamePatchKit.Unity.Host`에 있다.
+- 참고: Unity 6(6000.x) 전용이며 네트워크는 메인 스레드의 `UnityWebRequest`, 해시·해제는 백그라운드 스레드가 맡는다. 받은 압축 산출물은 해제한 뒤 지우므로 디스크는 `data/` 크기만 필요하다. zstd 해제는 동봉한 managed `ZstdSharp.dll`을 쓴다. NuGet으로는 배포하지 않는다(Unity Package Manager가 NuGet을 소비하지 못한다). 검증용 Unity 프로젝트는 `unity/GamePatchKit.Unity.Host`에 있다.
 
 ## 전체 동작 흐름
 
