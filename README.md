@@ -78,6 +78,16 @@ var client = new PatchClient("https://<project-ref>.supabase.co/storage/v1/objec
 PatchSyncResult result = await client.SyncAsync(releaseVersion, cancellationToken);
 ```
 
+## 패치 버전 조회 함수 배포
+
+Supabase 프로젝트에 `get-patch-version` 함수를 생성하거나 갱신한다. 함수는 해당 프로젝트의 포인터에서 현재 패치 버전을 읽는다.
+
+```shell
+gpk deploy-function --project-id "$PROJECT_REF" --access-token "$SUPABASE_ACCESS_TOKEN"
+```
+
+배포에는 Supabase Access Token을, 함수 호출에는 bucket만 있으면 된다. 포인터 테이블은 미리 준비해야 한다.
+
 자세한 내용은 다음 문서를 참고한다.
 
 - [설치와 배포](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/distribution.md)
@@ -86,3 +96,4 @@ PatchSyncResult result = await client.SyncAsync(releaseVersion, cancellationToke
 - [`gpk upload`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/upload.md)
 - [`gpk sync`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/sync.md)
 - [Unity 패치 클라이언트](https://github.com/SideNation/GamePatchKit/blob/main/docs/unity/patch-client.md)
+- [`gpk deploy-function`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/deploy-function.md)

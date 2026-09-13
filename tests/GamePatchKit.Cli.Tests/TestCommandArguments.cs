@@ -4,6 +4,104 @@ namespace GamePatchKit.Cli.Tests;
 
 public sealed class TestCommandArguments
 {
+    private const string ProjectId = "abcdefghijklmnopqrst";
+    private const string AccessToken = "sbp_do_not_print_this_token";
+
+    public static TheoryData<string[]> InvalidDeployArguments => new()
+    {
+        Array.Empty<string>(),
+        new[] { "--project-id", ProjectId },
+        new[] { "--access-token", AccessToken },
+        new[] { "--project-id", ProjectId, "--access-token" },
+        new[] { "--project-id", "--access-token", AccessToken },
+        new[] { "--project-id", ProjectId, "--access-token", "" },
+        new[] { "--project-id", ProjectId, "--access-token", " " },
+        new[] { "--project-id", ProjectId, "--access-token", "sbp_token\r\nheader" },
+        new[] { "--project-id", ProjectId, "--access-token", "sbp_token value" },
+        new[] { "--project-id", ProjectId, "--access-token", AccessToken, "--project-id", ProjectId },
+        new[] { "--project-id", ProjectId, "--access-token", AccessToken, "--access-token", AccessToken },
+        new[] { "--project-id", ProjectId, "--access-token", AccessToken, "--output", "patches" },
+        new[] { "--project-id", ProjectId, "--access-token", AccessToken, "--source", "data" },
+        new[] { "--project-id", ProjectId, "--access-token", AccessToken, "--env-file", ".env" },
+        new[] { "--project-id", ProjectId, "--access-token", AccessToken, AccessToken },
+        new[] { "--project-id", ProjectId, $"--access-token={AccessToken}" }
+    };
+
+    [Fact]
+    public void ParseDeployFunction_ValidArguments_ReturnsProjectAndTokenWithoutEchoingToken()
+    {
+        // Arrange
+        string[] arguments = ["--access-token", AccessToken, "--project-id", ProjectId];
+
+        // Act
+        DeployFunctionArguments result = ArgumentsParser.ParseDeployFunction(arguments);
+
+        // Assert
+        Assert.Equal(ProjectId, result.ProjectId);
+        Assert.Equal(AccessToken, result.AccessToken);
+        Assert.DoesNotContain(AccessToken, result.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("project-name")]
+    [InlineData("https://abcdefghijklmnopqrst.supabase.co")]
+    [InlineData("ABCDEFGHIJKLMNOPQRST")]
+    [InlineData("abcdefghijklmnopqrs1")]
+    [InlineData("abcdefghijklmnopqrs")]
+    [InlineData("abcdefghijklmnopqrstu")]
+    [InlineData("../abcdefghijklmnopq")]
+    public void ParseDeployFunction_InvalidProjectRef_ThrowsWithoutEchoingInput(string projectId)
+    {
+        // Arrange
+        string[] arguments = ["--project-id", projectId, "--access-token", AccessToken];
+
+        // Act
+        BuildException exception = Assert.Throws<BuildException>(() => ArgumentsParser.ParseDeployFunction(arguments));
+
+        // Assert
+        Assert.DoesNotContain(AccessToken, exception.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [MemberData(nameof(InvalidDeployArguments))]
+    public async Task RunAsync_InvalidDeployArguments_ReturnsOneWithoutEchoingToken(string[] arguments)
+    {
+        // Arrange
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        // Act
+        int exitCode = await Program.RunAsync(["deploy-function", .. arguments], output, error);
+
+        // Assert
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, output.ToString());
+        Assert.NotEmpty(error.ToString());
+        Assert.DoesNotContain(AccessToken, error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("네트워크", error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("build")]
+    [InlineData("verify")]
+    [InlineData("upload")]
+    [InlineData("sync")]
+    public async Task RunAsync_DeployOptionOnExistingCommand_IsRejected(string command)
+    {
+        // Arrange
+        using var output = new StringWriter();
+        using var error = new StringWriter();
+
+        // Act
+        int exitCode = await Program.RunAsync([command, "--output", "patches", "--project-id", ProjectId], output, error);
+
+        // Assert
+        Assert.Equal(1, exitCode);
+        Assert.Contains("옵션", error.ToString(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ParseBuild_SourceIsMissing_UsesCurrentDirectory()
     {

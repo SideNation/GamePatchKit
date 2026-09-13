@@ -15,7 +15,7 @@ public static class Program
         {
             if (arguments.Length == 0)
             {
-                throw new BuildException("명령을 지정해야 합니다. build, verify, upload 또는 sync를 사용하세요.");
+                throw new BuildException("명령을 지정해야 합니다. build, verify, upload, sync 또는 deploy-function을 사용하세요.");
             }
 
             string command = arguments[0];
@@ -58,6 +58,19 @@ public static class Program
                     {
                         SyncSummary syncSummary = await new SyncCommand(remote).ExecuteAsync(syncArguments.OutputPath);
                         WriteSyncSummary(output, syncSummary);
+                    }
+
+                    break;
+                case "deploy-function":
+                    DeployFunctionArguments deployArguments = ArgumentsParser.ParseDeployFunction(commandArguments);
+
+                    using (var handler = new HttpClientHandler
+                    {
+                        AllowAutoRedirect = false
+                    })
+                    using (var httpClient = new HttpClient(handler))
+                    {
+                        output.WriteLine(await new DeployFunctionCommand(httpClient).ExecuteAsync(deployArguments));
                     }
 
                     break;

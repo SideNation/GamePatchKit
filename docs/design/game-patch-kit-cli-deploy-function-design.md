@@ -4,6 +4,9 @@ _meta:
     version: 0.1.0
     updated: 2026-09-13
     changelog:
+      - 함수 오류의 상태와 코드만 기록하는 안전한 로그 추가
+      - 호출자 API key 대신 함수에 기본 제공되는 프로젝트 publishable key를 사용
+      - 함수 조회를 고정 버전 SupabaseClient로 단순화하고 오류 계약을 축소
       - 프로젝트 ID와 Access Token으로 패치 버전 조회 함수를 배포하는 CLI 설계 초안 작성
 ---
 
@@ -34,7 +37,7 @@ _meta:
 - 최초 설치 범위는 함수 생성이다. 테이블·버킷·패치 데이터는 기존 게시 환경에 준비되어 있어야 한다. DB 초기화와 마이그레이션 자동 실행은 이 명령에 포함하지 않는다.
 - 테이블 생성이 필요한 프로젝트는 기존 [sync 사전 조건](../cli/sync.md#사전-조건)의 계약을 프로젝트의 버전 관리되는 마이그레이션으로 적용한다. 콘솔에서만 수동 생성하는 절차를 새로 도입하지 않는다.
 - 기존 함수가 같은 이름이면 이 명령이 관리하는 대상으로 보고 갱신한다. 함수 이름은 고정하며 임의 함수 배포 명령으로 확장하지 않는다.
-- 함수 호출은 publishable key를 사용하는 공개 패치 정보 조회를 기준으로 한다. 비공개 프로젝트별 사용자 권한 모델은 가정하지 않는다.
+- 함수 호출은 호스팅 환경에 기본 제공되는 프로젝트 publishable key를 사용하는 공개 패치 정보 조회를 기준으로 한다. 비공개 프로젝트별 사용자 권한 모델은 가정하지 않는다.
 - 기존 `gpk sync`는 현재 PostgREST 직접 조회 계약을 유지한다. 새 함수로의 전환은 이 기능의 필수 변경이 아니다.
 
 위 기본안은 추가 인터뷰 없이 문서를 완성하기 위한 설계 선택이다. 사용자가 직접 확정한 네 가지 요구와 구분한다.
@@ -42,7 +45,7 @@ _meta:
 ### 구현 시 기술 검증 사항
 
 - Management API의 multipart 파일명·metadata·entrypoint 조합을 실제 배포로 검증한다.
-- 대상 Edge Runtime에서 기본 제공 환경 변수와 publishable key를 사용한 PostgREST 요청이 동작하는지 확인한다.
+- 대상 Edge Runtime에서 기본 제공 환경 변수와 publishable key를 사용한 SupabaseClient 조회가 동작하는지 확인한다.
 - 아래의 문자열 캐스팅 조회가 대상 PostgREST 버전에서 `bigint` 정밀도를 보존하는지 확인한다.
 
 ## 3. 요구사항 정리
@@ -69,7 +72,7 @@ Access Token은 Management API 요청의 `Authorization: Bearer` 헤더에만 �
 
 배포 API는 `edge_functions:write` OAuth scope 또는 fine-grained token의 `edge_functions_write` 권한을 명시한다. 실제 토큰은 대상 프로젝트에 접근할 수 있어야 한다. [배포 API 계약](https://supabase.com/docs/reference/api/v1-deploy-a-function)
 
-명령의 성공은 함수 배포 성공을 뜻한다. publishable key와 조회할 bucket을 입력받지 않으므로 실제 패치 조회 성공까지 자동으로 보증하지 않는다. 런타임 호출은 구현 완료 검증에서 별도로 확인한다.
+명령의 성공은 함수 배포 성공을 뜻한다. 조회할 bucket을 입력받지 않으므로 실제 패치 조회 성공까지 자동으로 보증하지 않는다. 런타임 호출은 구현 완료 검증에서 별도로 확인한다.
 
 네트워크 오류로 응답을 받지 못한 경우 배포 적용 여부가 불명확할 수 있다. 성공으로 단정하지 않고 재실행할 수 있도록 안내한다. 재실행은 같은 함수 이름을 갱신하며 포인터나 패치 파일에 영향을 주지 않는다. 함수 배포 버전은 재실행할 때 증가할 수 있다.
 
@@ -78,7 +81,7 @@ Access Token은 Management API 요청의 `Authorization: Bearer` 헤더에만 �
 | 항목 | 계약 |
 | --- | --- |
 | 메서드·경로 | `GET /functions/v1/get-patch-version?bucket=<bucket>` |
-| 인증 헤더 | `apikey: <대상 프로젝트의 publishable key>` |
+| 인증 헤더 | 없음. `verify_jwt=false`인 공개 GET |
 | 조회 대상 | 함수 실행 환경의 `SUPABASE_URL`에 속한 `public.gamepatch_pointer` |
 | `bucket` | 필수. 기존 CLI와 같은 영숫자·`.`·`_`·`-` 범위. 정확히 해당 행만 조회 |
 | 성공 응답 | `bucket: string`, `releaseVersion: string`, `manifestPath: string` |
@@ -92,25 +95,25 @@ Access Token은 Management API 요청의 `Authorization: Bearer` 헤더에만 �
 
 ### 호출 인증·DB 권한
 
-- publishable key는 JWT가 아니므로 함수 배포 metadata에 `verify_jwt=false`를 명시한다. 이것만으로 인증이 구현되는 것은 아니다. [Edge Function 인증 헤더](https://supabase.com/docs/guides/functions/auth-headers)
-- 함수는 publishable key 형식의 `apikey`를 요구하고, 해당 키를 고정된 대상 프로젝트의 PostgREST에 전달한다. 키의 유효성 검증은 PostgREST 요청 결과로 확인하며 접두어 검사만으로 인증 성공으로 판단하지 않는다.
-- 호출자의 `Authorization` 헤더는 전달하지 않고 publishable key에 해당하는 `anon` 읽기 권한으로만 조회한다. Edge Function에서도 service role로 권한을 높이지 않는다.
+- 공개 호출을 위해 함수 배포 metadata에 `verify_jwt=false`를 명시한다. [Edge Function 인증 헤더](https://supabase.com/docs/guides/functions/auth-headers)
+- 함수는 호스팅 환경에 기본 제공되는 `SUPABASE_PUBLISHABLE_KEYS.default`를 고정된 대상 프로젝트의 PostgREST에 전달한다. 별도 배포 인자나 secret 등록은 추가하지 않는다. [Edge Function 환경 변수](https://supabase.com/docs/guides/functions/secrets)
+- 호출자의 `apikey`와 `Authorization` 헤더는 전달하지 않고 기본 publishable key에 해당하는 `anon` 읽기 권한으로만 조회한다. Edge Function에서도 service role로 권한을 높이지 않는다.
 - 기존 `anon` SELECT GRANT와 읽기 RLS 정책을 사용한다. 기존 공개 패치 정보 접근 모델을 유지하며 publishable key를 게임별 비밀 접근권으로 간주하지 않는다.
 - Access Token은 배포 시에만 사용하고 함수 환경 변수에 등록하지 않는다. 별도의 DB 비밀번호나 프로젝트 secret key를 입력받지 않는다.
 
 ### HTTP 실패 계약
 
 오류 본문은 `error.code`와 `error.message`를 가지며 내부 응답이나 인증 정보를 노출하지 않는다.
+모든 오류 응답은 `function`, HTTP `status`, `error.code`만 포함한 JSON 한 줄을 `console.error`로 기록한다. API key, Access Token, 요청 헤더와 상류 응답 본문은 로그에 넣지 않는다.
 
 | 상태 | 의미 |
 | --- | --- |
 | `400` | bucket 누락·빈 값·중복·잘못된 형식 |
-| `401` | publishable key 누락·형식 오류·원격 API의 인증 거부 |
+| `401` | 함수에 기본 제공된 publishable key가 원격 API에서 거부됨 |
 | `403` | 인증된 조회 요청이 원격 API에서 권한 부족으로 거부됨 |
 | `404` | 조회 성공 후 해당 bucket의 포인터 행이 없음 |
 | `405` | GET 이외의 지원하지 않는 메서드 |
-| `500` | 테이블 누락·계약에 맞지 않는 데이터·실행 환경 설정 오류 |
-| `502` | PostgREST 연결 실패 또는 그 밖의 상위 API 실패 |
+| `500` | 테이블 누락·조회 실패·기본 환경 변수 누락 또는 형식 오류 |
 
 테이블이 없는 상태와 정상 조회 결과가 빈 상태를 구별한다. 첫 게시 전에는 `0`을 만들어 반환하지 않는다. 실제 첫 게시 버전 `0`은 정상 값이다.
 
@@ -131,7 +134,7 @@ Access Token은 Management API 요청의 `Authorization: Bearer` 헤더에만 �
 
 C#은 기존 런타임의 `HttpClient`와 multipart 전송, 기존 Newtonsoft.Json으로 Management API를 호출한다. Supabase CLI·Docker·Deno가 사용자 머신에 설치되어 있어야 하는 구조를 만들지 않는다.
 
-함수 소스는 CLI assembly의 embedded resource로 포함한다. NuGet tool과 self-contained 배포물 모두 같은 소스를 포함하고 현재 작업 디렉터리나 저장소 checkout에 의존하지 않는다. 함수는 Edge Runtime 기본 HTTP API와 `fetch`로 PostgREST를 호출하는 단일 파일로 작성하여 별도 npm 패키지 없이 시작한다.
+함수 소스와 `deno.json`·`deno.lock`은 CLI assembly의 embedded resource로 포함한다. NuGet tool과 self-contained 배포물 모두 같은 파일을 포함하고 현재 작업 디렉터리나 저장소 checkout에 의존하지 않는다. 함수는 고정 버전 SupabaseClient로 포인터를 조회한다.
 
 ## 6. 단순 구조 실패 조건
 
@@ -178,6 +181,8 @@ C#은 기존 런타임의 `HttpClient`와 multipart 전송, 기존 Newtonsoft.Js
 | --- | --- |
 | `src/GamePatchKit.Cli/DeployFunctionCommand.cs` | 배포 명령 구현 |
 | `src/GamePatchKit.Cli/Functions/get-patch-version.ts` | 동봉할 Edge Function의 유일한 원본 |
+| `src/GamePatchKit.Cli/Functions/deno.json` | SupabaseClient 버전 고정 |
+| `src/GamePatchKit.Cli/Functions/deno.lock` | 함수 의존성 무결성 고정 |
 | `src/GamePatchKit.Cli/CommandArguments.cs` | 배포 인자 타입·파서 추가 |
 | `src/GamePatchKit.Cli/Program.cs` | 명령 분기·출력 연결 |
 | `src/GamePatchKit.Cli/GamePatchKit.Cli.csproj` | 함수 소스를 embedded resource로 포함 |
@@ -196,14 +201,16 @@ C#은 기존 런타임의 `HttpClient`와 multipart 전송, 기존 Newtonsoft.Js
 - 자동 재시도·캐시·배치 프로젝트 배포·플랫폼 및 채널 정책: 요청에서 요구하지 않음.
 - 함수명·테이블명·원격 소스 경로 설정: 고정된 패치 버전 함수를 배포하는 목적에 불필요함.
 - 자동 공개 API 키 조회·배포 명령의 실데이터 호출 검사: 두 배포 인자만 받는 계약에 추가 관리 권한과 동작을 요구함.
+- custom secret 등록과 publishable key 배포 인자: 호스팅 환경의 기본 publishable key로 충분하며 추가 Management API 권한과 설정이 불필요함.
 
 ## 13. 단순화 자가 검토 결과
 
 - 새 C# 타입 2개, 새 인터페이스 0개, 패턴 0개, 새 구현 폴더 계층 1개다.
-- 새 NuGet/npm 의존성 없이 기존 HTTP·JSON 처리와 런타임 기능으로 시작한다.
+- 런타임 의존성은 `@supabase/supabase-js` 하나이며 정확한 버전과 lockfile을 함께 관리한다.
 - 단일 구현 인터페이스, 새 도메인 객체, 기존 CLI 파서의 광범위한 리팩터링은 없다.
 - 사용자 확정 요구와 문서 작성 시의 기본안을 구분했다.
 - 배포 성공과 패치 조회 성공, 함수 버전과 패치 버전, 배포 인증과 조회 인증을 구분했다.
+- 호출자에게 프로젝트 publishable key를 요구하지 않고 함수의 기본 환경 변수를 사용한다.
 - 종합 판정: 단순 구조 유지. 실제 패키징과 원격 배포 검증은 구현 단계에 남아 있다.
 
 ## 14. 위임 다음 단계
@@ -215,8 +222,8 @@ C#은 기존 런타임의 `HttpClient`와 multipart 전송, 기존 Newtonsoft.Js
 | 1 | Management API 배포 형식과 단일 함수 소스 준비 | 대상 테스트 프로젝트에 함수가 생성되고 같은 이름으로 갱신됨 |
 | 2 | C# 명령·인자 파서 연결 | project ref가 요청 경로에, 토큰이 인증 헤더에 전달됨. 잘못된 인자는 원격 호출 전에 실패 |
 | 3 | 조회 HTTP 계약 구현 | 두 bucket의 각 버전, 미게시 404, 실제 버전 0, 롤백을 정확하게 반환 |
-| 4 | 인증·오류·숫자 계약 확인 | 키 누락·다른 프로젝트 키·권한 오류·테이블 누락 구분. `9007199254740993` 및 `9223372036854775807`이 문자열로 보존됨 |
-| 5 | 기존 배포물에 함수 리소스 동봉 | 저장소 밖에서 실행한 NuGet tool 및 standalone 산출물에 동일 소스가 포함되고 읽힘 |
+| 4 | 인증·오류·숫자 계약 확인 | 기본 publishable key를 사용하고 호출자 인증 헤더를 전달하지 않음. 인증·권한 오류는 401·403, 나머지 조회 실패는 500으로 반환하고 상태·코드만 로그에 기록. `9007199254740993` 및 `9223372036854775807`이 문자열로 보존됨 |
+| 5 | 기존 배포물에 함수 리소스 동봉 | 저장소 밖에서 실행한 NuGet tool 및 standalone 산출물에 동일 소스·의존성 설정·lockfile이 포함되고 읽힘 |
 | 6 | 프로젝트 간 재사용 확인 | 동일 CLI로 A와 B에 배포하고 각 함수가 자신의 프로젝트 포인터만 반환함 |
 | 7 | 사용법 문서와 자체 검토 | 실제 명령·제약·검증 결과가 문서와 일치하며 기존 CLI 검사 통과 |
 

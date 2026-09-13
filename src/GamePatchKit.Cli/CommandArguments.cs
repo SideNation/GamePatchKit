@@ -8,11 +8,22 @@ internal sealed record UploadArguments(string OutputPath, string? EnvFilePath);
 
 internal sealed record SyncArguments(string OutputPath, string? EnvFilePath);
 
+internal sealed record DeployFunctionArguments(string ProjectId, string AccessToken)
+{
+    public override string ToString()
+    {
+        return "DeployFunctionArguments { AccessToken = [redacted] }";
+    }
+}
+
 internal static class ArgumentsParser
 {
     private const string SourceOption = "--source";
     private const string OutputOption = "--output";
     private const string EnvFileOption = "--env-file";
+    private const string ProjectIdOption = "--project-id";
+    private const string AccessTokenOption = "--access-token";
+    private const int ProjectRefLength = 20;
 
     public static BuildArguments ParseBuild(string[] arguments)
     {
@@ -48,6 +59,54 @@ internal static class ArgumentsParser
             acceptsSource: false,
             acceptsEnvFile: true);
         return new SyncArguments(outputPath, envFilePath);
+    }
+
+    public static DeployFunctionArguments ParseDeployFunction(string[] arguments)
+    {
+        string? projectId = null;
+        string? accessToken = null;
+
+        for (int index = 0; index < arguments.Length; index += 2)
+        {
+            string option = arguments[index];
+
+            if (option is not (ProjectIdOption or AccessTokenOption))
+            {
+                throw new BuildException("알 수 없는 deploy-function 옵션입니다.");
+            }
+
+            if ((option == ProjectIdOption && projectId is not null) || (option == AccessTokenOption && accessToken is not null))
+            {
+                throw new BuildException($"{option} 옵션을 두 번 지정할 수 없습니다.");
+            }
+
+            if (index + 1 >= arguments.Length || string.IsNullOrWhiteSpace(arguments[index + 1])
+                || arguments[index + 1].StartsWith("--", StringComparison.Ordinal))
+            {
+                throw new BuildException($"{option} 옵션의 값을 지정해야 합니다.");
+            }
+
+            if (option == ProjectIdOption)
+            {
+                projectId = arguments[index + 1];
+            }
+            else
+            {
+                accessToken = arguments[index + 1];
+            }
+        }
+
+        if (projectId is null || projectId.Length != ProjectRefLength || projectId.Any(character => character is < 'a' or > 'z'))
+        {
+            throw new BuildException("--project-id에 소문자 영문 20자로 된 project ref를 지정해야 합니다.");
+        }
+
+        if (accessToken is null || accessToken.Any(character => character <= ' ' || character > '~'))
+        {
+            throw new BuildException("--access-token에 공백 없는 Access Token을 지정해야 합니다.");
+        }
+
+        return new DeployFunctionArguments(projectId, accessToken);
     }
 
     private static (string? SourcePath, string OutputPath, string? EnvFilePath) ParseOptions(
