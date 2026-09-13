@@ -28,6 +28,9 @@ namespace GamePatchKit.Unity.Tests
         private const string ConfigObjectPath = "files/raw/1/config.txt.v1.0";
         private const string UnitsObjectPath = "files/content/1/units.json.v1.1";
         private const string UnitsEntryPath = "units.json";
+        private const string ArchivesDirectoryName = "archives";
+        private const string FilesDirectoryName = "files";
+        private const string RawObjectPathPrefix = "files/raw/";
         private const int AbortTimeoutMilliseconds = 10000;
 
         private string _rootPath = null!;
@@ -114,6 +117,7 @@ namespace GamePatchKit.Unity.Tests
             Assert.That(result.ExtractedCount, Is.EqualTo(3));
             Assert.That(result.RemovedCount, Is.EqualTo(0));
             AssertSynchronized(0);
+            AssertMirrorDeleted();
         }
 
         [Test]
@@ -140,10 +144,11 @@ namespace GamePatchKit.Unity.Tests
 
             Assert.That(result.PreviousReleaseVersion, Is.EqualTo(0));
             Assert.That(result.DownloadedCount, Is.EqualTo(3));
-            Assert.That(result.ReusedCount, Is.EqualTo(1));
+            Assert.That(result.ReusedCount, Is.EqualTo(0));
             Assert.That(result.ExtractedCount, Is.EqualTo(3));
             Assert.That(result.RemovedCount, Is.EqualTo(0));
             AssertSynchronized(1);
+            AssertMirrorDeleted();
         }
 
         [Test]
@@ -154,11 +159,13 @@ namespace GamePatchKit.Unity.Tests
             PatchSyncResult result = await _client.SyncAsync(0);
 
             Assert.That(result.PreviousReleaseVersion, Is.EqualTo(1));
-            Assert.That(result.DownloadedCount, Is.EqualTo(1));
-            Assert.That(result.ReusedCount, Is.EqualTo(1));
+            // units.json이 아카이브 구간으로 되돌아가므로 아카이브를 다시 받는다. 미러를 지웠기 때문이다.
+            Assert.That(result.DownloadedCount, Is.EqualTo(2));
+            Assert.That(result.ReusedCount, Is.EqualTo(0));
             Assert.That(result.ExtractedCount, Is.EqualTo(2));
             Assert.That(result.RemovedCount, Is.EqualTo(1));
             AssertSynchronized(0);
+            AssertMirrorDeleted();
         }
 
         [Test]
@@ -172,6 +179,7 @@ namespace GamePatchKit.Unity.Tests
 
             Assert.That(exception.Message, Does.Contain("checksum"));
             Assert.That(File.Exists(Path.Combine(_rootPath, ManifestFileName)), Is.False);
+            Assert.That(File.Exists(GetPendingPath(0)), Is.True);
             Assert.That(File.Exists(Path.Combine(_rootPath, ToLocalPath(ConfigObjectPath))), Is.False);
             AssertNoTemporaryFiles();
         }
@@ -228,8 +236,8 @@ namespace GamePatchKit.Unity.Tests
         }
 
         // checksum은 맞지만 zstd 프레임이 아닌 산출물은 해제 단계에서 실패한다. 앞선 엔트리(forest)는 이미 세대 1로
-        // 풀린 뒤라 트리는 두 세대가 섞인 상태이고 이전 세대 표식도 없다. 다음 동기화는 이전 세대를 가정하지 않고
-        // 전체를 다시 풀어 수렴해야 한다.
+        // 풀린 뒤라 트리는 두 세대가 섞인 상태다. manifest.json은 세대 0 그대로 남고 목표는 1.json으로 남으므로,
+        // 이전 세대로 되돌리는 동기화는 두 매니페스트가 모두 보증하는 엔트리만 건너뛰고 나머지를 다시 푼다.
         [Test]
         public async Task SyncAsync_UndecodableArtifact_FailsAndNextSyncConverges()
         {
@@ -253,7 +261,7 @@ namespace GamePatchKit.Unity.Tests
 
             Assert.That(exception.Message, Does.Contain("해제하지 못했습니다"));
             Assert.That(exception.InnerException, Is.Not.Null);
-            Assert.That(File.Exists(Path.Combine(_rootPath, ManifestFileName)), Is.False);
+            Assert.That(File.Exists(GetPendingPath(1)), Is.True);
             Assert.That(File.Exists(Path.Combine(_client.DataPath, "content", "maps", "forest.json")), Is.True);
             Assert.That(
                 File.ReadAllBytes(Path.Combine(_client.DataPath, "content", "units.json")),
@@ -262,10 +270,12 @@ namespace GamePatchKit.Unity.Tests
 
             PatchSyncResult recovered = await _client.SyncAsync(0);
 
-            Assert.That(recovered.PreviousReleaseVersion, Is.Null);
-            Assert.That(recovered.DownloadedCount, Is.EqualTo(0));
+            Assert.That(recovered.PreviousReleaseVersion, Is.EqualTo(0));
+            // 세대 0의 units.json은 아카이브 구간이고 config.txt도 되돌려야 하는데 둘 다 미러에 없어 다시 받는다.
+            Assert.That(recovered.DownloadedCount, Is.EqualTo(2));
             Assert.That(recovered.RemovedCount, Is.EqualTo(1));
             AssertSynchronized(0);
+            AssertMirrorDeleted();
         }
 
         // 아카이브 응답을 열어 주지 않은 채 취소하므로, 동기화가 끝났다면 Abort가 요청을 실제로 끊은 것이다.
@@ -301,8 +311,143 @@ namespace GamePatchKit.Unity.Tests
 
             Assert.That(_server.RequestCount, Is.EqualTo(2));
             Assert.That(File.Exists(Path.Combine(_rootPath, ManifestFileName)), Is.False);
+            Assert.That(File.Exists(GetPendingPath(0)), Is.True);
             Assert.That(File.Exists(Path.Combine(_rootPath, ToLocalPath(ArchiveObjectPath))), Is.False);
             AssertNoTemporaryFiles();
+        }
+
+        // 완료된 세대가 없으면 <세대>.json만으로는 트리의 파일이 어디서 왔는지 보증할 수 없다. 크기만 같고 내용이
+        // 다른 파일이 남아 있어도 건너뛰지 않고 다시 풀어야 한다.
+        [Test]
+        public async Task SyncAsync_WithoutCompletedGeneration_DoesNotTrustExistingFiles()
+        {
+            _server.HeldObjectPathPrefix = ArchivesDirectoryName;
+
+            using (var cancellation = new CancellationTokenSource())
+            {
+                _server.OnRequest = objectPath =>
+                {
+                    if (objectPath == ArchiveObjectPath)
+                    {
+                        cancellation.Cancel();
+                    }
+                };
+
+                try
+                {
+                    await AssertThrowsAsync<OperationCanceledException>(() => _client.SyncAsync(0, cancellation.Token));
+                }
+                finally
+                {
+                    _server.ReleaseHeldResponses();
+                }
+            }
+
+            Assert.That(File.Exists(Path.Combine(_rootPath, ManifestFileName)), Is.False);
+            Assert.That(File.Exists(GetPendingPath(0)), Is.True);
+
+            // 세대 0의 raw/config.txt와 길이는 같고 내용이 다른 파일을 심는다.
+            string plantedPath = Path.Combine(_client.DataPath, "raw", "config.txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(plantedPath)!);
+            File.WriteAllBytes(plantedPath, Enumerable.Repeat((byte)'X', _server.ReadObject(ConfigObjectPath).Length).ToArray());
+
+            _server.HeldObjectPathPrefix = null;
+            _server.OnRequest = null;
+            await _client.SyncAsync(0);
+
+            AssertSynchronized(0);
+            AssertMirrorDeleted();
+        }
+
+        // 해석할 수 없는 <세대>.json도 트리가 섞여 있다는 증거다. 지워 버리면 혼합 트리를 이미 최신으로 착각한다.
+        [Test]
+        public async Task SyncAsync_UnreadablePendingManifest_StillRepairsMixedTree()
+        {
+            await _client.SyncAsync(0);
+            byte[] garbage = Encoding.ASCII.GetBytes(new string('A', 69));
+            byte[] manifest = ReplaceStoredObject(_server.ReadObject("manifests/1.json"), UnitsEntryPath, garbage);
+            _server.Override = objectPath =>
+            {
+                switch (objectPath)
+                {
+                    case "manifests/1.json":
+                        return manifest;
+                    case UnitsObjectPath:
+                        return garbage;
+                    default:
+                        return _server.ReadObjectOrNull(objectPath);
+                }
+            };
+
+            await AssertThrowsAsync<PatchClientException>(() => _client.SyncAsync(1));
+
+            Assert.That(File.Exists(Path.Combine(_client.DataPath, "content", "maps", "forest.json")), Is.True);
+            File.WriteAllText(GetPendingPath(1), "{}");
+
+            // 세대 0과 1의 config.txt는 길이가 같고 내용만 다르다. 표식을 해석할 수 없으면 기존 manifest.json도
+            // 근거로 쓸 수 없다는 것을 이 파일로 고정한다. 건너뛰면 세대 1 내용이 그대로 남는다.
+            File.Copy(
+                Path.Combine(FixturesPath, "source", "1", "raw", "config.txt"),
+                Path.Combine(_client.DataPath, "raw", "config.txt"),
+                overwrite: true);
+            _server.Override = null;
+
+            PatchSyncResult recovered = await _client.SyncAsync(0);
+
+            Assert.That(recovered.IsAlreadyUpToDate, Is.False);
+            Assert.That(File.Exists(GetPendingPath(1)), Is.False);
+            AssertSynchronized(0);
+            AssertMirrorDeleted();
+        }
+
+        // 중단된 목표 세대를 다시 요청하면 매니페스트를 다시 받지 않고, 이미 받아 둔 산출물도 다시 받지 않는다.
+        [Test]
+        public async Task SyncAsync_ResumesInterruptedGeneration_WithoutDownloadingAgain()
+        {
+            await _client.SyncAsync(0);
+            _server.HeldObjectPathPrefix = RawObjectPathPrefix;
+
+            using (var cancellation = new CancellationTokenSource())
+            {
+                // 오버레이 3개 중 앞의 2개가 자리를 잡은 뒤 마지막 요청이 서버에 닿으면 취소한다.
+                _server.OnRequest = objectPath =>
+                {
+                    if (objectPath.StartsWith(RawObjectPathPrefix, StringComparison.Ordinal))
+                    {
+                        cancellation.Cancel();
+                    }
+                };
+
+                try
+                {
+                    await AssertThrowsAsync<OperationCanceledException>(() => _client.SyncAsync(1, cancellation.Token));
+                }
+                finally
+                {
+                    _server.ReleaseHeldResponses();
+                }
+            }
+
+            Assert.That(File.Exists(Path.Combine(_rootPath, ManifestFileName)), Is.True);
+            Assert.That(File.Exists(GetPendingPath(1)), Is.True);
+
+            var requestedPaths = new List<string>();
+            _server.OnRequest = objectPath =>
+            {
+                lock (requestedPaths)
+                {
+                    requestedPaths.Add(objectPath);
+                }
+            };
+
+            PatchSyncResult result = await _client.SyncAsync(1);
+
+            Assert.That(requestedPaths, Does.Not.Contain("manifests/1.json"));
+            Assert.That(result.DownloadedCount, Is.EqualTo(1));
+            Assert.That(result.ReusedCount, Is.EqualTo(2));
+            Assert.That(result.ExtractedCount, Is.EqualTo(3));
+            AssertSynchronized(1);
+            AssertMirrorDeleted();
         }
 
 #if UNITY_EDITOR
@@ -388,6 +533,17 @@ namespace GamePatchKit.Unity.Tests
             }
 
             return Encoding.UTF8.GetBytes(manifest.ToString(Formatting.None));
+        }
+
+        private string GetPendingPath(long releaseVersion)
+        {
+            return Path.Combine(_rootPath, $"{releaseVersion}.json");
+        }
+
+        private void AssertMirrorDeleted()
+        {
+            Assert.That(Directory.Exists(Path.Combine(_rootPath, ArchivesDirectoryName)), Is.False);
+            Assert.That(Directory.Exists(Path.Combine(_rootPath, FilesDirectoryName)), Is.False);
         }
 
         private long ObjectSize(string objectPath)

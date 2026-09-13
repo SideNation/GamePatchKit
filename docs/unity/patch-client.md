@@ -2,10 +2,10 @@
 
 ## 개요
 
-`com.sidenation.gamepatchkit` 패키지의 `PatchClient`는 `gpk upload`가 공개 Storage에 게시한 세대를 Unity 클라이언트에 내려받아 원본 파일 트리로 복원한다. 게임 서버가 알려준 `releaseVersion`을 그대로 넘기면 로컬이 그 세대와 다를 때만 세대 매니페스트와 없는 산출물을 받아 `<rootPath>/data` 아래를 맞춘다. 롤백(서버가 이전 세대를 알려주는 경우)도 같은 호출로 처리된다.
+`com.sidenation.gamepatchkit` 패키지의 `PatchClient`는 `gpk upload`가 공개 Storage에 게시한 세대를 Unity 클라이언트에 내려받아 원본 파일 트리로 복원한다. 게임 서버가 알려준 `releaseVersion`을 그대로 넘기면 로컬이 그 세대와 다를 때만 세대 매니페스트와 다시 풀어야 하는 엔트리의 산출물을 받아 `<rootPath>/data` 아래를 맞춘다. 롤백(서버가 이전 세대를 알려주는 경우)도 같은 호출로 처리된다.
 
 - 네트워크는 Unity 메인 스레드의 `UnityWebRequest`가, SHA-256 검증과 zstd 해제는 백그라운드 스레드가 맡는다.
-- 로컬 배치는 [`gpk sync`](../cli/sync.md)와 같다. `manifest.json`, 압축 미러(`archives/`, `files/`), 해제한 원본 트리(`data/`)가 한 폴더에 놓인다.
+- 동기화가 끝나면 저장 폴더에는 `manifest.json`과 해제한 원본 트리(`data/`)만 남는다. 받은 압축 산출물은 해제한 뒤 지운다.
 - Supabase 포인터 테이블은 읽지 않는다. 어느 세대를 쓸지는 [배포 PRD](../prd/gamepatch-kit-distribution-prd.md)대로 게임 서버가 정해 클라이언트에 알린다.
 
 ## 설치
@@ -68,7 +68,7 @@ public sealed class PatchBootstrap : MonoBehaviour
 ```
 
 - `baseUrl`은 게시된 객체 이름을 그대로 뒤에 붙일 URL prefix다. Supabase 공개 버킷이면 `https://<project-ref>.supabase.co/storage/v1/object/public/<bucket>/` 형식이다. 끝의 `/`는 없어도 붙여 준다. http 또는 https 절대 URL이 아니면 생성자가 `ArgumentException`을 던진다.
-- `rootPath`는 클라이언트가 소유하는 폴더다. 없으면 만든다. `data/` 아래에 매니페스트에 없는 파일은 지우므로 다른 파일을 두지 않는다.
+- `rootPath`는 클라이언트가 소유하는 폴더다. 없으면 만든다. `data/` 아래에 매니페스트에 없는 파일은 지우고, 루트 바로 아래의 `<숫자>.json`은 진행 중 표식으로 보고 지울 수 있으므로 다른 파일을 두지 않는다.
 - `SyncAsync`는 Unity 메인 스레드에서 호출한다. 다른 스레드에서 호출하면 `InvalidOperationException`이다. 같은 폴더에 대한 `SyncAsync`를 동시에 실행하지 않는다.
 - `releaseVersion`은 0 이상이어야 한다.
 
@@ -81,28 +81,39 @@ public sealed class PatchBootstrap : MonoBehaviour
 | `IsAlreadyUpToDate` | 로컬이 이미 요청한 세대여서 원격을 한 번도 호출하지 않았다 |
 | `PreviousReleaseVersion` | 호출 전 로컬 세대. 처음 받는 폴더면 `null` |
 | `DownloadedCount`, `DownloadedBytes` | 이번에 받은 산출물 수와 저장 바이트 |
-| `ReusedCount` | 로컬에 같은 이름·크기로 있어 받지 않은 산출물 수. 이름에 세대가 들어간 불변 객체라 이름이 같으면 바이트도 같다는 게시 계약을 신뢰하며, 재사용 산출물의 SHA-256은 다시 계산하지 않는다 |
+| `ReusedCount` | 앞서 중단된 호출이 이미 받아 둔 산출물 수. 성공한 동기화는 압축 산출물을 지우므로 평상시에는 0이다. 이름에 세대가 들어간 불변 객체라 이름이 같으면 바이트도 같다는 게시 계약을 신뢰하며, 재사용 산출물의 SHA-256은 다시 계산하지 않는다 |
 | `ExtractedCount`, `RemovedCount` | `data`에 새로 푼 파일 수와 새 세대에 없어 지운 파일 수 |
 
 세대가 같지 않으면(크든 작든) 동기화하므로 이전 세대로 돌아가는 호출도 같은 결과 형태를 돌려준다.
 
 ## 폴더 배치
 
+동기화가 끝난 상태다.
+
 ```text
 <rootPath>/
-├── manifest.json         받은 세대 매니페스트 바이트 그대로
-├── archives/             압축 미러: 아카이브 산출물
-├── files/                압축 미러: 파일 객체 산출물
+├── manifest.json         현재 세대 매니페스트 바이트 그대로
 └── data/                 해제한 원본 트리 <- 게임이 읽는 곳
     ├── content/maps/desert.json
     └── raw/config.txt
 ```
 
+동기화가 진행 중이거나 중단된 상태다.
+
+```text
+<rootPath>/
+├── manifest.json         아직 이전 세대
+├── 7.json                받아 둔 목표 세대 매니페스트
+├── archives/, files/     이번 호출이 받은 압축 산출물
+└── data/                 두 세대가 섞여 있을 수 있다
+```
+
 - `data/<그룹 id>/<엔트리 path>`는 `gpk build`에 쓴 데이터 루트와 같은 배치다.
-- 압축 미러는 해제 후에도 남긴다. 다음 세대에서 바뀌지 않은 산출물을 다시 받지 않기 위한 것이며, 디스크는 압축본과 원본을 합한 만큼 필요하다.
-- 다운로드·검증 단계에서 실패하면 `manifest.json`과 `data/`는 이전 세대 그대로이며, 다시 호출하면 이미 받은 산출물은 재사용하고 나머지만 받는다.
-- `data/` 트리를 바꾸기 시작하면 이전 세대 표식인 `manifest.json`을 먼저 지우고, 모든 해제가 끝난 뒤에만 새 매니페스트를 쓴다. 해제 중에 실패하거나 취소되면 `manifest.json`이 없는 상태로 남고, 다음 호출은 `PreviousReleaseVersion`을 `null`로 보고하며 산출물은 다시 받지 않고 `data`를 전량 다시 풀어 수렴한다.
-- 동기화 중에는 `data/`를 읽지 않는다. 세대를 넘어가는 구간에는 두 세대의 파일이 섞여 있다.
+- 목표 세대 매니페스트를 `<세대>.json`으로 먼저 저장하고, 필요한 산출물을 받아 해제한 뒤, 그 파일을 `manifest.json`으로 한 번에 교체한다. 교체가 끝나면 압축 산출물과 남은 `<세대>.json`을 지운다.
+- 다운로드·검증 단계에서 실패하면 `manifest.json`과 `data/`는 이전 세대 그대로다.
+- 해제 도중 실패하거나 취소되면 `data/`에 두 세대가 섞이지만 `manifest.json`은 이전 세대를 가리킨 채 남고 `<세대>.json`이 함께 남는다. 같은 세대를 다시 요청하면 매니페스트를 다시 받지 않고, 이미 받아 둔 산출물도 다시 받지 않으며, 남은 엔트리만 풀어 마친다. 다른 세대를 요청하면 로컬에 있는 모든 매니페스트가 보증하는 엔트리만 건너뛰고 나머지를 다시 푼다.
+- **`<세대>.json`이 하나라도 있으면 `data/`를 읽지 않는다.** 그 사이에는 두 세대의 파일이 섞여 있을 수 있다. 게임은 `SyncAsync`가 성공으로 끝난 뒤에 읽는다.
+- 받은 압축 산출물을 남기지 않으므로 디스크는 `data/` 크기만 필요하다. 대신 이전 세대로 되돌리는 호출은 되돌릴 엔트리가 아카이브 안에 있으면 그 아카이브를 다시 받는다.
 
 ## 실패
 
@@ -120,7 +131,7 @@ public sealed class PatchBootstrap : MonoBehaviour
 | `해제한 파일의 크기가 다릅니다` | 매니페스트의 `size`와 산출물 내용이 맞지 않음 | 게시 산출물 점검 |
 | `산출물을 해제하지 못했습니다: <경로>` | checksum은 맞지만 zstd 프레임이 아닌 산출물 | 게시 산출물 점검. `InnerException`에 원인이 있다 |
 | `로컬 파일 작업이 실패했습니다` | 저장 공간·권한 등 로컬 I/O 오류 | `InnerException`을 확인하고 재호출 |
-| `로컬 매니페스트가 올바르지 않습니다.` | `<rootPath>/manifest.json`이 손상됨 | 파일을 지우고 재호출. 산출물은 재사용되고 `data`는 전량 다시 푼다 |
+| `로컬 매니페스트가 올바르지 않습니다.` | `<rootPath>/manifest.json`이 손상됨 | 파일을 지우고 재호출하면 필요한 산출물을 다시 받아 `data`를 전량 다시 푼다 |
 
 재시도·백오프는 넣지 않는다. 호출자가 다시 `SyncAsync`를 부르면 된다.
 
@@ -142,7 +153,7 @@ public sealed class PatchBootstrap : MonoBehaviour
 
 2. Unity Hub에서 `unity/GamePatchKit.Unity.Host`를 Unity 6000.4.4f1로 열고 `Assets/PatchClientSample/PatchClientSample.unity`를 연 뒤 Play를 누른다.
 3. `Base URL`은 씬의 `PatchClientSample` 오브젝트 인스펙터에서 설정한다(기본값 `http://127.0.0.1:8765/`, 실행 중 패널에서도 고칠 수 있다). 화면 패널에서 `releaseVersion`에 `0`을 넣고 **Sync**를 누른다. 로그에 `downloaded=2`가 찍히고 로컬 상태에 `data/content/maps/desert.json`, `data/content/units.json`, `data/raw/config.txt`가 나타난다.
-4. `releaseVersion`을 `1`로 바꿔 **Sync**하면 바뀐 산출물 3개만 받고(`reused=1`) `data/content/maps/forest.json`이 추가된다. 다시 `0`으로 **Sync**하면 롤백돼 `forest.json`이 사라진다(`removed=1`). 같은 값으로 다시 누르면 `이미 최신입니다`가 나온다.
+4. `releaseVersion`을 `1`로 바꿔 **Sync**하면 바뀐 산출물 3개만 받고 `data/content/maps/forest.json`이 추가된다. 아카이브는 다시 받지 않는다. 다시 `0`으로 **Sync**하면 롤백돼 `forest.json`이 사라진다(`removed=1`). 같은 값으로 다시 누르면 `이미 최신입니다`가 나온다.
 5. **Delete local root**는 `rootPath` 폴더를 지워 처음부터 다시 시험할 수 있게 한다. **Cancel**은 진행 중인 동기화를 취소한다.
 
 - `rootPath`는 `Application.persistentDataPath/GamePatchKit`이며 패널에 표시된다.

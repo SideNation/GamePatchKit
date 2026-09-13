@@ -10,13 +10,53 @@ using Newtonsoft.Json.Linq;
 
 namespace GamePatchKit.Unity
 {
+    // 진행 중이던 목표 세대다. 파일 이름이 곧 표식이라 별도 상태 파일 형식을 두지 않고, 복구할 때 매니페스트를
+    // 다시 받지 않는다.
+    internal sealed class PendingManifest
+    {
+        public PendingManifest(long releaseVersion, PatchManifest manifest, string path)
+        {
+            ReleaseVersion = releaseVersion;
+            Manifest = manifest;
+            Path = path;
+        }
+
+        public long ReleaseVersion { get; }
+
+        public PatchManifest Manifest { get; }
+
+        public string Path { get; }
+    }
+
+    // 루트에 남아 있는 진행 중 표식 전부다. 해석할 수 없는 표식도 "트리가 섞여 있을 수 있다"는 증거이므로
+    // 읽는 시점에 지우지 않고 함께 보고한다.
+    internal sealed class PendingScan
+    {
+        public PendingScan(IReadOnlyList<PendingManifest> valid, IReadOnlyList<string> unreadablePaths)
+        {
+            Valid = valid;
+            UnreadablePaths = unreadablePaths;
+        }
+
+        public IReadOnlyList<PendingManifest> Valid { get; }
+
+        public IReadOnlyList<string> UnreadablePaths { get; }
+
+        public bool IsEmpty => Valid.Count == 0 && UnreadablePaths.Count == 0;
+
+        public IEnumerable<string> AllPaths => Valid.Select(pending => pending.Path).Concat(UnreadablePaths);
+    }
+
     // CLI ManifestStore의 읽기·검증·원자 교체 부분이다. 세대 매니페스트는 받은 바이트 그대로 보관하므로
     // 직렬화 경로는 두지 않는다.
     internal static class ManifestStore
     {
         private const string ManifestFileName = "manifest.json";
         private const string ManifestObjectDirectoryName = "manifests";
+        private const string PendingFileExtension = ".json";
+        private const string PendingSearchPattern = "*.json";
         private const string LocalManifestErrorPrefix = "로컬 매니페스트가 올바르지 않습니다.";
+        private const string PendingManifestErrorPrefix = "진행 중이던 매니페스트가 올바르지 않습니다.";
         private const int ChecksumLength = 64;
         private static readonly Encoding _utf8WithoutBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         private static readonly JsonSerializerSettings _serializerSettings = new JsonSerializerSettings
@@ -31,9 +71,19 @@ namespace GamePatchKit.Unity
             return $"{ManifestObjectDirectoryName}/{releaseVersion.ToString(CultureInfo.InvariantCulture)}.json";
         }
 
+        public static string GetManifestPath(string rootPath)
+        {
+            return Path.Combine(rootPath, ManifestFileName);
+        }
+
+        public static string GetPendingPath(string rootPath, long releaseVersion)
+        {
+            return Path.Combine(rootPath, releaseVersion.ToString(CultureInfo.InvariantCulture) + PendingFileExtension);
+        }
+
         public static PatchManifest? ReadLocal(string rootPath)
         {
-            string manifestPath = Path.Combine(rootPath, ManifestFileName);
+            string manifestPath = GetManifestPath(rootPath);
 
             if (!File.Exists(manifestPath))
             {
@@ -43,35 +93,79 @@ namespace GamePatchKit.Unity
             return ParseManifest(File.ReadAllText(manifestPath, _utf8WithoutBom), LocalManifestErrorPrefix);
         }
 
+        // <세대>.json 형태로 남은 목표 매니페스트를 모두 읽는다. 읽히지 않거나 이름과 내용의 세대가 다른 표식은
+        // 목표로 쓸 수 없지만 트리가 섞여 있다는 증거이므로 지우지 않고 따로 모은다. 지우는 것은 동기화가
+        // 성공한 뒤뿐이다.
+        public static PendingScan ScanPending(string rootPath)
+        {
+            var pendings = new List<PendingManifest>();
+            var unreadablePaths = new List<string>();
+
+            if (!Directory.Exists(rootPath))
+            {
+                return new PendingScan(pendings, unreadablePaths);
+            }
+
+            foreach (string path in Directory.EnumerateFiles(rootPath, PendingSearchPattern)
+                .OrderBy(candidate => candidate, StringComparer.Ordinal))
+            {
+                if (!long.TryParse(
+                        Path.GetFileNameWithoutExtension(path),
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out long releaseVersion))
+                {
+                    continue;
+                }
+
+                PatchManifest manifest;
+
+                try
+                {
+                    manifest = ParseManifest(File.ReadAllText(path, _utf8WithoutBom), PendingManifestErrorPrefix);
+                }
+                catch (PatchClientException)
+                {
+                    unreadablePaths.Add(path);
+                    continue;
+                }
+
+                if (manifest.ReleaseVersion != releaseVersion)
+                {
+                    unreadablePaths.Add(path);
+                    continue;
+                }
+
+                pendings.Add(new PendingManifest(releaseVersion, manifest, path));
+            }
+
+            return new PendingScan(pendings, unreadablePaths);
+        }
+
         public static PatchManifest ReadFromBytes(byte[] bytes, string errorPrefix)
         {
             return ParseManifest(_utf8WithoutBom.GetString(bytes), errorPrefix);
         }
 
-        // 세대 전환으로 data 트리를 바꾸기 시작하면 이전 세대 표식을 먼저 지운다. 중간에 멈춘 트리를 다음 동기화가 이전
-        // 세대로 오인하지 않고 전체를 다시 푼다.
-        public static void DeleteLocal(string rootPath)
+        // 해제까지 끝난 목표 매니페스트를 현재 세대로 승격한다. 지우고 다시 만들지 않고 한 번에 교체하므로
+        // 매니페스트가 없는 순간이 생기지 않는다.
+        public static void CommitPending(string rootPath, string pendingPath)
         {
-            string manifestPath = Path.Combine(rootPath, ManifestFileName);
-
-            if (File.Exists(manifestPath))
-            {
-                File.Delete(manifestPath);
-            }
+            FileMover.MoveReplacing(pendingPath, GetManifestPath(rootPath));
         }
 
-        // 받은 세대 매니페스트를 재직렬화 없이 그대로 교체한다. 로컬 manifest.json은 원격 manifests/<releaseVersion>.json과
+        // 받은 세대 매니페스트를 재직렬화 없이 그대로 쓴다. 로컬 파일은 원격 manifests/<releaseVersion>.json과
         // 바이트까지 같다.
-        public static void WriteBytesAtomically(string rootPath, byte[] manifestBytes)
+        public static void WriteBytesAtomically(string filePath, byte[] manifestBytes)
         {
-            Directory.CreateDirectory(rootPath);
-            string manifestPath = Path.Combine(rootPath, ManifestFileName);
-            string temporaryPath = Path.Combine(rootPath, $".{ManifestFileName}.{Guid.NewGuid():N}.tmp");
+            string directoryPath = Path.GetDirectoryName(filePath)!;
+            Directory.CreateDirectory(directoryPath);
+            string temporaryPath = Path.Combine(directoryPath, $".{Path.GetFileName(filePath)}.{Guid.NewGuid():N}.tmp");
 
             try
             {
                 File.WriteAllBytes(temporaryPath, manifestBytes);
-                FileMover.MoveReplacing(temporaryPath, manifestPath);
+                FileMover.MoveReplacing(temporaryPath, filePath);
             }
             finally
             {

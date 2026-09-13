@@ -28,17 +28,19 @@ namespace GamePatchKit.Unity
         internal const string DATA_DIRECTORY_NAME = "data";
         private const int BufferSize = 64 * 1024;
 
-        // previous는 로컬이 지금 갖고 있는 세대다. 산출물 이름과 checksum이 불변이라 엔트리 정보가 같으면 해제한
-        // 내용도 같으므로 바뀐 엔트리만 다시 푼다. 취소는 파일과 버퍼 단위 경계에서 반영한다.
+        // known은 로컬에 남아 있는 매니페스트 전부다. 현재 세대와, 중단돼 남은 목표 세대들이 여기 들어간다. 트리의
+        // 각 파일은 그중 하나의 해제 결과이므로, 전부가 목표와 같은 엔트리만 건드리지 않고 나머지는 다시 푼다.
+        // 산출물 이름과 checksum이 불변이라 엔트리 정보가 같으면 해제한 내용도 같다. 취소는 파일과 버퍼 단위
+        // 경계에서 반영한다.
         public static ExtractSummary Execute(
             string rootPath,
             PatchManifest target,
-            PatchManifest? previous,
+            IReadOnlyList<PatchManifest> known,
             CancellationToken cancellationToken)
         {
             string dataPath = Path.Combine(rootPath, DATA_DIRECTORY_NAME);
             HashSet<string> expectedPaths = CollectExpectedPaths(target);
-            Dictionary<string, string> previousIdentities = CollectIdentities(previous);
+            IReadOnlyList<Dictionary<string, string>> knownIdentities = CollectIdentities(known);
 
             // 지우는 것이 먼저다. 이전 세대에서 파일이던 경로가 이번 세대에 폴더가 되면 그 파일을 지워야 폴더를 만들 수 있다.
             int removedCount = Remove(dataPath, dataPath, expectedPaths, cancellationToken);
@@ -46,10 +48,36 @@ namespace GamePatchKit.Unity
 
             foreach (ManifestGroup group in target.Groups.OrderBy(group => group.Id, StringComparer.Ordinal))
             {
-                extractedCount += ExtractGroup(rootPath, dataPath, group, previousIdentities, cancellationToken);
+                extractedCount += ExtractGroup(rootPath, dataPath, group, knownIdentities, cancellationToken);
             }
 
             return new ExtractSummary(extractedCount, removedCount);
+        }
+
+        // 다시 풀어야 하는 엔트리가 읽을 산출물만 고른다. 바뀌지 않은 엔트리만 담긴 아카이브는 받지 않는다.
+        public static IReadOnlyCollection<string> CollectRequiredArtifacts(
+            string rootPath,
+            PatchManifest target,
+            IReadOnlyList<PatchManifest> known)
+        {
+            string dataPath = Path.Combine(rootPath, DATA_DIRECTORY_NAME);
+            IReadOnlyList<Dictionary<string, string>> knownIdentities = CollectIdentities(known);
+            var names = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (ManifestGroup group in target.Groups)
+            {
+                foreach (ManifestEntry entry in group.Entries)
+                {
+                    if (!NeedsExtraction(dataPath, group, entry, knownIdentities))
+                    {
+                        continue;
+                    }
+
+                    names.Add(entry.Source == EntrySource.Archive ? group.Archive!.Name : entry.Name!);
+                }
+            }
+
+            return names;
         }
 
         private static HashSet<string> CollectExpectedPaths(PatchManifest manifest)
@@ -72,24 +100,26 @@ namespace GamePatchKit.Unity
             return expectedPaths;
         }
 
-        private static Dictionary<string, string> CollectIdentities(PatchManifest? manifest)
+        private static IReadOnlyList<Dictionary<string, string>> CollectIdentities(IReadOnlyList<PatchManifest> known)
         {
-            var identities = new Dictionary<string, string>(StringComparer.Ordinal);
+            var collected = new List<Dictionary<string, string>>(known.Count);
 
-            if (manifest is null)
+            foreach (PatchManifest manifest in known)
             {
-                return identities;
-            }
+                var identities = new Dictionary<string, string>(StringComparer.Ordinal);
 
-            foreach (ManifestGroup group in manifest.Groups)
-            {
-                foreach (ManifestEntry entry in group.Entries)
+                foreach (ManifestGroup group in manifest.Groups)
                 {
-                    identities[GetEntryPath(group.Id, entry.Path)] = GetIdentity(group, entry);
+                    foreach (ManifestEntry entry in group.Entries)
+                    {
+                        identities[GetEntryPath(group.Id, entry.Path)] = GetIdentity(group, entry);
+                    }
                 }
+
+                collected.Add(identities);
             }
 
-            return identities;
+            return collected;
         }
 
         private static string GetIdentity(ManifestGroup group, ManifestEntry entry)
@@ -150,11 +180,11 @@ namespace GamePatchKit.Unity
             string rootPath,
             string dataPath,
             ManifestGroup group,
-            IReadOnlyDictionary<string, string> previousIdentities,
+            IReadOnlyList<Dictionary<string, string>> knownIdentities,
             CancellationToken cancellationToken)
         {
             ManifestEntry[] pendingEntries = group.Entries
-                .Where(entry => NeedsExtraction(dataPath, group, entry, previousIdentities))
+                .Where(entry => NeedsExtraction(dataPath, group, entry, knownIdentities))
                 .ToArray();
             ManifestEntry[] archiveEntries = pendingEntries
                 .Where(entry => entry.Source == EntrySource.Archive)
@@ -223,14 +253,23 @@ namespace GamePatchKit.Unity
             string dataPath,
             ManifestGroup group,
             ManifestEntry entry,
-            IReadOnlyDictionary<string, string> previousIdentities)
+            IReadOnlyList<Dictionary<string, string>> knownIdentities)
         {
-            string relativePath = GetEntryPath(group.Id, entry.Path);
-
-            if (!previousIdentities.TryGetValue(relativePath, out string? identity)
-                || identity != GetIdentity(group, entry))
+            // 아무 매니페스트도 없으면 트리의 내용을 보증할 근거가 없다. 전부 다시 푼다.
+            if (knownIdentities.Count == 0)
             {
                 return true;
+            }
+
+            string relativePath = GetEntryPath(group.Id, entry.Path);
+            string targetIdentity = GetIdentity(group, entry);
+
+            foreach (Dictionary<string, string> identities in knownIdentities)
+            {
+                if (!identities.TryGetValue(relativePath, out string? identity) || identity != targetIdentity)
+                {
+                    return true;
+                }
             }
 
             // 같은 엔트리라도 트리에서 사라졌거나 크기가 다르면 다시 푼다.
