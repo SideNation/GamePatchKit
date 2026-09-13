@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 
 namespace GamePatchKit.Cli;
 
@@ -15,7 +16,7 @@ public static class Program
         {
             if (arguments.Length == 0)
             {
-                throw new BuildException("명령을 지정해야 합니다. build, verify, upload, sync 또는 deploy-function을 사용하세요.");
+                throw new BuildException("명령을 지정해야 합니다. build, verify, upload, sync, deploy-function 또는 version을 사용하세요.");
             }
 
             string command = arguments[0];
@@ -74,6 +75,10 @@ public static class Program
                     }
 
                     break;
+                case "version":
+                case "--version":
+                    output.WriteLine(GetVersion());
+                    break;
                 default:
                     throw new BuildException($"알 수 없는 명령입니다: {command}");
             }
@@ -85,6 +90,12 @@ public static class Program
             error.WriteLine(exception.Message);
             return 1;
         }
+    }
+
+    private static string GetVersion()
+    {
+        return typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? "unknown";
     }
 
     private static void WriteBuildSummary(TextWriter output, BuildSummary summary)
