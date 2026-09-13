@@ -68,7 +68,7 @@ gpk sync --output /srv/gamedata
 게시된 세대를 Unity 6 클라이언트에 내려받는 UPM 패키지 `com.sidenation.gamepatchkit`은 Git URL로 설치한다.
 
 ```json
-"com.sidenation.gamepatchkit": "https://github.com/SideNation/GamePatchKit.git?path=/src/GamePatchKit.Unity#v0.1.9"
+"com.sidenation.gamepatchkit": "https://github.com/SideNation/GamePatchKit.git?path=/src/GamePatchKit.Unity#v0.1.10"
 ```
 
 게임 서버가 알려준 `releaseVersion`을 넘기면 로컬이 그 세대와 다를 때만 바뀐 산출물을 받아 `<rootPath>/data` 아래에 원본 트리를 복원한다.

@@ -15,12 +15,12 @@ Unity 6(6000.x) 프로젝트의 `Packages/manifest.json`에 Git URL로 추가한
 ```json
 {
   "dependencies": {
-    "com.sidenation.gamepatchkit": "https://github.com/SideNation/GamePatchKit.git?path=/src/GamePatchKit.Unity#v0.1.9"
+    "com.sidenation.gamepatchkit": "https://github.com/SideNation/GamePatchKit.git?path=/src/GamePatchKit.Unity#v0.1.10"
   }
 }
 ```
 
-- `v0.1.8` 이하 태그에는 이 패키지가 없다. 패키지가 포함된 릴리스 태그(`v0.1.9` 이상)를 지정한다.
+- `v0.1.8` 이하 태그에는 이 패키지가 없다. `v0.1.9`에는 패키지가 있지만 이 문서가 설명하는 압축 미러 삭제·진행 중 표식 동작을 포함하지 않는다. `v0.1.10` 이상을 지정한다.
 - 의존성 `com.unity.nuget.newtonsoft-json`(3.2.2)은 Unity 레지스트리에서 자동으로 해석된다.
 - zstd 해제용 `ZstdSharp.dll`과 그 의존성 `System.Runtime.CompilerServices.Unsafe.dll`은 패키지 `Runtime/Plugins/`에 동봉돼 있다. 프로젝트에 같은 이름의 DLL이 이미 있으면 Unity가 중복 어셈블리 오류를 내므로 한쪽을 제거한다.
 - NuGet 패키지로는 배포하지 않는다. Unity Package Manager가 NuGet을 소비하지 못하고 `UnityEngine`에 의존하는 코드는 NuGet 대상이 아니기 때문이다.

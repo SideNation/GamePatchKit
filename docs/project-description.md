@@ -110,7 +110,7 @@ dotnet tool install --global GamePatchKit.Cli
 - 사용 방법: UPM 패키지 `com.sidenation.gamepatchkit`(`src/GamePatchKit.Unity`)을 Git URL로 설치한다.
 
   ```json
-  "com.sidenation.gamepatchkit": "https://github.com/SideNation/GamePatchKit.git?path=/src/GamePatchKit.Unity#v0.1.9"
+  "com.sidenation.gamepatchkit": "https://github.com/SideNation/GamePatchKit.git?path=/src/GamePatchKit.Unity#v0.1.10"
   ```
 
   ```csharp
