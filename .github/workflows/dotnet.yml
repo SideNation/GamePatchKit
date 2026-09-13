@@ -73,6 +73,25 @@ jobs:
       - name: Test
         run: dotnet test GamePatchKit.sln --configuration Release --no-restore
 
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.1.14
+
+      - name: Test function HTTP contract
+        shell: bash
+        run: |
+          deno check --frozen --config src/GamePatchKit.Cli/Functions/deno.json \
+            --lock src/GamePatchKit.Cli/Functions/deno.lock \
+            src/GamePatchKit.Cli/Functions/get-patch-version.ts
+          deno test --frozen --allow-env=SUPABASE_URL,SUPABASE_PUBLISHABLE_KEYS --allow-net=127.0.0.1 \
+            --config src/GamePatchKit.Cli/Functions/deno.json \
+            --lock src/GamePatchKit.Cli/Functions/deno.lock \
+            tests/Functions/test-get-patch-version.ts
+
       - name: Pack
         shell: bash
         env:
@@ -106,6 +125,12 @@ jobs:
           TOOL_COMMAND: ${{ steps.install.outputs.tool-command }}
         run: bash .github/scripts/smoke-test.sh "$TOOL_COMMAND" .gpk-smoke
 
+      - name: Test installed tool function resource
+        shell: bash
+        env:
+          TOOL_COMMAND: ${{ steps.install.outputs.tool-command }}
+        run: node tests/Functions/test-deploy-packaging.mjs "$TOOL_COMMAND"
+
       - name: Publish and test standalone executable
         shell: bash
         env:
@@ -132,6 +157,7 @@ jobs:
             -p:DebugSymbols=false
 
           bash .github/scripts/smoke-test.sh "$publish_dir/$executable" .gpk-standalone/smoke
+          node tests/Functions/test-deploy-packaging.mjs "$publish_dir/$executable"
 
           mkdir -p "$asset_dir"
           tar -czf "$asset_dir/GamePatchKit.Cli-$PACKAGE_VERSION-$RID.tar.gz" \

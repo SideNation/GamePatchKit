@@ -24,6 +24,9 @@
 
   <ItemGroup>
     <None Include="../../README.md" Pack="true" PackagePath="/" />
+    <EmbeddedResource Include="Functions/get-patch-version.ts" LogicalName="GamePatchKit.Cli.Functions.get-patch-version.ts" />
+    <EmbeddedResource Include="Functions/deno.json" LogicalName="GamePatchKit.Cli.Functions.deno.json" />
+    <EmbeddedResource Include="Functions/deno.lock" LogicalName="GamePatchKit.Cli.Functions.deno.lock" />
   </ItemGroup>
 
   <ItemGroup>
