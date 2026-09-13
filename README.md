@@ -90,6 +90,7 @@ gpk deploy-function --project-id "$PROJECT_REF" --access-token "$SUPABASE_ACCESS
 
 자세한 내용은 다음 문서를 참고한다.
 
+- [프로젝트 초기 설정](https://github.com/SideNation/GamePatchKit/blob/main/docs/project-setup.md)
 - [설치와 배포](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/distribution.md)
 - [`gpk build`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/build.md)
 - [`gpk verify`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/verify.md)

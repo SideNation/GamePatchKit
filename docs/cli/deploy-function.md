@@ -8,7 +8,7 @@
 
 - 대상 프로젝트의 project ref와 함수 배포 권한이 있는 Supabase Access Token이 필요하다. project ref는 프로젝트 이름이나 URL이 아닌 **소문자 영문 20자**다.
 - Access Token에는 프로젝트 접근 권한과 `edge_functions_write` 권한(OAuth는 `edge_functions:write`)이 필요하다. publishable key나 secret key는 배포 인증을 대체하지 않는다.
-- 조회를 위해 [sync 사전 조건](sync.md#사전-조건)의 테이블·SELECT GRANT·읽기 RLS 계약을 프로젝트의 **버전 관리되는 마이그레이션**으로 먼저 적용한다. 이 명령은 DB·버킷·포인터 데이터를 생성하거나 수정하지 않는다.
+- 조회를 위해 [프로젝트 초기 설정](../project-setup.md#1-supabase-준비)의 테이블·SELECT GRANT·읽기 RLS 계약을 프로젝트의 **버전 관리되는 마이그레이션**으로 먼저 적용한다. 이 명령은 DB·버킷·포인터 데이터를 생성하거나 수정하지 않는다.
 - 함수는 호스팅 환경에 기본 제공되는 `SUPABASE_PUBLISHABLE_KEYS.default`를 사용한다. 호출자는 API key를 전달하지 않는다. 공개 패치 정보 조회이며 별도 사용자별 접근 제어를 제공하지 않는다.
 
 배포 머신에 Supabase CLI, Docker, Deno, Node.js를 설치할 필요는 없다. NuGet tool과 standalone 모두 함수 소스와 고정된 SupabaseClient 의존성 설정을 동봉하므로 저장소 밖에서도 실행된다. [.NET 런타임 요구사항](distribution.md)은 기존 배포물과 같다.

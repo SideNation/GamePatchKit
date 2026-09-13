@@ -10,35 +10,7 @@
 
 ## 사전 조건
 
-포인터 테이블은 운영자가 1회 만든다. `gpk`는 테이블을 만들지 않는다.
-
-| 항목 | 조건 |
-| --- | --- |
-| 포인터 테이블 | 아래 SQL을 Supabase SQL Editor에서 1회 실행. **GRANT까지 전부 실행해야 한다** |
-| 버킷 | 공개 버킷. 소비 측은 키 없이 객체를 받는다 |
-| 자격증명 | 읽기용 publishable key만 필요하다. secret key를 소비 머신에 두지 않는다 |
-| 게시 순서 | 배포 스크립트가 상태 Git push까지 끝낸 뒤에 포인터를 갱신해야 한다 |
-
-```sql
-create table public.gamepatch_pointer (
-  bucket text primary key,
-  release_version bigint not null check (release_version >= 0),
-  updated_at timestamptz not null default now()
-);
-
-alter table public.gamepatch_pointer enable row level security;
-
--- GRANT와 RLS는 별개 계층이다. 2026-05-30 이후 만든 프로젝트는 public 스키마의 새 테이블에 자동
--- 권한을 주지 않으므로, 명시하지 않으면 RLS에 닿기도 전에 42501 permission denied로 거부된다.
-grant select on public.gamepatch_pointer to anon;                         -- gpk sync (publishable key)
-grant select, insert, update on public.gamepatch_pointer to service_role; -- 배포 스크립트 (secret key)
-
--- 읽기만 공개한다. 쓰기 정책은 만들지 않는다 - 갱신은 배포 스크립트가 secret key로만 한다.
-create policy gamepatch_pointer_read on public.gamepatch_pointer
-  for select to anon using (true);
-```
-
-seed 행은 넣지 않는다. `releaseVersion` 0이 실제 첫 세대이므로 미리 0을 넣으면 아직 게시되지 않은 세대를 가리키게 된다. 첫 게시 때 배포 스크립트가 행을 만든다.
+포인터 테이블, 공개 버킷, 소비용 publishable key는 [프로젝트 초기 설정](../project-setup.md#1-supabase-준비)에서 1회 준비한다. 테이블·GRANT·읽기 RLS SQL도 그 문서에 있다. `gpk`는 테이블을 만들지 않는다.
 
 ## 사용법
 
@@ -171,7 +143,7 @@ gpk sync --output /srv/gamedata --env-file /etc/gpk/sync.env
 
 | 메시지 | 원인 | 조치 |
 | --- | --- | --- |
-| `포인터 테이블 'gamepatch_pointer'이 없습니다` | 사전 조건 SQL 미실행 | 위 SQL을 1회 실행 |
+| `포인터 테이블 'gamepatch_pointer'이 없습니다` | 사전 조건 SQL 미실행 | [프로젝트 초기 설정](../project-setup.md#1-supabase-준비)의 SQL을 1회 실행 |
 | `bucket '<b>'의 포인터 행이 없습니다` | 아직 첫 게시 전이거나 버킷 이름이 다름 | 게시 여부와 `GPK_SUPABASE_BUCKET` 확인 |
 | `포인터를 읽을 권한이 없습니다` | key, `anon`의 `select` GRANT, 또는 읽기 RLS 정책 문제 | 사전 조건 SQL을 **전부** 실행했는지 확인. 2026-05-30 이후 만든 프로젝트는 새 테이블에 자동 권한이 없어 GRANT를 빠뜨리면 `42501`로 거부된다 |
 | `게시된 객체가 없습니다: <경로>` | 포인터가 완전히 게시되지 않은 세대를 가리킴 | 게시 순서 위반. 포인터를 이전 값으로 되돌리고 게시를 마저 완료 |
