@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "com.sidenation.gamepatchkit": "file:../../../src/GamePatchKit.Unity",
+    "com.unity.test-framework": "1.4.6",
+    "com.unity.modules.unitywebrequest": "1.0.0"
+  },
+  "testables": [
+    "com.sidenation.gamepatchkit"
+  ]
+}

@@ -104,6 +104,23 @@ dotnet tool install --global GamePatchKit.Cli
 
 - 참고: 주기 실행은 스케줄러(cron 등)가 맡고 CLI는 상주하지 않으며, 강제 실행은 같은 명령을 손으로 돌리는 것이다. `<output>/.gpk-sync.lock` 배타 락으로 동시 실행을 막고, 락을 못 잡으면 원격을 호출하지 않고 종료 코드 0으로 건너뛴다. 포인터와 "다르면" 동기화하므로 포인터를 이전 값으로 되돌리는 롤백이 그대로 지원된다. 재시도·백오프는 넣지 않으며 다음 스케줄 실행이 재시도 역할을 한다. `<output>/data`는 gpk가 소유하는 폴더로 매니페스트에 없는 파일은 지우며, 압축 미러(`archives/`, `files/`)는 다음 세대의 델타 다운로드와 `gpk verify`를 위해 남긴다.
 
+### Unity 클라이언트 동기화 (`PatchClient`)
+
+- 하는 일: `gpk upload`가 게시한 세대를 Unity 클라이언트에 내려받아 `<rootPath>/data` 아래에 원본 트리로 복원한다. 게임 서버가 알려준 `releaseVersion`을 넘기면 로컬이 그 세대와 다를 때만 세대 매니페스트와 없는 산출물을 받는다. `gpk sync`와 같은 배치·델타 규칙이며 Supabase 포인터는 읽지 않는다.
+- 사용 방법: UPM 패키지 `com.sidenation.gamepatchkit`(`src/GamePatchKit.Unity`)을 Git URL로 설치한다.
+
+  ```json
+  "com.sidenation.gamepatchkit": "https://github.com/SideNation/GamePatchKit.git?path=/src/GamePatchKit.Unity#v0.1.9"
+  ```
+
+  ```csharp
+  var client = new PatchClient("https://<project-ref>.supabase.co/storage/v1/object/public/<bucket>/", rootPath);
+  PatchSyncResult result = await client.SyncAsync(releaseVersion, cancellationToken);
+  ```
+
+- 동작 결과: 모든 산출물을 받아 SHA-256·크기를 검증하고 zstd를 풀어 `data` 트리를 맞춘 뒤에만 `manifest.json`을 교체한다. 결과에는 이전·현재 세대, 다운로드·재사용·해제·삭제 수가 담긴다. 실패는 `PatchClientException`, 취소는 `OperationCanceledException`이다.
+- 참고: Unity 6(6000.x) 전용이며 네트워크는 메인 스레드의 `UnityWebRequest`, 해시·해제는 백그라운드 스레드가 맡는다. zstd 해제는 동봉한 managed `ZstdSharp.dll`을 쓴다. NuGet으로는 배포하지 않는다(Unity Package Manager가 NuGet을 소비하지 못한다). 검증용 Unity 프로젝트는 `unity/GamePatchKit.Unity.Host`에 있다.
+
 ## 전체 동작 흐름
 
 ```text
@@ -133,6 +150,7 @@ Git 저장소(gamepatchkit.yml + 데이터 파일, 모두 커밋됨)
 - [`game-patch-kit-cli-release-version-design.md`](design/game-patch-kit-cli-release-version-design.md) — 매니페스트 `releaseVersion` 필드 구현 계획
 - [`game-patch-kit-cli-upload-design.md`](design/game-patch-kit-cli-upload-design.md) — `gpk upload` 구현 계획
 - [`game-patch-kit-cli-sync-design.md`](design/game-patch-kit-cli-sync-design.md) — `gpk sync` 구현 계획
+- [`game-patch-kit-unity-client-design.md`](design/game-patch-kit-unity-client-design.md) — Unity 클라이언트 패키지 설계와 grilling 결정 기록
 
 ### 명령 사용법
 
@@ -141,3 +159,7 @@ Git 저장소(gamepatchkit.yml + 데이터 파일, 모두 커밋됨)
 - [`upload.md`](cli/upload.md) — `gpk upload` 사용법
 - [`sync.md`](cli/sync.md) — `gpk sync` 사용법
 - [`distribution.md`](cli/distribution.md) — CLI 설치와 NuGet 배포
+
+### Unity 클라이언트
+
+- [`patch-client.md`](unity/patch-client.md) — `PatchClient` 설치와 사용법

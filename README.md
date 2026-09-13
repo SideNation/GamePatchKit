@@ -63,6 +63,21 @@ gpk sync --output /srv/gamedata
 
 포인터 테이블은 최초 1회 만들어야 한다. SQL은 [`gpk sync` 문서](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/sync.md)에 있다.
 
+## Unity 클라이언트
+
+게시된 세대를 Unity 6 클라이언트에 내려받는 UPM 패키지 `com.sidenation.gamepatchkit`은 Git URL로 설치한다.
+
+```json
+"com.sidenation.gamepatchkit": "https://github.com/SideNation/GamePatchKit.git?path=/src/GamePatchKit.Unity#v0.1.9"
+```
+
+게임 서버가 알려준 `releaseVersion`을 넘기면 로컬이 그 세대와 다를 때만 바뀐 산출물을 받아 `<rootPath>/data` 아래에 원본 트리를 복원한다.
+
+```csharp
+var client = new PatchClient("https://<project-ref>.supabase.co/storage/v1/object/public/<bucket>/", rootPath);
+PatchSyncResult result = await client.SyncAsync(releaseVersion, cancellationToken);
+```
+
 자세한 내용은 다음 문서를 참고한다.
 
 - [설치와 배포](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/distribution.md)
@@ -70,3 +85,4 @@ gpk sync --output /srv/gamedata
 - [`gpk verify`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/verify.md)
 - [`gpk upload`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/upload.md)
 - [`gpk sync`](https://github.com/SideNation/GamePatchKit/blob/main/docs/cli/sync.md)
+- [Unity 패치 클라이언트](https://github.com/SideNation/GamePatchKit/blob/main/docs/unity/patch-client.md)
