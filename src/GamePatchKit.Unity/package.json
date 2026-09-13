@@ -1,0 +1,15 @@
+{
+  "name": "com.sidenation.gamepatchkit",
+  "version": "0.1.9",
+  "displayName": "GamePatchKit",
+  "description": "GamePatchKit이 게시한 패치 데이터 세대를 Unity 클라이언트에 내려받아 원본 트리로 복원한다.",
+  "unity": "6000.0",
+  "license": "MIT",
+  "author": {
+    "name": "TenY"
+  },
+  "dependencies": {
+    "com.unity.modules.unitywebrequest": "1.0.0",
+    "com.unity.nuget.newtonsoft-json": "3.2.2"
+  }
+}

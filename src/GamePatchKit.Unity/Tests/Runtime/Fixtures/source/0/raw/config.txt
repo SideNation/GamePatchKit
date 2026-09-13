@@ -1,0 +1,2 @@
+tick-rate=30
+region=kr
