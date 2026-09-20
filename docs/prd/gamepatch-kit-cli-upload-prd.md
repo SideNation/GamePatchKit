@@ -4,7 +4,7 @@
 
 `gpk build`가 만든 패치 데이터를 Supabase Storage 버킷에 올리는 `gpk upload` 명령을 추가한다.
 
-업로드 대상과 인증정보는 패치 데이터 프로젝트가 관리한다. CLI는 로컬의 마지막 업로드 성공 매니페스트를 기준으로 새 산출물만 고른다. 산출물은 upsert하고 세대 매니페스트는 불변 객체로 생성해 중단 후에도 같은 소스 commit에서 안전하게 재실행할 수 있게 한다.
+업로드 대상과 인증정보는 패치 데이터 프로젝트가 관리한다. CLI는 대상 버킷이 없으면 공개 버킷으로 생성하고, 로컬의 마지막 업로드 성공 매니페스트를 기준으로 새 산출물만 고른다. 산출물은 upsert하고 세대 매니페스트는 불변 객체로 생성해 중단 후에도 같은 소스 commit에서 안전하게 재실행할 수 있게 한다.
 
 ## 개발 환경
 
@@ -13,7 +13,7 @@
 | Supabase 요금제 | Pro 또는 Team 필수 |
 | Supabase.Storage | 2.7.0 |
 
-- Free 플랜의 전역 파일 제한은 50 MB이므로 지원 대상에서 제외한다. Pro·Team은 전역 제한을 최대 500 GB까지 설정할 수 있다. 대상 프로젝트의 전역 제한과 버킷 제한을 가장 큰 `storedSize` 이상으로 미리 설정해야 한다. [`Supabase Storage 파일 제한`](https://supabase.com/docs/guides/storage/uploads/file-limits)
+- Free 플랜의 전역 파일 제한은 50 MB이므로 지원 대상에서 제외한다. Pro·Team은 전역 제한을 최대 500 GB까지 설정할 수 있다. 대상 프로젝트의 전역 제한과 기존 버킷에 명시된 제한을 가장 큰 `storedSize` 이상으로 미리 설정해야 한다. [`Supabase Storage 파일 제한`](https://supabase.com/docs/guides/storage/uploads/file-limits)
 - `UploadOrResume`의 6 MiB TUS 청크는 요청을 나누는 방식이며 요금제·전역·버킷의 객체 크기 제한을 우회하지 않는다. Supabase resumable upload는 더 큰 객체를 지원하지만, `gpk upload`는 전송 성능을 위해 산출물 하나의 일반 도구 상한을 **1 GiB(1,073,741,824바이트)**로 제한한다. [`Supabase resumable upload`](https://supabase.com/docs/guides/storage/uploads/resumable-uploads)
 - `Supabase.Storage`는 `netstandard2.0`으로 배포되어 `net10.0`에서 참조할 수 있다. 전이 의존성은 `BirdMessenger` 4.0.0, `MimeMapping` 4.0.0, `Newtonsoft.Json` 13.0.2, `Supabase.Core` 1.2.0, `System.Diagnostics.DiagnosticSource` 8.0.1이며 모두 `netstandard2.0` 이상이다.
 - 메타 패키지 `Supabase`는 참조하지 않는다. Gotrue·Realtime·Postgrest·Functions까지 끌어오는데 이번 범위에서 쓰는 것은 Storage뿐이다.
@@ -30,7 +30,7 @@
 - `gpk upload`가 로컬 선검증을 시작한 뒤 `.gpk-upload-state.json`을 교체할 때까지 다른 프로세스가 같은 `--output`의 `manifest.json`이나 산출물을 수정하지 않는다.
 - 하나의 `--output`과 그 로컬 업로드 성공 상태는 하나의 고정된 Supabase 프로젝트·버킷에만 사용한다.
 - 원격 객체를 다른 프로그램이 수정하거나 삭제하지 않는다. 산출물은 원격 존재 여부와 바이트를 조회하지 않는다. 세대 매니페스트는 create-only 게시가 중복 객체로 거부된 경우에만 기존 원격 바이트를 내려받아 현재 `manifest.json`과 비교한다.
-- 버킷 생성, 공개 설정, 전역·버킷 파일 제한, API 키 발급은 대상 패치 데이터 프로젝트가 코드로 관리하는 배포 사전 조건이다. CLI가 이 리소스를 만들거나 설정하지 않는다.
+- 버킷은 없으면 `gpk upload`가 공개 버킷으로 생성한다. 기존 버킷의 공개 여부와 파일 제한은 바꾸지 않으며, 전역·버킷 파일 제한과 API 키는 대상 패치 데이터 프로젝트가 관리한다.
 
 > **중요 운영 전제:** 상태 복원, 정확한 `sourceCommit` 기록, `gpk`와 압축 구현 버전 고정, 동시 실행 금지, 상태 Git push와 포인터 갱신은 별도의 코드 관리 배포 스크립트가 책임진다. 이 스크립트는 현재 CLI 구현 범위에 포함하지 않지만, 별도 작업으로 완료하기 전에는 운영 배포를 시작하지 않는다.
 
@@ -50,7 +50,7 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 | --- | --- |
 | `GPK_SUPABASE_STORAGE_URL` | `https://<project-ref>.storage.supabase.co/storage/v1` 형식의 직접 Storage API URL |
 | `GPK_SUPABASE_SECRET_KEY` | 대상 프로젝트의 `sb_secret_...` API key |
-| `GPK_SUPABASE_BUCKET` | 업로드할 기존 버킷 이름 |
+| `GPK_SUPABASE_BUCKET` | 업로드할 버킷 이름. 없으면 공개 버킷으로 생성한다. |
 
 - `GPK_SUPABASE_STORAGE_URL`은 일반 프로젝트 URL이 아니라 `/storage/v1`까지 포함한 직접 Storage API URL이다. 큰 파일에는 직접 Storage hostname 사용을 권장하는 Supabase 지침을 따른다.
 - `Supabase.Storage.Client`에는 URL 끝의 `/`를 제거한 값을 넘긴다. 라이브러리가 여기에 `/object/...`와 `/upload/resumable`을 붙인다.
@@ -102,15 +102,16 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 
 ### 업로드 순서와 세대 불변성
 
-1. 로컬 성공 상태와 비교해 선택한 산출물을 먼저 순서대로 올린다.
-2. `manifests/<releaseVersion>.json`을 불변 객체로 생성한다.
-3. 모두 성공한 뒤 로컬 `.gpk-upload-state.json`을 교체한다.
-4. 산출물은 `UploadOrResume`과 `FileOptions.Upsert=true`를 사용한다. 같은 산출물 `name`은 같은 저장 바이트라는 빌드 계약을 전제로 중단 후 재실행에서 이미 전송된 객체를 다시 쓸 수 있게 한다.
-5. 세대 매니페스트는 일반 파일 업로드와 `FileOptions.Upsert=false`를 사용한다. 대상 경로가 없으면 새로 만들고, 중복 객체 오류가 나면 기존 원격 파일을 다운로드해 현재 `manifest.json`과 바이트 단위로 비교한다. 같으면 이미 게시된 세대로 재사용하고, 다르면 기존 객체를 바꾸지 않은 채 버전 충돌로 중단한다. 중복 이외의 업로드·다운로드 오류는 그대로 실패 처리한다.
-6. 원격 세대 매니페스트 비교는 중복 객체 오류를 해결하기 위한 절차일 뿐 업로드 대상 계산이나 릴리스 버전 결정에 사용하지 않는다.
-7. 게시된 세대 경로의 바이트를 바꾸지 않으므로 CDN 캐시 무효화나 overwrite 전파 시간에 의존하지 않는다. 새 내용은 항상 증가한 `releaseVersion`의 새 경로로 게시한다. [`Supabase Smart CDN`](https://supabase.com/docs/guides/storage/cdn/smart-cdn)
-8. `UploadOrResume`은 산출물을 6 MiB TUS 청크로 전송한다. 이 방식은 요청 크기를 나눌 뿐 `gpk upload`의 산출물당 1 GiB 상한과 사전에 설정한 전역·버킷 파일 제한을 바꾸지 않는다.
-9. `FileOptions.ContentType`은 아카이브·파일 객체에 `application/octet-stream`, 세대 매니페스트에 `application/json`을 준다.
+1. 대상 버킷을 조회하고, 없으면 `public=true`인 버킷으로 생성한다. SDK가 반환하는 일반 not-found와 Supabase Storage의 legacy HTTP 400 + 정확한 JSON `code: "NoSuchBucket"`만 버킷 부재로 판정하고, 다른 HTTP 400은 실패 처리한다. 이미 있는 버킷의 설정은 변경하지 않는다.
+2. 로컬 성공 상태와 비교해 선택한 산출물을 먼저 순서대로 올린다.
+3. `manifests/<releaseVersion>.json`을 불변 객체로 생성한다.
+4. 모두 성공한 뒤 로컬 `.gpk-upload-state.json`을 교체한다.
+5. 산출물은 `UploadOrResume`과 `FileOptions.Upsert=true`를 사용한다. 같은 산출물 `name`은 같은 저장 바이트라는 빌드 계약을 전제로 중단 후 재실행에서 이미 전송된 객체를 다시 쓸 수 있게 한다.
+6. 세대 매니페스트는 일반 파일 업로드와 `FileOptions.Upsert=false`를 사용한다. 대상 경로가 없으면 새로 만들고, 중복 객체 오류가 나면 기존 원격 파일을 다운로드해 현재 `manifest.json`과 바이트 단위로 비교한다. 같으면 이미 게시된 세대로 재사용하고, 다르면 기존 객체를 바꾸지 않은 채 버전 충돌로 중단한다. 중복 이외의 업로드·다운로드 오류는 그대로 실패 처리한다.
+7. 원격 세대 매니페스트 비교는 중복 객체 오류를 해결하기 위한 절차일 뿐 업로드 대상 계산이나 릴리스 버전 결정에 사용하지 않는다.
+8. 게시된 세대 경로의 바이트를 바꾸지 않으므로 CDN 캐시 무효화나 overwrite 전파 시간에 의존하지 않는다. 새 내용은 항상 증가한 `releaseVersion`의 새 경로로 게시한다. [`Supabase Smart CDN`](https://supabase.com/docs/guides/storage/cdn/smart-cdn)
+9. `UploadOrResume`은 산출물을 6 MiB TUS 청크로 전송한다. 이 방식은 요청 크기를 나눌 뿐 `gpk upload`의 산출물당 1 GiB 상한과 적용되는 전역·버킷 파일 제한을 바꾸지 않는다.
+10. `FileOptions.ContentType`은 아카이브·파일 객체에 `application/octet-stream`, 세대 매니페스트에 `application/json`을 준다.
 
 중복 객체 오류는 다음 응답으로 한정한다.
 
@@ -128,15 +129,15 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 
 게시한 `releaseVersion`을 출력한다. 지정된 운영 스크립트가 업로드 성공 후 버전 포인터에 쓸 값이며, 이 값 없이는 다음 단계를 자동화할 수 없다. 재실행할 SHA는 업로드 전에 기록한 로컬 `manifest.json.sourceCommit`을 사용한다.
 
-Storage 호출이 실패하면 표준 에러에 실패 단계(`artifact-upsert`, `manifest-create`, `manifest-download`), 원격 객체 경로, SDK 예외 타입과 확인 가능한 HTTP 상태·Supabase 오류 코드·메시지를 출력한다. 원시 요청·응답 헤더, API key, 환경 변수 파일 내용과 전체 원시 응답 본문은 출력하지 않는다.
+Storage 호출이 실패하면 표준 에러에 실패 단계(`bucket-get`, `bucket-create`, `artifact-upsert`, `manifest-create`, `manifest-download`), 대상 버킷과 원격 객체 경로, Storage host, 확인 가능한 HTTP 요청 method·path, SDK 예외 타입, HTTP 상태와 Supabase 오류 코드·메시지, 상태별 확인 항목을 출력한다. JSON 응답에서는 `code`·`message`만 추출하고, 일반 텍스트 오류는 공백을 정규화해 최대 300자까지만 출력한다. 원시 요청·응답 헤더, API key, 환경 변수 파일 내용과 전체 원시 응답 본문은 출력하지 않는다.
 
 ## 완료 조건
 
-1. `gpk upload --output <폴더>`가 선택한 산출물을 upsert한 뒤 `manifests/<releaseVersion>.json`을 create-only로 게시하고 마지막에 로컬 성공 상태를 교체한 뒤 종료 코드 0으로 끝난다.
+1. `gpk upload --output <폴더>`가 대상 버킷을 확인해 없으면 공개 버킷으로 생성하고, 선택한 산출물을 upsert한 뒤 `manifests/<releaseVersion>.json`을 create-only로 게시하고 마지막에 로컬 성공 상태를 교체한 뒤 종료 코드 0으로 끝난다.
 2. 같은 명령을 다시 실행하면 산출물은 모두 건너뛰고, 이미 존재하는 세대 매니페스트가 같은 바이트임을 확인해 재사용한다. 요약의 건너뛴 산출물 수가 참조 산출물 수와 같다.
 3. 파일 하나를 고쳐 증분 빌드한 뒤 업로드하면 새로 생긴 파일 객체와 세대 매니페스트만 올라가고 기존 아카이브는 건너뛴다.
 4. `.gpk-upload-state.json`이 없거나 읽을 수 없으면 참조 산출물을 모두 upsert한다. 기존 `manifests/<releaseVersion>.json`이 같으면 재사용하고 다르면 덮어쓰지 않고 중단하며, 성공 시 새 상태를 기록한다.
-5. Pro 또는 Team 프로젝트에서 전역·버킷 제한을 가장 큰 `storedSize` 이상으로 설정하면 50 MB를 넘고 1 GiB 이하인 아카이브도 `UploadOrResume`으로 올라간다. `storedSize`가 1,073,741,824바이트를 넘는 산출물은 첫 Storage 호출 전에 거부한다.
+5. Pro 또는 Team 프로젝트에서 전역 제한과 기존 버킷에 명시된 제한을 가장 큰 `storedSize` 이상으로 설정하면 50 MB를 넘고 1 GiB 이하인 아카이브도 `UploadOrResume`으로 올라간다. `storedSize`가 1,073,741,824바이트를 넘는 산출물은 첫 Storage 호출 전에 거부한다.
 6. `GPK_SUPABASE_STORAGE_URL`·`GPK_SUPABASE_SECRET_KEY`·`GPK_SUPABASE_BUCKET` 중 하나라도 없으면 빠진 이름이 모두 나열되고 아무것도 올라가지 않은 채 0이 아닌 종료 코드로 끝난다.
 7. 같은 이름이 프로세스 환경 변수와 `--env-file`에 모두 있으면 `--env-file`의 값이 쓰인다. `--env-file`을 주지 않으면 프로세스 환경 변수만 쓴다.
 8. `--env-file`의 경로가 없으면 아무것도 올리지 않고 중단한다.
@@ -148,19 +149,19 @@ Storage 호출이 실패하면 표준 에러에 실패 단계(`artifact-upsert`,
 14. 서로 다른 `releaseVersion`으로 두 번 업로드하면 `manifests/` 아래에 두 세대가 모두 남고 이전 세대의 바이트가 바뀌지 않는다. 같은 세대 경로에 다른 바이트를 게시하려 하면 버전 충돌로 중단한다.
 15. 게시한 `releaseVersion`이 표준 출력에 나타나 운영 스크립트가 버전 포인터에 쓸 값을 읽을 수 있다.
 16. 업로드가 어느 단계에서 실패해도 그 뒤의 원격 객체를 올리지 않고 로컬 성공 상태를 바꾸지 않는다. 첫 Storage 호출 뒤의 실패는 로컬 `manifest.json.sourceCommit`의 정확한 SHA에서 재실행해 완료하며, 그전에는 더 새로운 SHA를 게시하지 않는다.
-17. Storage 대역을 사용한 자동 테스트가 산출물 → 세대 매니페스트 순서, 동일 세대 재사용, 다른 바이트 충돌과 단계별 실패 중단을 검증한다. adapter 단위 테스트는 현재 HTTP 409 중복 코드와 legacy HTTP 400 중복 메시지만 재사용 경로로 분류하고 그 밖의 400·409를 실패 처리하는지 검증한다.
+17. Storage 대역을 사용한 자동 테스트가 버킷 확인 → 산출물 → 세대 매니페스트 순서, 버킷 확인 실패 시 게시 중단, 동일 세대 재사용, 다른 바이트 충돌과 단계별 실패 중단을 검증한다. adapter 단위 테스트는 HTTP 400 `NoSuchBucket`만 버킷 생성 경로로 분류하고, 현재 HTTP 409 중복 코드와 legacy HTTP 400 중복 메시지만 세대 재사용 경로로 분류하며 그 밖의 400·409를 실패 처리하는지 검증한다.
 18. 직접 Storage API URL과 `sb_secret_...` key의 `apikey` 헤더를 사용해 실제 Pro 또는 Team 프로젝트에 업로드할 수 있고, 권한이 부족하면 키 값을 노출하지 않은 채 실패한다.
 19. 버킷 이름, 현재 매니페스트가 참조하는 모든 산출물과 세대 매니페스트의 원격 경로를 한 선검증 단계에서 첫 Storage 호출 전에 검사한다. 하나라도 허용 문자 규칙을 위반하면 버킷과 잘못된 이름·경로를 모두 출력하고 Storage 호출은 0회다.
 20. 별도 private 상태 Git 저장소가 성공적으로 게시된 `manifest.json`과 `.gpk-upload-state.json`만 같은 commit으로 보존하고, 실제 첫 배포가 아닌 지정 배포 환경은 이 상태를 복원해 이전 `releaseVersion`과 업로드 델타를 이어간다.
 21. 같은 패치 데이터 프로젝트의 배포는 지정된 수동 환경 한 곳에서 동시에 실행되지 않는다. 첫 Storage 호출 뒤 실패하거나 상태 저장소 push가 실패하면 기록한 `sourceCommit` SHA의 재실행이 완료되기 전까지 더 새로운 릴리스를 게시하지 않는다.
 22. `Program.Main`과 기존 `Program.Run`의 async 전환으로 영향을 받는 `TestBuildCommand`, `TestVerifyCommand`, `TestCommandArguments`의 모든 호출부를 `await Program.RunAsync` 경로로 바꾼 뒤 기존 명령 테스트가 통과한다.
-23. Storage 오류는 표준 에러에 실패 단계·원격 경로·예외 타입과 확인 가능한 HTTP 상태·Supabase 오류 코드·메시지를 남기며 API key, 요청·응답 헤더, 환경 변수 파일 내용과 전체 원시 응답 본문을 노출하지 않는다.
+23. Storage 오류는 표준 에러에 실패 단계·버킷·원격 경로·Storage host·확인 가능한 HTTP 요청 method/path·예외 타입·HTTP 상태·Supabase 오류 코드·메시지와 상태별 확인 항목을 남기며 API key, 요청·응답 헤더, 환경 변수 파일 내용과 전체 원시 응답 본문을 노출하지 않는다.
 
 ## 제외 범위
 
 이번 범위를 업로드 한 방향으로 한정한다. 다음은 넣지 않는다.
 
-- 다운로드, 삭제, 버킷 생성·공개 설정, 요금제·전역·버킷 제한 설정, API key 발급 — 대상 패치 데이터 프로젝트의 재현 가능한 인프라 설정으로 관리한다
+- 다운로드, 삭제, 기존 버킷의 공개 설정 변경, 요금제·전역·버킷 제한 설정, API key 발급 — 대상 패치 데이터 프로젝트의 재현 가능한 인프라 설정으로 관리한다
 - **버전 포인터 갱신** — `gpk upload`는 Postgres를 건드리지 않는다. 게시한 `releaseVersion`을 출력하는 데까지가 이 명령의 범위이고, 포인터 갱신은 업로드와 두 상태 파일의 Git push가 모두 성공한 뒤 지정된 수동 배포 스크립트가 한다. 포인터의 역할은 [gamepatch-kit-distribution-prd.md](gamepatch-kit-distribution-prd.md)에서 다룬다
 - 원격에 남은 미참조 과거 세대 정리와 보존 정책
 - 캐시 정책 — `FileOptions.CacheControl`을 지정하지 않고 라이브러리 기본값을 그대로 쓴다

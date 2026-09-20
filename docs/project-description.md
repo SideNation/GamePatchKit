@@ -66,16 +66,16 @@ dotnet tool install --global GamePatchKit.Cli
 
 ### Supabase Storage 업로드 (`gpk upload`)
 
-- 하는 일: `gpk build`가 만든 산출물과 세대 매니페스트를 Supabase Storage 버킷에 올린다. 로컬에 남긴 마지막 업로드 성공 상태(`.gpk-upload-state.json`)를 기준으로 새로 생긴 산출물만 골라 올리고, 세대 매니페스트(`manifests/<releaseVersion>.json`)는 한 번 게시하면 절대 덮어쓰지 않는 불변 객체로 남긴다.
+- 하는 일: `gpk build`가 만든 산출물과 세대 매니페스트를 Supabase Storage 버킷에 올린다. 대상 버킷이 없으면 공개 버킷으로 생성하고, 이미 있으면 설정을 바꾸지 않는다. 로컬에 남긴 마지막 업로드 성공 상태(`.gpk-upload-state.json`)를 기준으로 새로 생긴 산출물만 골라 올리고, 세대 매니페스트(`manifests/<releaseVersion>.json`)는 한 번 게시하면 절대 덮어쓰지 않는 불변 객체로 남긴다.
 - 사용 방법:
 
   ```shell
   gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>]
   ```
 
-  `GPK_SUPABASE_STORAGE_URL`(직접 Storage API URL, `https://<project-ref>.storage.supabase.co/storage/v1` 형식), `GPK_SUPABASE_SECRET_KEY`(`sb_secret_...` 형식의 API key), `GPK_SUPABASE_BUCKET`(대상 버킷 이름) 세 값이 필요하다. 프로세스 환경 변수를 먼저 읽고, `--env-file`을 지정하면 그 파일의 같은 이름 값이 덮어쓴다. Supabase 요금제는 Pro 또는 Team이 필요하고(Free 플랜의 50 MB 전역 파일 제한은 지원 대상이 아님), 대상 프로젝트의 전역·버킷 파일 제한은 가장 큰 산출물 크기 이상으로 미리 설정돼 있어야 한다.
+  `GPK_SUPABASE_STORAGE_URL`(직접 Storage API URL, `https://<project-ref>.storage.supabase.co/storage/v1` 형식), `GPK_SUPABASE_SECRET_KEY`(`sb_secret_...` 형식의 API key), `GPK_SUPABASE_BUCKET`(대상 버킷 이름) 세 값이 필요하다. 프로세스 환경 변수를 먼저 읽고, `--env-file`을 지정하면 그 파일의 같은 이름 값이 덮어쓴다. Supabase 요금제는 Pro 또는 Team이 필요하고(Free 플랜의 50 MB 전역 파일 제한은 지원 대상이 아님), 프로젝트 전역 제한과 기존 버킷에 명시된 제한은 가장 큰 산출물 크기 이상으로 미리 설정돼 있어야 한다.
 
-- 동작 결과: 선택한 산출물을 `UploadOrResume`(6 MiB TUS 청크 전송)으로 upsert한 뒤, 세대 매니페스트를 create-only로 게시하고, 둘 다 성공한 뒤에만 로컬 성공 상태를 교체한다. 세대 매니페스트가 이미 있으면 원격 바이트와 현재 매니페스트를 비교해 같으면 재사용하고 다르면 버전 충돌로 중단한다. 성공하면 올린 산출물 수·바이트·건너뛴 수와 게시한 `releaseVersion`을 출력한다.
+- 동작 결과: 버킷을 확인해 없으면 공개 버킷으로 생성하고, 선택한 산출물을 `UploadOrResume`(6 MiB TUS 청크 전송)으로 upsert한 뒤 세대 매니페스트를 create-only로 게시한다. 모두 성공한 뒤에만 로컬 성공 상태를 교체한다. 세대 매니페스트가 이미 있으면 원격 바이트와 현재 매니페스트를 비교해 같으면 재사용하고 다르면 버전 충돌로 중단한다. 성공하면 올린 산출물 수·바이트·건너뛴 수와 게시한 `releaseVersion`을 출력한다.
 
   ```text
   업로드 산출물: uploaded=2, uploadedBytes=12, skipped=0

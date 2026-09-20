@@ -8,13 +8,13 @@
 
 ## 1. 기능 요약
 
-`gpk upload` 명령으로 `--output` 폴더의 패치 데이터를 Supabase Storage에 게시한다. 마지막 업로드 성공 매니페스트를 로컬에 보관해 새 산출물만 고르고, 산출물은 upsert하되 세대 매니페스트는 create-only로 게시한 뒤 성공 상태를 갱신한다.
+`gpk upload` 명령으로 `--output` 폴더의 패치 데이터를 Supabase Storage에 게시한다. 대상 버킷이 없으면 공개 버킷으로 생성한다. 마지막 업로드 성공 매니페스트를 로컬에 보관해 새 산출물만 고르고, 산출물은 upsert하되 세대 매니페스트는 create-only로 게시한 뒤 성공 상태를 갱신한다.
 
 ## 2. 가정과 확인 필요 사항
 
 ### 가정
 
-- Supabase Pro 또는 Team 프로젝트를 사용하고 전역·버킷 파일 제한을 가장 큰 산출물보다 크게 설정한다. Supabase의 서비스 상한과 별개로 `gpk upload`는 산출물 하나를 1 GiB(1,073,741,824바이트) 이하로 제한한다.
+- Supabase Pro 또는 Team 프로젝트를 사용하고 전역 제한과 기존 버킷에 명시된 파일 제한을 가장 큰 산출물보다 크게 설정한다. Supabase의 서비스 상한과 별개로 `gpk upload`는 산출물 하나를 1 GiB(1,073,741,824바이트) 이하로 제한한다.
 - 하나의 `--output`은 하나의 고정된 Supabase 프로젝트·버킷에만 게시한다.
 - 지정된 수동 배포 환경 한 곳만 게시하며 같은 패치 데이터 프로젝트의 `build`·`verify`·`upload` 흐름을 동시에 실행하지 않는다. 업로드 선검증부터 로컬 상태 교체까지 다른 프로세스가 같은 output의 매니페스트·산출물을 수정하지 않고, 원격 객체도 다른 프로그램이 수정하거나 삭제하지 않는다.
 - `<output>/.gpk-upload-state.json`이 산출물 델타의 마지막 성공 상태이며, 없거나 읽을 수 없으면 산출물을 전량 upsert한다. 원격 세대 매니페스트는 create-only 업로드가 중복 오류로 거부됐을 때만 정확한 바이트 비교를 위해 읽는다.
@@ -58,7 +58,7 @@
 - `GPK_SUPABASE_SECRET_KEY`가 `sb_secret_`로 시작하지 않으면 네트워크 요청 전에 거부한다. 유효한 key는 `Authorization: Bearer`로 보내지 않고 `apikey` 헤더로만 전달한다.
 - `sb_secret_...` key는 RLS를 우회한다. publishable·legacy `anon`·사용자 JWT를 이용한 제한 권한 업로드는 지원하지 않는다.
 - 키 값은 표준 출력·표준 에러·예외 메시지에 나타나지 않는다.
-- Storage 실패는 단계(`artifact-upsert`, `manifest-create`, `manifest-download`)·원격 경로·SDK 예외 타입과 확인 가능한 HTTP 상태·Supabase 오류 코드·메시지를 표준 에러에 남긴다. 원시 요청·응답 헤더, API key, 환경 변수 파일 내용과 전체 원시 응답 본문은 출력하지 않는다.
+- Storage 실패는 단계(`bucket-get`, `bucket-create`, `artifact-upsert`, `manifest-create`, `manifest-download`)·버킷·원격 경로·Storage host·확인 가능한 HTTP 요청 method/path·SDK 예외 타입·HTTP 상태·Supabase 오류 코드·메시지와 상태별 확인 항목을 표준 에러에 남긴다. 원시 요청·응답 헤더, API key, 환경 변수 파일 내용과 전체 원시 응답 본문은 출력하지 않는다.
 - `GPK_SUPABASE_BUCKET`은 설정 해석 단계에서는 필수·비어 있지 않은 값인지만 확인한다. 문자와 세그먼트 규칙은 객체 경로 선검증 단계에서 다른 모든 원격 경로와 함께 검사한다.
 - 원격 객체 경로의 각 `/` 세그먼트에는 ASCII 영문 대소문자, 숫자, `.`, `_`, `-`만 허용하고, 빈 세그먼트와 `.`·`..`는 거부한다.
 - 버킷 이름, 현재 매니페스트의 모든 산출물 경로와 세대 매니페스트 경로가 유효한지 확인하기 전에는 Storage client를 호출하지 않는다.
@@ -162,6 +162,7 @@ internal static class RelativePathValidator
 
 internal interface IUploadStorage
 {
+    Task EnsureBucketExistsAsync();
     Task UpsertArtifactAsync(string localPath, string remotePath);
     Task CreateOrVerifyManifestAsync(string localPath, string remotePath);
 }
@@ -169,6 +170,7 @@ internal interface IUploadStorage
 internal sealed class SupabaseUploadStorage : IUploadStorage
 {
     public SupabaseUploadStorage(UploadSettings settings);
+    public Task EnsureBucketExistsAsync();
     public Task UpsertArtifactAsync(string localPath, string remotePath);
     public Task CreateOrVerifyManifestAsync(string localPath, string remotePath);
 
@@ -183,7 +185,11 @@ internal sealed class SupabaseUploadStorage : IUploadStorage
         string exceptionType,
         int? statusCode,
         string? errorCode,
-        string? errorMessage);
+        string? errorMessage,
+        string? bucket = null,
+        string? storageHost = null,
+        string? requestMethod = null,
+        string? requestPath = null);
 }
 
 internal sealed record UploadSummary(
@@ -223,11 +229,11 @@ public static class Program
 
 `WriteUploadStateAtomically`는 현재 `manifest.json` 바이트를 같은 디렉터리의 임시 파일에 쓴 뒤 `.gpk-upload-state.json`으로 교체한다. 세대 매니페스트 업로드까지 성공한 뒤에만 호출한다.
 
-`SupabaseUploadStorage` 생성자는 설정만 보관하고 Storage client와 버킷 handle은 첫 게시 메서드 호출 때 만든다. 따라서 잘못된 버킷과 객체 경로를 모두 모으는 `UploadCommand` 선검증보다 SDK의 버킷 처리가 먼저 실행되지 않는다. client를 만들 때는 `StorageUrl`의 끝 `/`를 제거하고 `apikey` 헤더를 사용한다. `UpsertArtifactAsync`는 파일 경로 `UploadOrResume`, `Upsert=true`, `application/octet-stream`을 사용한다. `CreateOrVerifyManifestAsync`는 일반 파일 업로드, `Upsert=false`, `application/json`을 사용한다.
+`SupabaseUploadStorage` 생성자는 설정만 보관하고 Storage client는 첫 게시 메서드 호출 때 만든다. 따라서 잘못된 버킷과 객체 경로를 모두 모으는 `UploadCommand` 선검증보다 SDK의 버킷 처리가 먼저 실행되지 않는다. client를 만들 때는 `StorageUrl`의 끝 `/`를 제거하고 `apikey` 헤더를 사용한다. `EnsureBucketExistsAsync`는 `GetBucket` 결과가 `null`이거나 Storage가 HTTP 400과 정확한 JSON `code: "NoSuchBucket"`을 반환할 때만 `CreateBucket`을 `Public=true`로 호출하며 기존 버킷 설정은 바꾸지 않는다. 다른 HTTP 400은 조회 실패로 처리한다. 버킷 조회·생성 실패는 각각 `bucket-get`·`bucket-create` 단계로 보고한다. `UpsertArtifactAsync`는 파일 경로 `UploadOrResume`, `Upsert=true`, `application/octet-stream`을 사용한다. `CreateOrVerifyManifestAsync`는 일반 파일 업로드, `Upsert=false`, `application/json`을 사용한다.
 
 `IsDuplicateObjectError`는 HTTP 409의 `FailureHint.Reason.AlreadyExists`, 응답 JSON `code`의 `ResourceAlreadyExists`·`KeyAlreadyExists`, legacy HTTP 400 응답의 정확한 `Asset Already Exists`만 참으로 반환한다. 일반적인 `exists` 부분 문자열은 사용하지 않는다. 이 판별이 참일 때만 기존 객체를 다운로드해 로컬 파일과 바이트 단위로 비교한다. 같으면 정상 반환하고 다르면 `BuildException`으로 중단하며, 그 밖의 업로드·다운로드 오류는 원격 파일을 조회하지 않고 실패한다.
 
-SDK 예외는 실패 단계, 원격 경로, 예외 타입과 확인 가능한 HTTP 상태·Supabase 오류 코드·메시지를 담은 `BuildException`으로 바꾼다. `FormatStorageFailure`는 adapter가 추출한 안전한 필드만 받아 같은 형식으로 만든다. `SupabaseStorageException` 본문이 예상 JSON이 아니면 원문과 그 원문을 그대로 담은 예외 메시지는 출력하지 않고 예외 타입·HTTP 상태까지만 남긴다. 일반 transport 예외는 타입과 메시지를 남긴다. 원시 요청·응답 헤더는 포함하지 않는다. `Supabase.Storage` 내부 stream·file handle 수명은 SDK 책임으로 두고 우회 코드를 추가하지 않는다. 실제 운영 오류가 확인되면 SDK 버전 변경이나 별도 수정으로 대응한다.
+SDK 예외는 실패 단계, 버킷, 원격 경로, Storage host, 확인 가능한 HTTP 요청 method/path, 예외 타입, HTTP 상태·Supabase 오류 코드·메시지와 상태별 확인 항목을 담은 `BuildException`으로 바꾼다. `FormatStorageFailure`는 adapter가 추출한 안전한 필드만 받아 같은 형식으로 만든다. `SupabaseStorageException` 본문이 JSON이면 `code`·`message`만 추출한다. 일반 텍스트 오류는 공백을 정규화하고 300자로 제한해 남기며, 구조를 알 수 없는 JSON과 전체 원시 본문은 출력하지 않는다. 일반 transport 예외는 타입과 메시지를 남긴다. 원시 요청·응답 헤더는 포함하지 않는다. `Supabase.Storage` 내부 stream·file handle 수명은 SDK 책임으로 두고 우회 코드를 추가하지 않는다. 실제 운영 오류가 확인되면 SDK 버전 변경이나 별도 수정으로 대응한다.
 
 ## 11. 파일·폴더 배치 제안
 
@@ -272,7 +278,7 @@ tests/GamePatchKit.Cli.Tests/
 - `Supabase.Storage` 내부 stream·file handle 우회: 실제 문제가 확인되기 전에는 SDK 책임으로 둔다.
 - 병렬 업로드, 진행률 콜백, 캐시 설정, `CancellationToken`: 현재 요구사항이 아니다.
 - Postgres client: 포인터 갱신은 upload와 상태 Git push 성공 후 지정된 수동 배포 스크립트가 수행한다.
-- Supabase 요금제와 버킷 설정 조회: 운영 사전 조건이며 Management API 의존성을 추가하지 않는다.
+- Supabase 요금제와 파일 제한 조회·변경: 운영 사전 조건이며 Management API 의존성을 추가하지 않는다.
 - publishable·legacy `anon`·사용자 JWT 인증과 Storage RLS: 업로드는 `sb_secret_...`만 사용한다.
 - 원격 루트 `manifest.json`: 소비자와 업로더 모두 사용하지 않으므로 게시하지 않는다.
 - 상태 Git client, 소스 checkout과 산출물 복원·백업 코드: 두 상태 파일의 저장·복원과 SHA checkout은 외부 운영 스크립트 책임이며 별도 산출물 백업은 범위 밖이다.
@@ -288,7 +294,7 @@ tests/GamePatchKit.Cli.Tests/
 - 적용 패턴 수: 0
 - 단일 구현 인터페이스: `IUploadStorage` 1개 — 게시 순서와 실패 시 상태 보존 자동 검증을 위해 정당화됨
 - 요구사항에서 직접 도출되지 않은 도메인 객체: 없음
-- 종합 판정: 외부 호출 경계 하나만 추가하고 원격 조회를 세대 중복 시 바이트 비교로 제한하며 별도 상태 스키마를 두지 않는 단순 구조
+- 종합 판정: 기존 외부 호출 경계에서 버킷 존재 여부만 추가로 확인하고 원격 객체 조회는 세대 중복 시 바이트 비교로 제한하며 별도 상태 스키마를 두지 않는 단순 구조
 
 ## 14. 위임 다음 단계
 
@@ -308,6 +314,7 @@ gpk upload --output <폴더> [--env-file <경로>]
   → 버킷 + 모든 산출물 name + manifests/<releaseVersion>.json 원격 경로 일괄 선검증
   → .gpk-upload-state.json 읽기; 없거나 읽을 수 없으면 null
   → PlanArtifacts(current, uploaded)
+  → 버킷 조회; 없으면 public=true로 생성
   → 선택 산출물을 순서대로 upsert
   → manifests/<releaseVersion>.json create-only
       → 중복이면 원격 바이트와 로컬 manifest.json 비교
@@ -349,7 +356,7 @@ gpk upload --output <폴더> [--env-file <경로>]
 - 업로드 상태 부재·손상 시 전량 선택
 - 로컬 산출물 부재·크기 불일치·1 GiB 초과 시 storage 호출 0회
 - 버킷 이름, 모든 현재 산출물과 세대 매니페스트 원격 경로의 허용·거부 문자, 잘못된 이름·경로 전체 보고와 storage 호출 0회
-- 산출물 → 세대 매니페스트 호출 순서, 세대 신규 생성·동일 바이트 재사용·다른 바이트 충돌
+- 버킷 확인 → 산출물 → 세대 매니페스트 호출 순서, HTTP 400 `NoSuchBucket`의 생성 경로, 다른 HTTP 400과 버킷 확인 실패 시 후속 호출 금지, 세대 신규 생성·동일 바이트 재사용·다른 바이트 충돌
 - 원격 다운로드가 세대 create-only 중복 오류에서만 호출되는지 확인
 - HTTP 409 현재 중복 코드와 legacy HTTP 400 정확한 중복 메시지만 중복으로 분류하고 그 밖의 400·409는 원격 다운로드 없이 실패하는지 확인
 - 각 산출물·세대 매니페스트 실패 시 후속 호출 금지와 로컬 상태 미변경
@@ -419,11 +426,12 @@ gpk upload --output <폴더> [--env-file <경로>]
 ### U4. 게시 순서와 실패 상태 자동 검증
 
 - 수행:
-  - `UploadCommand`가 선택 산출물을 upsert한 뒤 세대 매니페스트 create-or-verify를 호출한다.
+  - `UploadCommand`가 버킷을 확인해 없으면 공개 버킷으로 생성한 뒤 선택 산출물을 upsert하고 세대 매니페스트 create-or-verify를 호출한다.
   - 모든 원격 호출이 성공한 뒤에만 로컬 성공 상태를 교체한다.
   - 테스트 내부 fake storage가 호출을 기록하고 세대 신규 생성·동일 원격 바이트·다른 원격 바이트와 지정 단계 실패를 표현하게 한다.
 - 검증:
-  - 최초·동일·증분 실행의 정확한 호출 목록을 확인한다.
+  - 최초·동일·증분 실행에서 버킷 확인을 포함한 정확한 호출 목록을 확인한다.
+  - 버킷 확인 실패 뒤에는 산출물·세대 매니페스트 호출과 로컬 상태 교체가 없는지 확인한다.
   - 첫 게시에서 세대 매니페스트를 create-only로 만들고, 재실행의 같은 바이트는 재사용하며 다른 바이트는 기존 객체와 로컬 상태를 바꾸지 않고 중단한다.
   - `.gpk-upload-state.json`이 없는 상태에서 기존 `manifests/0.json`이 다른 바이트면 덮어쓰지 않고 중단한다.
   - 원격 세대 매니페스트 다운로드는 create-only 중복 오류에서만 발생한다.
@@ -435,11 +443,11 @@ gpk upload --output <폴더> [--env-file <경로>]
 ### U5. 실제 Supabase 검증과 사용자 문서 완료
 
 - 수행:
-  - Pro 또는 Team 테스트 프로젝트의 전역·버킷 제한을 테스트 파일보다 크게 설정한다.
+  - Pro 또는 Team 테스트 프로젝트의 전역 제한과 기존 버킷에 명시된 제한을 테스트 파일보다 크게 설정한다.
   - 실제 secret은 지정된 배포 환경의 secret 저장소에서 주입하고 저장소에 기록하지 않는다.
   - `docs/cli/upload.md`에 사용법, 사전 설정, secret key, 원격 경로 문자, 상태 Git 저장소, 동시 실행 금지, `sourceCommit` SHA 기반 실패 복구와 수동 검증 결과를 완성한다.
 - 검증:
-  - 50 MB 초과·1 GiB 이하 아카이브, 최초·동일·증분·중단 후 같은 SHA 재실행을 실제 버킷에서 확인한다.
+  - 버킷이 없는 상태에서 공개 버킷 생성과 50 MB 초과·1 GiB 이하 아카이브 업로드를 확인하고, 최초·동일·증분·중단 후 같은 SHA 재실행을 실제 버킷에서 확인한다.
   - `manifests/<N>.json` 세대 누적과 create-only 충돌 동작을 확인하고 원격 루트 `manifest.json`을 게시하지 않는지 확인한다.
   - 별도 상태 Git 저장소에 성공한 `manifest.json`과 `.gpk-upload-state.json`만 한 commit으로 보존하고 포인터보다 먼저 push하는 운영 절차를 확인한다.
   - 지정된 수동 배포 환경에서 동시에 두 배포를 시작하지 못하게 운영 스크립트가 직렬화하는지 확인한다.
@@ -477,7 +485,7 @@ gpk upload --output <폴더> [--env-file <경로>]
 다음 조건을 모두 만족하면 upload 구현 완료다.
 
 - upload PRD 완료 조건 23개가 자동 테스트, 실제 Supabase 검증 또는 명시된 운영 절차에 연결된다.
-- 로컬 성공 상태와 산출물 upsert, 세대 매니페스트 create-or-verify로 최초·동일·증분·실패 후 같은 SHA 재실행이 동작한다.
+- 버킷이 없으면 공개 버킷으로 생성하고, 로컬 성공 상태와 산출물 upsert, 세대 매니페스트 create-or-verify로 최초·동일·증분·실패 후 같은 SHA 재실행이 동작한다.
 - 버킷, 모든 현재 산출물과 세대 매니페스트의 원격 경로가 한 선검증 단계에서 첫 Storage 호출 전에 허용 문자 규칙을 통과한다.
 - 핵심 게시 순서와 실패 시 상태 보존이 fake storage를 사용한 자동 테스트로 고정된다.
 - `Supabase.Storage`만 참조한 상태로 restore, build, test, format, pack이 통과한다.

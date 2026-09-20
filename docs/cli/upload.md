@@ -5,6 +5,7 @@
 `gpk upload`는 `gpk build`가 만든 패치 데이터를 Supabase Storage 버킷에 올리는 명령이다. 업로드 대상과 인증정보는 패치 데이터 프로젝트가 관리한다.
 
 - 로컬의 마지막 업로드 성공 매니페스트(`.gpk-upload-state.json`)를 기준으로 새로 생긴 산출물만 고른다.
+- 대상 버킷이 없으면 공개 버킷으로 생성한다. 이미 있는 버킷의 설정은 바꾸지 않는다.
 - 산출물(`archive`, `source: file` 엔트리)은 `Upsert=true`로 올려 중단 후 재실행에서 이미 올라간 객체도 안전하게 다시 upsert한다.
 - 세대 매니페스트(`manifests/<releaseVersion>.json`)는 `Upsert=false`로 생성해 불변 객체로 남기고, 같은 세대 경로의 바이트를 절대 덮어쓰지 않는다.
 
@@ -13,9 +14,9 @@
 | 항목 | 조건 |
 | --- | --- |
 | Supabase 요금제 | Pro 또는 Team 필수. Free 플랜의 전역 파일 제한(50 MB)은 지원 대상이 아니다. |
-| 전역·버킷 파일 제한 | 대상 프로젝트에서 가장 큰 산출물의 `storedSize` 이상으로 미리 설정해야 한다. `gpk upload`는 이 설정을 만들거나 조회하지 않는다. |
+| 파일 제한 | 프로젝트의 전역 제한과 기존 버킷에 명시된 제한은 가장 큰 산출물의 `storedSize` 이상이어야 한다. `gpk upload`는 이 설정을 만들거나 조회하지 않는다. |
 | 참조 패키지 | `Supabase.Storage` 2.7.0만 참조한다. 메타 패키지 `Supabase`는 참조하지 않는다. |
-| 버킷·API key | 대상 버킷 생성과 `sb_secret_...` API key 발급은 패치 데이터 프로젝트가 코드로 관리하는 배포 사전 조건이다. |
+| 버킷·API key | 버킷은 없으면 `gpk upload`가 공개 버킷으로 생성한다. `sb_secret_...` API key 발급은 배포 사전 조건이다. |
 
 `UploadOrResume`이 산출물을 6 MiB TUS 청크로 나눠 전송하는 것과 별개로, `gpk upload`는 전송 성능을 위해 산출물 하나의 크기를 **1 GiB(1,073,741,824바이트)** 이하로 제한한다. 이 상한은 Supabase 요금제·전역·버킷 제한과 무관하게 CLI가 항상 적용한다.
 
@@ -38,7 +39,7 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 | --- | --- |
 | `GPK_SUPABASE_STORAGE_URL` | `https://<project-ref>.storage.supabase.co/storage/v1` 형식의 직접 Storage API URL |
 | `GPK_SUPABASE_SECRET_KEY` | 대상 프로젝트의 `sb_secret_...` API key |
-| `GPK_SUPABASE_BUCKET` | 업로드할 기존 버킷 이름 |
+| `GPK_SUPABASE_BUCKET` | 업로드할 버킷 이름. 없으면 공개 버킷으로 생성한다. |
 
 - `GPK_SUPABASE_STORAGE_URL`은 HTTPS이고 `/storage/v1`로 끝나는 직접 Storage API URL이어야 한다. 일반 프로젝트 URL, HTTP URL은 거부한다. 큰 파일에는 직접 Storage hostname 사용을 권장하는 Supabase 지침을 따른다.
 - `Supabase.Storage.Client`에는 URL 끝의 `/`를 제거한 값을 넘긴다. 라이브러리가 여기에 `/object/...`와 `/upload/resumable`을 붙인다.
@@ -85,6 +86,14 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 
 이 허용 문자 제한은 `gpk upload`의 원격 경로 선검증에만 적용한다. `gpk build`의 기존 Git 추적 파일·정규화 상대 경로 규칙은 바꾸지 않으므로, 허용 범위 밖의 이름이 있으면 빌드는 성공할 수 있지만 업로드는 네트워크 호출 전에 실패한다.
 
+## 버킷 확인과 생성
+
+로컬 산출물과 모든 원격 경로를 검증한 뒤 대상 버킷을 조회한다. 버킷이 없으면 소비자가 key 없이 객체를 받을 수 있도록 `public=true`인 버킷을 생성한 다음 게시를 시작한다. 이미 버킷이 있으면 공개 여부와 파일 제한을 포함한 기존 설정을 바꾸지 않는다.
+
+버킷 조회 또는 생성에 실패하면 산출물과 세대 매니페스트를 올리지 않고 로컬 성공 상태도 바꾸지 않는다. 새 버킷에는 별도 버킷 파일 제한을 지정하지 않으므로 프로젝트 전역 파일 제한이 적용된다.
+
+버킷 조회에서 Supabase Storage가 HTTP 400과 JSON `code: "NoSuchBucket"`을 함께 반환하는 legacy 논리 404도 버킷 부재로 판정한다. 다른 HTTP 400 응답은 생성으로 진행하지 않고 조회 실패로 처리한다.
+
 ## 로컬 업로드 대상 검증
 
 1. `--output`의 `manifest.json`을 읽고 `gpk verify`와 같은 관계 검증을 수행한다. 매니페스트가 없거나 위반이 있으면 아무것도 올리지 않고 중단한다.
@@ -105,9 +114,10 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 
 ## 업로드 순서와 세대 불변성
 
-1. 로컬 성공 상태와 비교해 선택한 산출물을 먼저 이름 순서대로 `UploadOrResume` + `FileOptions.Upsert=true`로 올린다.
-2. 모든 산출물이 성공한 뒤 `manifests/<releaseVersion>.json`을 일반 업로드 + `FileOptions.Upsert=false`로 생성한다.
-3. 두 단계가 모두 성공한 뒤에만 로컬 `.gpk-upload-state.json`을 교체한다.
+1. 대상 버킷을 조회하고, 없으면 공개 버킷으로 생성한다.
+2. 로컬 성공 상태와 비교해 선택한 산출물을 먼저 이름 순서대로 `UploadOrResume` + `FileOptions.Upsert=true`로 올린다.
+3. 모든 산출물이 성공한 뒤 `manifests/<releaseVersion>.json`을 일반 업로드 + `FileOptions.Upsert=false`로 생성한다.
+4. 두 업로드 단계가 모두 성공한 뒤에만 로컬 `.gpk-upload-state.json`을 교체한다.
 
 세대 매니페스트가 이미 존재해 중복 객체 오류가 나면 기존 원격 파일을 다운로드해 현재 `manifest.json`과 바이트 단위로 비교한다.
 
@@ -142,15 +152,18 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 
 어느 단계든 실패하면 그 뒤의 원격 호출과 로컬 상태 교체를 수행하지 않고 종료 코드 `1`로 끝난다. 이미 올라간 산출물은 다음 실행에서 같은 경로로 다시 upsert된다.
 
-Storage 호출이 실패하면 표준 에러에 실패 단계, 원격 객체 경로, SDK 예외 타입과 확인 가능한 HTTP 상태·Supabase 오류 코드·메시지를 출력한다.
+Storage 호출이 실패하면 표준 에러에 실패 단계, 버킷, 원격 객체 경로, Storage host, 확인 가능한 HTTP 요청 method·path, SDK 예외 타입, HTTP 상태와 Supabase 오류 코드·메시지를 출력한다. 마지막 줄에는 상태와 단계에 맞는 확인 항목을 함께 출력한다.
 
 ```text
-Storage 요청이 실패했습니다. stage=artifact-upsert, remotePath=files/group/1/a.v1.0, exceptionType=SupabaseStorageException, statusCode=500, errorMessage=internal error
+Storage 요청이 실패했습니다.
+진단: stage=artifact-upsert, bucket=patch-data, remotePath=files/group/1/a.v1.0, storageHost=example.storage.supabase.co, requestMethod=POST, requestPath=/storage/v1/upload/resumable, exceptionType=SupabaseStorageException, statusCode=404, errorMessage=The parent resource is not found
+확인: GPK_SUPABASE_STORAGE_URL과 GPK_SUPABASE_BUCKET이 같은 프로젝트를 가리키고 버킷이 존재하는지 확인하세요. 방금 버킷을 만들었다면 같은 sourceCommit으로 다시 실행하세요.
 ```
 
-- `stage`는 `artifact-upsert`, `manifest-create`, `manifest-download` 중 하나다.
+- `stage`는 `bucket-get`, `bucket-create`, `artifact-upsert`, `manifest-create`, `manifest-download` 중 하나다.
+- TUS의 `requestMethod=POST` 404는 업로드 세션 생성 실패이므로 버킷·프로젝트 설정을 확인한다. `requestMethod=PATCH` 404는 업로드 세션이 없거나 만료된 경우이므로 같은 `sourceCommit`으로 다시 실행한다.
 - 원시 요청·응답 헤더, API key, 환경 변수 파일 내용과 전체 원시 응답 본문은 출력하지 않는다.
-- `SupabaseStorageException` 본문이 예상 JSON이 아니면 원문 대신 예외 타입·HTTP 상태까지만 남긴다.
+- `SupabaseStorageException` 본문이 JSON이면 `code`와 `message`만 추출한다. 짧은 일반 텍스트 오류는 공백을 정규화하고 300자로 제한해 `errorMessage`에 남긴다. 알 수 없는 JSON과 전체 원시 본문은 출력하지 않는다.
 
 로컬 선검증(관계 검증, 산출물 존재·크기·1 GiB 상한, 원격 경로 허용 문자) 실패는 Storage를 한 번도 호출하지 않고 해당 사유만 출력한다.
 
@@ -221,7 +234,7 @@ git push
 
 첫 Storage 호출 전에 실패하면 원격 상태가 바뀌지 않았으므로 수정한 새 commit으로 다시 시작할 수 있다.
 
-첫 Storage 호출이 시작된 뒤 실패하면(산출물 upsert 도중, 세대 매니페스트 생성 도중, 로컬 상태 교체 실패 등) 다음 순서로 복구한다.
+첫 Storage 호출이 시작된 뒤 실패하면(버킷 생성 도중, 산출물 upsert 도중, 세대 매니페스트 생성 도중, 로컬 상태 교체 실패 등) 다음 순서로 복구한다.
 
 1. 실패 시점의 로컬 `manifest.json.sourceCommit`에 기록된 정확한 SHA를 확인한다(배포 스크립트가 첫 Storage 호출 전에 이 값을 기록해 둔다).
 2. 그 SHA를 checkout하고 같은 `gpk`·압축 구현 버전과 원래의 `--config` 인자로 `gpk build` → `gpk verify` → `gpk upload`를 다시 실행한다.
@@ -232,9 +245,10 @@ CLI는 `--commit`·`--rebuild` 옵션을 제공하지 않는다. 재실행 대�
 
 ## 실제 Supabase 검증
 
-이 문서가 기술하는 동작은 fake storage를 사용한 자동 테스트(`TestUploadCommand`, `TestSupabaseUploadStorage`, `TestUploadSettings`)로 검증됐다. 다음 항목은 실제 Supabase Pro 또는 Team 프로젝트와 자격증명이 필요해 이 CLI 구현 세션에서는 수행하지 않았다. 운영 배포를 시작하기 전에 지정된 배포 환경에서 아래 항목을 실제로 확인해야 한다.
+게시 순서와 실패 시 상태 보존은 fake storage를 사용한 자동 테스트(`TestUploadCommand`, `TestSupabaseUploadStorage`, `TestUploadSettings`)로 검증됐다. 다음 항목은 실제 Supabase Pro 또는 Team 프로젝트와 자격증명이 필요해 이 CLI 구현 세션에서는 수행하지 않았다. 운영 배포를 시작하기 전에 지정된 배포 환경에서 아래 항목을 실제로 확인해야 한다.
 
-- [ ] Pro 또는 Team 프로젝트에서 전역·버킷 파일 제한을 가장 큰 `storedSize` 이상으로 설정한 뒤 50 MB 초과 ~ 1 GiB 이하 아카이브가 `UploadOrResume`으로 올라가는지 확인
+- [ ] 버킷이 없는 상태에서 첫 업로드가 공개 버킷을 생성하고, 기존 버킷으로 재실행할 때 설정을 바꾸지 않는지 확인
+- [ ] Pro 또는 Team 프로젝트에서 전역 제한과 기존 버킷에 명시된 제한을 가장 큰 `storedSize` 이상으로 설정한 뒤 50 MB 초과 ~ 1 GiB 이하 아카이브가 `UploadOrResume`으로 올라가는지 확인
 - [ ] 직접 Storage API URL과 `sb_secret_...` key를 `apikey` 헤더로 사용한 실제 인증 성공, 권한 부족 시 key 노출 없이 실패하는지 확인
 - [ ] 최초 실행(전량 upsert) → 동일 재실행(전량 건너뛰기, 세대 매니페스트 재사용) → 증분 빌드 후 업로드(새 산출물만 upsert) 순서 확인
 - [ ] 업로드 중단 후 같은 `sourceCommit` SHA와 원래의 `--config` 인자로 재실행했을 때 완료되는지 확인

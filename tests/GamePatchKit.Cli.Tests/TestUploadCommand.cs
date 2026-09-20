@@ -185,6 +185,7 @@ public sealed class TestUploadCommand
         Assert.Equal(
             new[]
             {
+                "bucket",
                 $"upsert:{environment.ArtifactNames[0]}",
                 $"upsert:{environment.ArtifactNames[1]}",
                 "manifest:manifests/0.json"
@@ -194,6 +195,25 @@ public sealed class TestUploadCommand
         Assert.Equal(
             File.ReadAllBytes(Path.Combine(environment.OutputPath, "manifest.json")),
             File.ReadAllBytes(environment.UploadStatePath));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_BucketEnsureFails_StopsBeforePublishingAndPreservesPreviousLocalState()
+    {
+        using var environment = new UploadTestEnvironment(("a", 5));
+        environment.WriteArtifactFile(environment.ArtifactNames[0], 5);
+        environment.WriteUploadState(("previous", 3));
+        byte[] stateBefore = File.ReadAllBytes(environment.UploadStatePath);
+        const string failureMessage = "Storage 요청이 실패했습니다. stage=bucket-get";
+        var storage = new FakeUploadStorage(bucketFailureMessage: failureMessage);
+        var sut = new UploadCommand(storage, ValidBucket);
+
+        BuildException exception = await Assert.ThrowsAsync<BuildException>(
+            () => sut.ExecuteAsync(environment.OutputPath));
+
+        Assert.Equal(failureMessage, exception.Message);
+        Assert.Empty(storage.Calls);
+        Assert.Equal(stateBefore, File.ReadAllBytes(environment.UploadStatePath));
     }
 
     [Fact]
@@ -207,7 +227,7 @@ public sealed class TestUploadCommand
         UploadSummary summary = await sut.ExecuteAsync(environment.OutputPath);
 
         Assert.Equal(
-            new[] { $"upsert:{environment.ArtifactNames[0]}", "manifest:manifests/5.json" },
+            new[] { "bucket", $"upsert:{environment.ArtifactNames[0]}", "manifest:manifests/5.json" },
             storage.Calls);
         Assert.Equal(5, summary.ReleaseVersion);
     }
@@ -226,7 +246,7 @@ public sealed class TestUploadCommand
 
         UploadSummary summary = await sut.ExecuteAsync(environment.OutputPath);
 
-        Assert.Equal(new[] { "manifest:manifests/0.json" }, storage.Calls);
+        Assert.Equal(new[] { "bucket", "manifest:manifests/0.json" }, storage.Calls);
         Assert.Equal(new UploadSummary(UploadedCount: 0, UploadedBytes: 0, SkippedCount: 2, ReleaseVersion: 0), summary);
     }
 
@@ -264,8 +284,10 @@ public sealed class TestUploadCommand
         Assert.Equal(
             new[]
             {
+                "bucket",
                 "upsert:files/content/0/value.json.v0.0",
                 "manifest:manifests/0.json",
+                "bucket",
                 "manifest:manifests/0.json"
             },
             storage.Calls);
@@ -288,7 +310,7 @@ public sealed class TestUploadCommand
 
         await Assert.ThrowsAsync<BuildException>(() => sut.ExecuteAsync(environment.OutputPath));
 
-        Assert.Empty(storage.Calls);
+        Assert.Equal(new[] { "bucket" }, storage.Calls);
         Assert.Equal(stateBefore, File.ReadAllBytes(environment.UploadStatePath));
     }
 
@@ -307,7 +329,7 @@ public sealed class TestUploadCommand
             () => sut.ExecuteAsync(environment.OutputPath));
 
         Assert.Contains("이미 다른 내용으로 존재합니다", exception.Message, StringComparison.Ordinal);
-        Assert.Equal(new[] { $"upsert:{environment.ArtifactNames[0]}" }, storage.Calls);
+        Assert.Equal(new[] { "bucket", $"upsert:{environment.ArtifactNames[0]}" }, storage.Calls);
         Assert.False(File.Exists(environment.UploadStatePath));
     }
 
@@ -332,7 +354,7 @@ public sealed class TestUploadCommand
             () => sut.ExecuteAsync(environment.OutputPath));
 
         Assert.Contains("이미 다른 내용으로 존재합니다", exception.Message, StringComparison.Ordinal);
-        Assert.Equal(new[] { $"upsert:{environment.ArtifactNames[0]}" }, storage.Calls);
+        Assert.Equal(new[] { "bucket", $"upsert:{environment.ArtifactNames[0]}" }, storage.Calls);
         Assert.Equal(stateBefore, File.ReadAllBytes(environment.UploadStatePath));
     }
 
@@ -455,13 +477,16 @@ public sealed class TestUploadCommand
     /// </summary>
     private sealed class FakeUploadStorage : IUploadStorage
     {
+        private readonly string? _bucketFailureMessage;
         private readonly IReadOnlyDictionary<string, string> _upsertFailureMessagesByRemotePath;
         private readonly Dictionary<string, byte[]> _existingManifestBytesByRemotePath;
 
         public FakeUploadStorage(
+            string? bucketFailureMessage = null,
             IReadOnlyDictionary<string, string>? upsertFailureMessagesByRemotePath = null,
             IReadOnlyDictionary<string, byte[]>? existingManifestBytesByRemotePath = null)
         {
+            _bucketFailureMessage = bucketFailureMessage;
             _upsertFailureMessagesByRemotePath =
                 upsertFailureMessagesByRemotePath ?? new Dictionary<string, string>(StringComparer.Ordinal);
             _existingManifestBytesByRemotePath = existingManifestBytesByRemotePath is null
@@ -470,6 +495,17 @@ public sealed class TestUploadCommand
         }
 
         public List<string> Calls { get; } = new();
+
+        public Task EnsureBucketExistsAsync()
+        {
+            if (_bucketFailureMessage is not null)
+            {
+                throw new BuildException(_bucketFailureMessage);
+            }
+
+            Calls.Add("bucket");
+            return Task.CompletedTask;
+        }
 
         public Task UpsertArtifactAsync(string localPath, string remotePath)
         {

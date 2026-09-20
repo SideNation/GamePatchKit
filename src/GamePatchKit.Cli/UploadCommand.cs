@@ -28,6 +28,8 @@ internal sealed class UploadCommand
         IReadOnlyList<ManifestArtifact> artifactsToUpload = PlanArtifacts(manifest, uploadedState);
         long uploadedBytes = 0;
 
+        await _storage.EnsureBucketExistsAsync();
+
         foreach (ManifestArtifact artifact in artifactsToUpload)
         {
             string localPath = Path.Combine(outputPath, artifact.Name.Replace('/', Path.DirectorySeparatorChar));

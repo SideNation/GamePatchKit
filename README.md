@@ -35,7 +35,7 @@ gpk verify --output ../patches
 
 ## 업로드
 
-빌드한 패치 데이터를 Supabase Storage 버킷에 올린다. 대상 버킷과 인증 정보는 환경 변수로 전달한다.
+빌드한 패치 데이터를 Supabase Storage 버킷에 올린다. 대상 버킷과 인증 정보는 환경 변수로 전달하며, 버킷이 없으면 공개 버킷으로 생성한다.
 
 ```shell
 export GPK_SUPABASE_STORAGE_URL=https://<project-ref>.storage.supabase.co/storage/v1

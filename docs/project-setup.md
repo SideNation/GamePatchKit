@@ -17,16 +17,15 @@
 
 ## 1. Supabase 준비
 
-프로젝트당 1회, 버킷 추가 시마다 버킷 부분만 반복한다.
+프로젝트당 1회 준비한다. 게임별 버킷은 첫 `gpk upload`가 없을 때 공개 버킷으로 생성한다.
 
-1. **공개 버킷 생성.** 소비 측은 key 없이 객체를 받는다. 버킷 이름은 영숫자와 `.`, `_`, `-`만 쓰고, 이 이름이 그대로 포인터 행의 키가 된다.
-2. **파일 크기 제한 조정.** 전역·버킷 제한을 가장 큰 산출물의 `storedSize` 이상으로 올린다. `gpk upload`는 이 설정을 만들거나 조회하지 않으며, 별도로 산출물 하나를 1 GiB 이하로 제한한다.
-3. **포인터 테이블 생성.** 아래 SQL을 **프로젝트의 버전 관리되는 마이그레이션으로** 1회 적용한다. 운영자가 만들며 `gpk`는 테이블을 만들지 않는다.
+1. **파일 크기 제한 조정.** 프로젝트 전역 제한을 가장 큰 산출물의 `storedSize` 이상으로 올린다. 기존 버킷에 별도 제한이 있으면 그 제한도 함께 조정한다. `gpk upload`는 제한을 만들거나 조회하지 않으며, 별도로 산출물 하나를 1 GiB 이하로 제한한다.
+2. **포인터 테이블 생성.** 아래 SQL을 **프로젝트의 버전 관리되는 마이그레이션으로** 1회 적용한다. 운영자가 만들며 `gpk`는 테이블을 만들지 않는다.
 
 | 항목 | 조건 |
 | --- | --- |
 | 포인터 테이블 | 아래 SQL을 1회 실행. **GRANT까지 전부 실행해야 한다** |
-| 버킷 | 공개 버킷. 소비 측은 키 없이 객체를 받는다 |
+| 버킷 | 첫 `gpk upload`가 없으면 공개 버킷으로 생성한다. 기존 버킷 설정은 바꾸지 않는다 |
 | 자격증명 | 소비 측은 읽기용 publishable key만 필요하다. secret key를 소비 머신에 두지 않는다 |
 | 게시 순서 | 배포 스크립트가 상태 Git push까지 끝낸 뒤에 포인터를 갱신해야 한다 |
 
@@ -49,7 +48,7 @@ create policy gamepatch_pointer_read on public.gamepatch_pointer
   for select to anon using (true);
 ```
 
-4. **seed 행을 넣지 않는다.** `releaseVersion` 0이 실제 첫 세대이므로 미리 0을 넣으면 아직 게시되지 않은 세대를 가리키게 된다. 첫 행은 첫 게시 때 배포 스크립트가 만든다.
+3. **seed 행을 넣지 않는다.** `releaseVersion` 0이 실제 첫 세대이므로 미리 0을 넣으면 아직 게시되지 않은 세대를 가리키게 된다. 첫 행은 첫 게시 때 배포 스크립트가 만든다.
 
 테이블은 프로젝트당 하나이고 버킷마다 행이 하나씩 생긴다. 버킷을 추가할 때 테이블을 다시 만들지 않는다.
 
@@ -159,7 +158,7 @@ gpk deploy-function --project-id <project-ref> --access-token <Supabase Access T
 ```
 
 - Access Token은 [대시보드 Account → Access Tokens](https://supabase.com/dashboard/account/tokens)에서 발급하고 `edge_functions_write`(OAuth는 `edge_functions:write`) 권한이 필요하다. publishable key나 secret key로 대체되지 않는다.
-- 1단계의 포인터 테이블이 먼저 적용돼 있어야 한다. 이 명령은 DB·버킷·포인터 데이터를 만들지 않는다.
+- 2단계의 포인터 테이블이 먼저 적용돼 있어야 한다. 이 명령은 DB·버킷·포인터 데이터를 만들지 않는다.
 - 함수는 프로젝트당 한 번 배포하면 그 프로젝트의 모든 버킷을 처리한다. 호출자는 API key 없이 `bucket`만 넘긴다.
 
 자세한 계약은 [`gpk deploy-function`](cli/deploy-function.md)에 있다.
@@ -173,7 +172,7 @@ gpk deploy-function --project-id <project-ref> --access-token <Supabase Access T
 
 ## 확인
 
-- [ ] 버킷이 공개이고 파일 크기 제한이 가장 큰 산출물보다 크다
+- [ ] 첫 업로드 뒤 버킷이 공개이고 적용되는 파일 크기 제한이 가장 큰 산출물보다 크다
 - [ ] `select * from public.gamepatch_pointer`가 첫 게시 후 행 하나를 반환한다
 - [ ] 기본 `gamepatchkit.yml` 또는 `--config`로 지정할 설정 파일이 데이터 저장소에 커밋돼 있다
 - [ ] 상태 저장소에 `manifest.json`과 `.gpk-upload-state.json`이 push돼 있다

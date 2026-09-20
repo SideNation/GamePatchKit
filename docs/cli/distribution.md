@@ -20,17 +20,21 @@ gpk build --source <데이터 루트> [--config <설정 파일>] --output <패�
 ```shell
 dotnet pack src/GamePatchKit.Cli/GamePatchKit.Cli.csproj --configuration Release --output artifacts
 dotnet tool install GamePatchKit.Cli --tool-path <임시 tool 폴더> --add-source artifacts --version <패키지 버전>
+# 삭제
+dotnet tool uninstall --global GamePatchKit.Cli
 ```
 
 ## 독립 실행파일
 
 .NET 런타임을 별도로 설치하지 않을 환경에서는 GitHub Release에서 플랫폼에 맞는 아카이브를 내려받아 `gpk`를 실행한다.
 
-| 플랫폼 | Release asset | 실행파일 |
-| --- | --- | --- |
-| Windows x64 | `GamePatchKit.Cli-<버전>-win-x64.tar.gz` | `gpk.exe` |
-| Linux x64 | `GamePatchKit.Cli-<버전>-linux-x64.tar.gz` | `gpk` |
-| macOS Apple Silicon | `GamePatchKit.Cli-<버전>-osx-arm64.tar.gz` | `gpk` |
+
+| 플랫폼                 | Release asset                            | 실행파일      |
+| ------------------- | ---------------------------------------- | --------- |
+| Windows x64         | `GamePatchKit.Cli-<버전>-win-x64.tar.gz`   | `gpk.exe` |
+| Linux x64           | `GamePatchKit.Cli-<버전>-linux-x64.tar.gz` | `gpk`     |
+| macOS Apple Silicon | `GamePatchKit.Cli-<버전>-osx-arm64.tar.gz` | `gpk`     |
+
 
 각 아카이브는 .NET 런타임과 네이티브 zstd 라이브러리를 포함한 self-contained single-file 실행파일 하나를 담는다. Linux와 macOS 아카이브는 실행 권한을 보존하기 위해 `tar.gz` 형식을 사용한다.
 
