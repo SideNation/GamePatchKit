@@ -231,6 +231,47 @@ public sealed class TestUploadCommand
     }
 
     [Fact]
+    public async Task ExecuteAsync_AfterHeadOnlyRebuild_ReusesSameReleaseAndManifestBytes()
+    {
+        using var testRepository = new GitTestRepository();
+        testRepository.WriteFile(
+            "data/gamepatchkit.yml",
+            """
+            groups:
+              - id: content
+                packing: file
+                compression: none
+            """);
+        testRepository.WriteFile("data/content/value.json", "{}");
+        testRepository.CommitAll("initial");
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        var buildCommand = new BuildCommand();
+        buildCommand.Execute(new BuildArguments(sourcePath, outputPath));
+        byte[] manifestBefore = File.ReadAllBytes(Path.Combine(outputPath, "manifest.json"));
+        var storage = new FakeUploadStorage();
+        var sut = new UploadCommand(storage, ValidBucket);
+
+        UploadSummary firstUpload = await sut.ExecuteAsync(outputPath);
+        testRepository.WriteFile("outside.txt", "outside");
+        testRepository.CommitAll("outside source");
+        buildCommand.Execute(new BuildArguments(sourcePath, outputPath));
+        UploadSummary secondUpload = await sut.ExecuteAsync(outputPath);
+
+        Assert.Equal(0, firstUpload.ReleaseVersion);
+        Assert.Equal(0, secondUpload.ReleaseVersion);
+        Assert.Equal(manifestBefore, File.ReadAllBytes(Path.Combine(outputPath, "manifest.json")));
+        Assert.Equal(
+            new[]
+            {
+                "upsert:files/content/0/value.json.v0.0",
+                "manifest:manifests/0.json",
+                "manifest:manifests/0.json"
+            },
+            storage.Calls);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ArtifactUpsertFails_StopsWithoutSubsequentCallsAndPreservesPreviousLocalState()
     {
         using var environment = new UploadTestEnvironment(("a", 5), ("b", 7));

@@ -158,9 +158,9 @@ Storage 요청이 실패했습니다. stage=artifact-upsert, remotePath=files/gr
 
 릴리스 계보를 지정된 수동 배포 환경에서 이어가려면 소스 저장소와 분리된 private Git 저장소가 필요하다. `gpk upload` 자체는 Git을 호출하지 않으므로, 지정된 배포 스크립트가 다음 운영 전제를 지켜야 한다.
 
-- 상태 Git 저장소는 성공적으로 게시된 `manifest.json`과 `.gpk-upload-state.json` 두 파일만 추적한다. `archives/`·`files/` 산출물은 Git에 넣지 않는다.
-- 첫 배포가 아니면 배포 시작 시 상태 저장소의 두 파일을 `--output`에 복원한다. 저장소가 비어 있는 경우는 실제 첫 배포에만 허용한다.
-- `gpk upload`와 로컬 성공 상태 기록이 모두 성공한 뒤 두 상태 파일을 **한 Git commit**으로 저장하고 push한다. 그 뒤에만 Postgres 버전 포인터를 갱신한다.
+- 아래 기본 예시는 성공적으로 게시된 `manifest.json`과 `.gpk-upload-state.json` 두 파일만 추적한다. 호출 프로젝트가 완전한 로컬 복원을 원하면 `archives/`·`files/`까지 추적할 수 있으며 `gpk upload` 동작은 같다.
+- 첫 배포가 아니면 배포 시작 시 상태 저장소가 추적하는 output을 복원한다. 저장소가 비어 있는 경우는 실제 첫 배포에만 허용한다.
+- `gpk upload`와 로컬 성공 상태 기록이 모두 성공한 뒤 선택한 output 범위를 **한 Git commit**으로 저장하고 push한다. 두 상태 파일은 반드시 포함한다. 그 뒤에만 Postgres 버전 포인터를 갱신한다.
 - 같은 `--output`을 사용하는 `build`·`verify`·`upload`는 동시에 실행하지 않는다. CLI는 락이나 동시성 제어를 넣지 않으므로, 지정된 수동 배포 환경 한 곳이 전체 흐름을 직렬화해야 한다.
 - 원격 객체를 다른 프로그램이 수정하거나 삭제하지 않는다는 전제를 사용한다.
 
@@ -181,7 +181,7 @@ git push -u origin main
 ```
 
 - `--output`은 source가 속한 Git 저장소 바깥이어야 하므로 원본 저장소와 상태 저장소는 항상 분리된다.
-- 추적 대상은 `manifest.json`, `.gpk-upload-state.json`, `.gitignore`뿐이다. 산출물은 `.gitignore`가 제외한다.
+- 이 예시의 추적 대상은 `manifest.json`, `.gpk-upload-state.json`, `.gitignore`뿐이다. 전체 output을 추적하는 프로젝트는 `archives/`·`files/` 제외 규칙을 사용하지 않고 줄바꿈 변환 없이 바이트를 보존해야 한다.
 - `.*.tmp`는 `ManifestStore`가 원자적 교체에 쓰는 임시 파일이다. 정상 종료에서는 남지 않지만 프로세스가 강제 종료되면 남을 수 있다.
 - `gpk`는 Git 원격을 설정하거나 호출하지 않는다. 상태 저장소의 주소를 CLI에 알려주는 설정 값은 없다.
 
@@ -202,7 +202,7 @@ git push
 
 4단계로 Postgres 버전 포인터에 `N`을 기록한다. 이 순서를 지켜야 "포인터가 `N`이면 그 세대가 전부 게시돼 있다"는 소비 측 전제가 성립한다. 자세한 내용은 [배포 PRD의 버전 포인터](../prd/gamepatch-kit-distribution-prd.md)를 따른다.
 
-### 산출물은 상태 저장소에서 복원되지 않는다
+### 상태 파일만 추적하면 산출물은 복원되지 않는다
 
 상태 저장소는 두 상태 파일만 추적하므로, 산출물이 없는 빈 `--output`에 두 파일만 복원하면 증분 빌드가 실패한다.
 
@@ -224,11 +224,11 @@ git push
 첫 Storage 호출이 시작된 뒤 실패하면(산출물 upsert 도중, 세대 매니페스트 생성 도중, 로컬 상태 교체 실패 등) 다음 순서로 복구한다.
 
 1. 실패 시점의 로컬 `manifest.json.sourceCommit`에 기록된 정확한 SHA를 확인한다(배포 스크립트가 첫 Storage 호출 전에 이 값을 기록해 둔다).
-2. 그 SHA를 checkout하고 같은 `gpk`·압축 구현 버전으로 `gpk build` → `gpk verify` → `gpk upload`를 다시 실행한다.
+2. 그 SHA를 checkout하고 같은 `gpk`·압축 구현 버전과 원래의 `--config` 인자로 `gpk build` → `gpk verify` → `gpk upload`를 다시 실행한다.
 3. 이미 올라간 산출물은 같은 이름으로 다시 upsert되고, 이미 생성된 세대 매니페스트는 바이트가 같으면 재사용되므로 안전하게 완료된다.
 4. 이 재실행이 상태 Git push와 버전 포인터 갱신까지 끝나기 전에는 더 새로운 source commit을 게시하지 않는다. 상태 commit 또는 push가 실패한 경우도 같은 source commit의 배포를 다시 완료한다.
 
-CLI는 `--commit`·`--rebuild` 옵션을 제공하지 않는다. 재실행 대상은 `manifest.json.sourceCommit`과 Git checkout만으로 재현한다.
+CLI는 `--commit`·`--rebuild` 옵션을 제공하지 않는다. 재실행 대상은 `manifest.json.sourceCommit`, Git checkout과 원래의 `--config` 인자로 재현한다.
 
 ## 실제 Supabase 검증
 
@@ -237,10 +237,10 @@ CLI는 `--commit`·`--rebuild` 옵션을 제공하지 않는다. 재실행 대�
 - [ ] Pro 또는 Team 프로젝트에서 전역·버킷 파일 제한을 가장 큰 `storedSize` 이상으로 설정한 뒤 50 MB 초과 ~ 1 GiB 이하 아카이브가 `UploadOrResume`으로 올라가는지 확인
 - [ ] 직접 Storage API URL과 `sb_secret_...` key를 `apikey` 헤더로 사용한 실제 인증 성공, 권한 부족 시 key 노출 없이 실패하는지 확인
 - [ ] 최초 실행(전량 upsert) → 동일 재실행(전량 건너뛰기, 세대 매니페스트 재사용) → 증분 빌드 후 업로드(새 산출물만 upsert) 순서 확인
-- [ ] 업로드 중단 후 같은 `sourceCommit` SHA로 재실행했을 때 완료되는지 확인
+- [ ] 업로드 중단 후 같은 `sourceCommit` SHA와 원래의 `--config` 인자로 재실행했을 때 완료되는지 확인
 - [ ] 서로 다른 `releaseVersion`으로 두 번 업로드해 `manifests/` 아래에 두 세대가 함께 남고 이전 세대 바이트가 바뀌지 않는지, 같은 세대 경로에 다른 바이트를 게시하려 할 때 버전 충돌로 중단하는지 확인
 - [ ] 원격 루트 `manifest.json`이 게시되지 않는지 확인
-- [ ] 별도 상태 Git 저장소에 성공한 두 상태 파일만 한 commit으로 보존되고 포인터 갱신보다 먼저 push되는 운영 절차 확인
+- [ ] 별도 상태 Git 저장소에 성공한 두 상태 파일(또는 호출 프로젝트가 선택한 전체 output)이 한 commit으로 보존되고 포인터 갱신보다 먼저 push되는 운영 절차 확인
 - [ ] 지정된 수동 배포 환경에서 동일 `--output`의 배포가 동시에 시작되지 않도록 운영 스크립트가 직렬화하는지 확인
 
 이 항목들이 검증되기 전까지는 실제 운영 배포를 시작하지 않는다.

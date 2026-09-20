@@ -1,6 +1,6 @@
 namespace GamePatchKit.Cli;
 
-internal sealed record BuildArguments(string SourcePath, string OutputPath);
+internal sealed record BuildArguments(string SourcePath, string OutputPath, string? ConfigurationPath = null);
 
 internal sealed record VerifyArguments(string OutputPath);
 
@@ -20,6 +20,7 @@ internal static class ArgumentsParser
 {
     private const string SourceOption = "--source";
     private const string OutputOption = "--output";
+    private const string ConfigurationOption = "--config";
     private const string EnvFileOption = "--env-file";
     private const string ProjectIdOption = "--project-id";
     private const string AccessTokenOption = "--access-token";
@@ -27,23 +28,24 @@ internal static class ArgumentsParser
 
     public static BuildArguments ParseBuild(string[] arguments)
     {
-        (string? sourcePath, string outputPath, _) = ParseOptions(
+        (string? sourcePath, string outputPath, _, string? configurationPath) = ParseOptions(
             "build",
             arguments,
             acceptsSource: true,
-            acceptsEnvFile: false);
-        return new BuildArguments(sourcePath!, outputPath);
+            acceptsEnvFile: false,
+            acceptsConfiguration: true);
+        return new BuildArguments(sourcePath!, outputPath, configurationPath);
     }
 
     public static VerifyArguments ParseVerify(string[] arguments)
     {
-        (_, string outputPath, _) = ParseOptions("verify", arguments, acceptsSource: false, acceptsEnvFile: false);
+        (_, string outputPath, _, _) = ParseOptions("verify", arguments, acceptsSource: false, acceptsEnvFile: false);
         return new VerifyArguments(outputPath);
     }
 
     public static UploadArguments ParseUpload(string[] arguments)
     {
-        (_, string outputPath, string? envFilePath) = ParseOptions(
+        (_, string outputPath, string? envFilePath, _) = ParseOptions(
             "upload",
             arguments,
             acceptsSource: false,
@@ -53,7 +55,7 @@ internal static class ArgumentsParser
 
     public static SyncArguments ParseSync(string[] arguments)
     {
-        (_, string outputPath, string? envFilePath) = ParseOptions(
+        (_, string outputPath, string? envFilePath, _) = ParseOptions(
             "sync",
             arguments,
             acceptsSource: false,
@@ -109,18 +111,21 @@ internal static class ArgumentsParser
         return new DeployFunctionArguments(projectId, accessToken);
     }
 
-    private static (string? SourcePath, string OutputPath, string? EnvFilePath) ParseOptions(
+    private static (string? SourcePath, string OutputPath, string? EnvFilePath, string? ConfigurationPath) ParseOptions(
         string command,
         string[] arguments,
         bool acceptsSource,
-        bool acceptsEnvFile)
+        bool acceptsEnvFile,
+        bool acceptsConfiguration = false)
     {
         string? sourcePath = acceptsSource ? Directory.GetCurrentDirectory() : null;
         string? outputPath = null;
         string? envFilePath = null;
+        string? configurationPath = null;
         bool isSourceSpecified = false;
         bool isOutputSpecified = false;
         bool isEnvFileSpecified = false;
+        bool isConfigurationSpecified = false;
 
         for (int index = 0; index < arguments.Length; index++)
         {
@@ -172,6 +177,23 @@ internal static class ArgumentsParser
                 continue;
             }
 
+            if (argument == ConfigurationOption)
+            {
+                if (!acceptsConfiguration)
+                {
+                    throw new BuildException($"{command} 명령은 --config 옵션을 받지 않습니다.");
+                }
+
+                if (isConfigurationSpecified)
+                {
+                    throw new BuildException("--config 옵션을 두 번 지정할 수 없습니다.");
+                }
+
+                configurationPath = ReadValue(arguments, ref index, ConfigurationOption);
+                isConfigurationSpecified = true;
+                continue;
+            }
+
             throw new BuildException($"알 수 없는 {command} 옵션입니다: {argument}");
         }
 
@@ -180,7 +202,7 @@ internal static class ArgumentsParser
             throw new BuildException("--output 옵션을 지정해야 합니다.");
         }
 
-        return (sourcePath, outputPath, envFilePath);
+        return (sourcePath, outputPath, envFilePath, configurationPath);
     }
 
     private static string ReadValue(string[] arguments, ref int index, string option)

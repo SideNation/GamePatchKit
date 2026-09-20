@@ -545,7 +545,7 @@ internal static class ManifestStore
             SchemaVersion = manifest.SchemaVersion,
             ReleaseVersion = 0,
             SourcePath = manifest.SourcePath,
-            SourceCommit = manifest.SourceCommit,
+            SourceCommit = string.Empty,
             Groups = manifest.Groups
         };
         return SerializeSorted(normalizedManifest);

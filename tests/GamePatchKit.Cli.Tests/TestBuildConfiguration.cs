@@ -100,6 +100,25 @@ public sealed class TestBuildConfiguration
         Assert.Throws<BuildException>(() => LoadYaml("{}"));
     }
 
+    [Fact]
+    public void Load_PathCannotBeRead_ThrowsBuildException()
+    {
+        string directoryPath = Path.Combine(Path.GetTempPath(), $"gamepatchkit-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directoryPath);
+
+        try
+        {
+            BuildException exception = Assert.Throws<BuildException>(
+                () => BuildConfigurationLoader.Load(directoryPath));
+
+            Assert.Contains("읽지 못했습니다", exception.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(directoryPath);
+        }
+    }
+
     private static BuildConfiguration LoadYaml(string yaml)
     {
         string path = Path.Combine(Path.GetTempPath(), $"gamepatchkit-{Guid.NewGuid():N}.yml");

@@ -111,6 +111,62 @@ public sealed class TestCommandArguments
 
         Assert.Equal(Directory.GetCurrentDirectory(), result.SourcePath);
         Assert.Equal("patches", result.OutputPath);
+        Assert.Null(result.ConfigurationPath);
+    }
+
+    [Fact]
+    public void ParseBuild_ConfigurationIsProvided_ReturnsConfigurationPath()
+    {
+        var arguments = new[]
+        {
+            "--config",
+            "config/shared.yml",
+            "--output",
+            "patches",
+            "--source",
+            "data"
+        };
+
+        BuildArguments result = ArgumentsParser.ParseBuild(arguments);
+
+        Assert.Equal("data", result.SourcePath);
+        Assert.Equal("patches", result.OutputPath);
+        Assert.Equal("config/shared.yml", result.ConfigurationPath);
+    }
+
+    [Theory]
+    [InlineData("build")]
+    [InlineData("verify")]
+    [InlineData("upload")]
+    [InlineData("sync")]
+    [InlineData("deploy-function")]
+    public void Parse_ConfigIsInvalid_ThrowsBuildException(string command)
+    {
+        string[] arguments = command == "build"
+            ? new[] { "--output", "patches", "--config", "one.yml", "--config", "two.yml" }
+            : command == "deploy-function"
+                ? new[] { "--config", "config.yml" }
+                : new[] { "--output", "patches", "--config", "config.yml" };
+
+        Action parse = command switch
+        {
+            "build" => () => ArgumentsParser.ParseBuild(arguments),
+            "verify" => () => ArgumentsParser.ParseVerify(arguments),
+            "upload" => () => ArgumentsParser.ParseUpload(arguments),
+            "sync" => () => ArgumentsParser.ParseSync(arguments),
+            "deploy-function" => () => ArgumentsParser.ParseDeployFunction(arguments),
+            _ => throw new InvalidOperationException()
+        };
+
+        Assert.Throws<BuildException>(parse);
+    }
+
+    [Fact]
+    public void ParseBuild_ConfigurationValueIsMissing_ThrowsBuildException()
+    {
+        var arguments = new[] { "--output", "patches", "--config" };
+
+        Assert.Throws<BuildException>(() => ArgumentsParser.ParseBuild(arguments));
     }
 
     [Fact]

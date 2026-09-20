@@ -16,14 +16,14 @@ dotnet tool install --global GamePatchKit.Cli
 
 ### 패치 데이터 빌드 (`gpk build`)
 
-- 하는 일: Git이 추적하는 데이터 폴더를 읽어 `gamepatchkit.yml` 설정대로 그룹을 묶은 아카이브 또는 파일 단위 객체를 만들고, 그 결과를 `manifest.json`에 기록한다. 이전 매니페스트가 있으면 마지막 성공 커밋부터 현재 `HEAD`까지 Git이 알려준 변경 경로만 증분 처리한다.
+- 하는 일: Git이 추적하는 데이터 폴더를 읽어 선택한 YAML 설정대로 그룹을 묶은 아카이브 또는 파일 단위 객체를 만들고, 그 결과를 `manifest.json`에 기록한다. 이전 매니페스트가 있으면 현재 릴리스를 확정한 커밋부터 현재 `HEAD`까지 source 범위의 변경 경로만 증분 처리한다.
 - 사용 방법:
 
   ```shell
-  gpk build --source <데이터 루트> --output <패치 데이터 폴더>
+  gpk build --source <데이터 루트> [--config <설정 파일>] --output <패치 데이터 폴더>
   ```
 
-  `--source`를 생략하면 현재 폴더를 쓴다. `--output`은 반드시 `--source`가 속한 Git 저장소 바깥이어야 하며, `--source` 루트에는 Git이 추적하는 `gamepatchkit.yml`이 있어야 한다.
+  `--source`를 생략하면 현재 폴더를 쓴다. `--config`를 생략하면 `<source>/gamepatchkit.yml`을 사용한다. 지정한 설정은 source와 같은 Git 저장소의 tracked·clean 일반 파일이어야 하며 파일 자체의 심볼릭 링크는 사용할 수 없다. `--output`은 반드시 source 저장소 바깥이어야 한다.
 
   ```yaml
   groups:
@@ -35,7 +35,7 @@ dotnet tool install --global GamePatchKit.Cli
 
   `id`는 `--source` 기준 그룹 폴더의 상대 경로이자 식별자다. `version`은 사용자가 올리는 값으로, 이전 성공 버전과 같으면 증분 빌드, 더 크면 그룹 전체 재빌드, 더 작으면 빌드를 중단한다.
 
-- 동작 결과: `<output>/archives/<그룹 id>/<그룹 버전>.gpka`(아카이브)와 `<output>/files/<그룹 id>/<그룹 버전>/<상대 경로>.v<파일 버전>`(오버레이 또는 `packing: file` 객체)를 만들고 `manifest.json`을 갱신한다. 파일 버전은 `<그룹 버전>.<파일 리비전>` 형식이며, 파일 리비전은 그 파일이 바뀔 때마다 0부터 1씩 오른다. 매니페스트 루트의 `releaseVersion`은 CLI가 계산하는 세대 번호로, 내용이 이전과 같으면 값이 유지되고 달라지면 1 증가한다. 성공하면 그룹별 엔트리 수·아카이브 생성 여부·새 파일 객체 수·바이트를 요약 출력한다.
+- 동작 결과: `<output>/archives/<그룹 id>/<그룹 버전>.gpka`(아카이브)와 `<output>/files/<그룹 id>/<그룹 버전>/<상대 경로>.v<파일 버전>`(오버레이 또는 `packing: file` 객체)를 만들고 `manifest.json`을 갱신한다. 파일 버전은 `<그룹 버전>.<파일 리비전>` 형식이며, 파일 리비전은 그 파일이 바뀔 때마다 0부터 1씩 오른다. 매니페스트 루트의 `releaseVersion`은 CLI가 계산하는 세대 번호다. source 밖 커밋으로 HEAD만 달라진 경우에는 기존 버전·`sourceCommit`·매니페스트 바이트를 유지하고 릴리스 내용이 달라지면 1 증가한다. 성공하면 그룹별 엔트리 수·아카이브 생성 여부·새 파일 객체 수·바이트를 요약 출력한다.
 
   ```text
   그룹 'content': version=3, entries=12, archiveCreated=false, fileObjects=2, writtenBytes=1840
@@ -134,7 +134,7 @@ Git 저장소(gamepatchkit.yml + 데이터 파일, 모두 커밋됨)
       → 모두 성공하면 로컬 .gpk-upload-state.json 교체
 ```
 
-세 명령은 각각 독립 실행되는 CLI 명령이며, `gpk build` 완료 후 `gpk upload`가 자동으로 이어지지는 않는다. 같은 데이터 루트를 다시 빌드하면 `gpk build`가 이전 `manifest.json`을 읽어 마지막 성공 커밋 이후의 변경만 반영하고, `gpk upload`도 마지막 업로드 성공 상태를 읽어 새로 생긴 산출물만 다시 올린다.
+세 명령은 각각 독립 실행되는 CLI 명령이며, `gpk build` 완료 후 `gpk upload`가 자동으로 이어지지는 않는다. 같은 데이터 루트를 다시 빌드하면 `gpk build`가 이전 `manifest.json`을 읽어 현재 릴리스를 확정한 커밋 이후의 source 변경만 반영하고, `gpk upload`도 마지막 업로드 성공 상태를 읽어 새로 생긴 산출물만 다시 올린다.
 
 ## 관련 문서
 

@@ -10,8 +10,10 @@ GamePatchKit CLI는 nuget.org의 `GamePatchKit.Cli` 패키지와 GitHub Release�
 
 ```shell
 dotnet tool install --global GamePatchKit.Cli
-gpk build --source <데이터 루트> --output <패치 데이터 폴더>
+gpk build --source <데이터 루트> [--config <설정 파일>] --output <패치 데이터 폴더>
 ```
+
+`--config`를 생략하면 `<source>/gamepatchkit.yml`을 사용한다. 지정한 설정은 현재 작업 폴더 기준이며 source와 같은 Git 저장소의 tracked·clean 일반 파일이어야 한다.
 
 로컬에서 만든 패키지를 확인할 때는 별도 tool path에 설치한다.
 
@@ -36,7 +38,7 @@ dotnet tool install GamePatchKit.Cli --tool-path <임시 tool 폴더> --add-sour
 
 ## GitHub Actions 검증
 
-일반 push와 pull request에서는 다음 세 환경이 각각 restore, test, pack, 로컬 tool 설치, zstd smoke build를 수행한다. 이어서 같은 환경의 self-contained single-file 실행파일을 만들고 그 실행파일로 smoke build를 한 번 더 검증한다.
+일반 push와 pull request에서는 다음 세 환경이 각각 restore, test, pack, 로컬 tool 설치, 기본 설정과 명시 `--config`의 zstd smoke build를 수행한다. 이어서 같은 환경의 self-contained single-file 실행파일을 만들고 그 실행파일로 smoke build를 한 번 더 검증한다.
 
 - `windows-latest`: `win-x64`
 - `ubuntu-latest`: `linux-x64`

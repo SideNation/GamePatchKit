@@ -90,12 +90,12 @@ gpk upload --output <패치 데이터 폴더> [--env-file <환경 변수 파일>
 
 ### 상태 Git 저장소
 
-릴리스 계보를 지정된 수동 배포 환경에서 이어가기 위해 소스 저장소와 분리된 private Git 저장소를 둔다. 패치 상태 데이터로 추적하는 파일은 `manifest.json`과 `.gpk-upload-state.json` 두 개뿐이며, `archives/`·`files/` 산출물은 Git에 넣지 않는다. 같은 소스 저장소에 상태를 커밋하면 그 커밋이 다음 `sourceCommit`을 바꾸므로 사용하지 않는다.
+릴리스 계보를 지정된 수동 배포 환경에서 이어가기 위해 소스 저장소와 분리된 private Git 저장소를 둔다. `manifest.json`과 `.gpk-upload-state.json`은 반드시 추적한다. 호출 프로젝트는 완전한 로컬 복원이 필요하면 `archives/`·`files/` 산출물도 함께 추적할 수 있다. 같은 소스 저장소에 상태를 커밋하면 그 커밋이 다음 `sourceCommit`을 바꾸므로 사용하지 않는다.
 
-- 첫 배포가 아니면 배포 시작 시 상태 Git 저장소의 두 파일을 `--output`에 복원한다. 상태 저장소가 비어 있는 경우는 실제 첫 배포에만 허용하며, 기존 버킷이 있는데 상태를 잃은 상황을 새 `releaseVersion: 0`으로 시작하지 않는다.
+- 첫 배포가 아니면 배포 시작 시 상태 Git 저장소가 추적하는 output을 복원한다. 상태 저장소가 비어 있는 경우는 실제 첫 배포에만 허용하며, 기존 버킷이 있는데 상태를 잃은 상황을 새 `releaseVersion: 0`으로 시작하지 않는다.
 - `gpk build`는 이전 매니페스트가 승계하는 산출물을 로컬에서 요구한다. 영속 `--output`이 없는 깨끗한 실행 환경은 현재 Supabase 버킷에서 이전 매니페스트가 참조하는 산출물을 복원한 뒤 `gpk verify`를 실행한다. 이 다운로드 자동화와 별도 산출물 백업은 이번 CLI 범위에 포함하지 않는다.
-- `gpk upload`와 로컬 성공 상태 기록이 모두 성공한 뒤 두 상태 파일을 **한 Git commit**으로 저장하고 push한다. 그 뒤에만 Postgres 버전 포인터를 갱신한다.
-- 첫 Storage 호출 전 실패는 원격 상태를 바꾸지 않았으므로 수정한 새 commit으로 다시 시작할 수 있다. 첫 Storage 호출이 시작된 뒤 실패하면 `manifest.json.sourceCommit`에 기록된 정확한 SHA를 checkout해 같은 CLI·압축 구현 버전으로 `build` → `verify` → `upload`부터 다시 실행한다. 이 배포가 상태 Git push와 포인터 갱신까지 끝나기 전에는 더 새로운 source commit을 게시하지 않는다.
+- `gpk upload`와 로컬 성공 상태 기록이 모두 성공한 뒤 선택한 output 범위를 **한 Git commit**으로 저장하고 push한다. 이 범위에는 두 상태 파일이 반드시 포함된다. 그 뒤에만 Postgres 버전 포인터를 갱신한다.
+- 첫 Storage 호출 전 실패는 원격 상태를 바꾸지 않았으므로 수정한 새 commit으로 다시 시작할 수 있다. 첫 Storage 호출이 시작된 뒤 실패하면 `manifest.json.sourceCommit`에 기록된 정확한 SHA를 checkout해 같은 CLI·압축 구현 버전과 원래의 `--config` 인자로 `build` → `verify` → `upload`부터 다시 실행한다. 이 배포가 상태 Git push와 포인터 갱신까지 끝나기 전에는 더 새로운 source commit을 게시하지 않는다.
 - 배포 스크립트는 첫 Storage 호출 전에 대상 `manifest.json.sourceCommit`을 기록해 실패한 SHA를 식별할 수 있게 한다. 별도 상태 파일이나 CLI `--commit`·`--rebuild` 옵션은 추가하지 않고 Git checkout으로 재현한다.
 - 상태 commit 또는 push가 실패하면 포인터를 갱신하지 않고 같은 source commit의 배포를 다시 완료한다.
 - CLI는 소스 checkout이나 상태 저장소 clone·commit·push를 수행하지 않는다. 전체 Git 이력을 보유한 지정 배포 환경의 운영 스크립트가 이 순서를 담당한다.
@@ -171,9 +171,9 @@ Storage 호출이 실패하면 표준 에러에 실패 단계(`artifact-upsert`,
 - 병렬 업로드와 CLI 내부 동시성 제어 — 객체를 하나씩 순서대로 올리고 전체 배포 흐름을 지정된 수동 운영 스크립트가 직렬화한다
 - 업로드 대상 계산을 위한 원격 매니페스트·버전 조회와 개별 원격 산출물 존재·무결성 확인 — create-only 세대 매니페스트의 중복 오류에서 수행하는 바이트 비교만 예외다
 - 하나의 로컬 성공 상태로 여러 프로젝트나 버킷에 게시하는 동작
-- 실제 산출물의 Git·Git LFS 저장과 별도 object storage 백업 — Git에는 두 상태 파일만 보존한다
+- 실제 산출물의 Git LFS 적용과 별도 object storage 백업 자동화 — 산출물을 Git에 추적할지는 호출 프로젝트가 정한다
 - 소스 checkout, 상태 Git 저장소의 clone·commit·push와 산출물 복원 자동화 — 지정된 수동 배포 환경의 운영 스크립트 책임이다
-- CLI `--commit`·`--rebuild` 옵션 — 재실행 대상은 `manifest.json.sourceCommit`이며 Git checkout과 기존 `build` → `verify` → `upload` 조합으로 재현한다
+- CLI `--commit`·`--rebuild` 옵션 — 재실행 대상은 `manifest.json.sourceCommit`이며 Git checkout, 원래의 `--config` 인자와 기존 `build` → `verify` → `upload` 조합으로 재현한다
 - 패치 데이터 배포용 GitHub Actions — 수동 배포로 운영한다. CLI NuGet 패키지 배포 자동화는 이 범위와 무관하다
 - `gpk build` 완료 후 자동 업로드 — `upload`는 독립 명령이다
 - Supabase 외 스토리지 백엔드

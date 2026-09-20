@@ -21,9 +21,9 @@
 - `GPK_SUPABASE_STORAGE_URL`은 `https://<project-ref>.storage.supabase.co/storage/v1` 형식의 직접 Storage API URL이다.
 - `GPK_SUPABASE_SECRET_KEY`는 `sb_secret_...` key만 허용하고 `apikey` 헤더로 전달한다.
 - 버킷 이름, 현재 매니페스트가 참조하는 모든 산출물과 세대 매니페스트의 원격 경로는 첫 Storage 호출 전에 허용 문자 규칙으로 검증한다.
-- 소스 저장소와 분리된 private Git 저장소가 성공적으로 게시된 `manifest.json`과 `.gpk-upload-state.json` 두 상태 파일만 보존한다.
+- 소스 저장소와 분리된 private Git 저장소가 성공적으로 게시된 `manifest.json`과 `.gpk-upload-state.json`을 최소 상태로 보존한다. 호출 프로젝트는 복원 정책에 따라 `archives/`·`files/`도 함께 추적할 수 있다.
 - 지정된 배포 환경은 전체 Git 이력을 유지하며 이전 성공 `sourceCommit`과 재실행 대상 SHA를 모두 checkout할 수 있다.
-- 첫 Storage 호출이 시작된 뒤 실패하면 로컬 `manifest.json.sourceCommit`의 정확한 SHA에서 같은 CLI·압축 구현 버전으로 재실행하고, 완료 전에는 더 새로운 SHA를 게시하지 않는다.
+- 첫 Storage 호출이 시작된 뒤 실패하면 로컬 `manifest.json.sourceCommit`의 정확한 SHA에서 같은 CLI·압축 구현 버전과 원래의 `--config` 인자로 재실행하고, 완료 전에는 더 새로운 SHA를 게시하지 않는다.
 - 패치 데이터 배포에는 GitHub Actions를 사용하지 않는다. CLI NuGet 패키지 배포용 workflow는 별도 범위다.
 - [`releaseVersion` 계획](game-patch-kit-cli-release-version-design.md)의 R1~R3가 먼저 완료된다.
 
@@ -325,18 +325,18 @@ gpk upload --output <폴더> [--env-file <경로>]
 ```text
 소스 저장소 전체 이력과 별도 private 상태 Git 저장소 준비
   → 게시할 정확한 source SHA checkout
-  → manifest.json + .gpk-upload-state.json을 output에 복원
-  → 깨끗한 output이면 이전 매니페스트 참조 산출물을 현재 Supabase 버킷에서 복원
+  → 상태 Git 저장소가 추적하는 output을 복원
+  → 상태 파일만 추적해 산출물이 없다면 이전 매니페스트 참조 산출물을 현재 Supabase 버킷에서 복원
   → gpk verify
   → gpk build
   → gpk verify
   → manifest.json.sourceCommit을 재실행 대상 SHA로 기록
   → gpk upload
-  → 두 상태 파일을 상태 저장소의 단일 commit으로 push
+  → 두 상태 파일을 포함한 선택 output 범위를 상태 저장소의 단일 commit으로 push
   → Postgres 버전 포인터 갱신
 ```
 
-첫 Storage 호출 전에 실패하면 원격 상태가 바뀌지 않았으므로 수정한 새 commit으로 다시 시작할 수 있다. 첫 Storage 호출이 시작된 뒤 실패하면 기록한 `manifest.json.sourceCommit`의 정확한 SHA를 checkout하고 같은 CLI·압축 구현 버전으로 위 흐름을 다시 수행한다. 상태 push가 실패한 경우도 포인터와 다음 source SHA를 진행하지 않고 같은 SHA를 재실행한다. **이 운영 스크립트와 버전 고정은 별도 작업이지만 운영 배포의 필수 선행 조건이다.** CLI는 Git·동시성 제어·산출물 복원·별도 백업을 구현하지 않는다.
+첫 Storage 호출 전에 실패하면 원격 상태가 바뀌지 않았으므로 수정한 새 commit으로 다시 시작할 수 있다. 첫 Storage 호출이 시작된 뒤 실패하면 기록한 `manifest.json.sourceCommit`의 정확한 SHA를 checkout하고 같은 CLI·압축 구현 버전과 원래의 `--config` 인자로 위 흐름을 다시 수행한다. 상태 push가 실패한 경우도 포인터와 다음 source SHA를 진행하지 않고 같은 SHA를 재실행한다. **이 운영 스크립트와 버전 고정은 별도 작업이지만 운영 배포의 필수 선행 조건이다.** CLI는 Git·동시성 제어·산출물 복원·별도 백업을 구현하지 않는다.
 
 ## 16. 테스트 경계
 
@@ -443,7 +443,7 @@ gpk upload --output <폴더> [--env-file <경로>]
   - `manifests/<N>.json` 세대 누적과 create-only 충돌 동작을 확인하고 원격 루트 `manifest.json`을 게시하지 않는지 확인한다.
   - 별도 상태 Git 저장소에 성공한 `manifest.json`과 `.gpk-upload-state.json`만 한 commit으로 보존하고 포인터보다 먼저 push하는 운영 절차를 확인한다.
   - 지정된 수동 배포 환경에서 동시에 두 배포를 시작하지 못하게 운영 스크립트가 직렬화하는지 확인한다.
-  - 첫 Storage 호출 뒤 실패를 주입하고 기록한 `manifest.json.sourceCommit` SHA를 checkout해 같은 CLI·압축 구현 버전으로 완료한 뒤에만 다음 SHA를 게시하는지 확인한다.
+  - 첫 Storage 호출 뒤 실패를 주입하고 기록한 `manifest.json.sourceCommit` SHA를 checkout해 같은 CLI·압축 구현 버전과 원래의 `--config` 인자로 완료한 뒤에만 다음 SHA를 게시하는지 확인한다.
   - 최종 restore, build, test, format, pack이 통과한다.
 
 ## 18. 테스트 추적성과 완료 정의
@@ -482,6 +482,6 @@ gpk upload --output <폴더> [--env-file <경로>]
 - 핵심 게시 순서와 실패 시 상태 보존이 fake storage를 사용한 자동 테스트로 고정된다.
 - `Supabase.Storage`만 참조한 상태로 restore, build, test, format, pack이 통과한다.
 - Pro 또는 Team 실제 프로젝트에서 50 MB 초과 파일, 1 GiB 도구 상한과 인증·권한을 검증한다.
-- 별도 private 상태 Git 저장소에는 성공한 두 상태 파일만 보존하고, 지정된 수동 배포 환경에서 전체 게시 흐름을 동시 실행하지 않는다.
+- 별도 private 상태 Git 저장소에는 성공한 두 상태 파일을 반드시 보존하고, 필요하면 전체 output도 함께 보존한다. 지정된 수동 배포 환경에서는 전체 게시 흐름을 동시 실행하지 않는다.
 - 실패 경로 어디에서도 API key가 출력되지 않는다.
 - CLI에 Postgres client, 업로드 계획용 원격 상태 조회, Git checkout, 재시도, 병렬 처리, 진행률, 캐시 정책 코드가 들어오지 않는다.

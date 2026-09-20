@@ -15,6 +15,7 @@ internal static class BuildConfigurationLoader
 
     public static BuildConfiguration Load(string path)
     {
+        string configurationName = Path.GetFileName(path);
         RawBuildConfiguration? rawConfiguration;
 
         try
@@ -27,12 +28,20 @@ internal static class BuildConfigurationLoader
         }
         catch (YamlException exception)
         {
-            throw new BuildException($"gamepatchkit.yml이 올바르지 않습니다. {exception.Message}");
+            throw new BuildException($"설정 파일 '{configurationName}'이 올바르지 않습니다. {exception.Message}");
+        }
+        catch (IOException exception)
+        {
+            throw new BuildException($"설정 파일 '{configurationName}'을 읽지 못했습니다. {exception.Message}");
+        }
+        catch (UnauthorizedAccessException exception)
+        {
+            throw new BuildException($"설정 파일 '{configurationName}'을 읽지 못했습니다. {exception.Message}");
         }
 
         if (rawConfiguration?.Groups is null)
         {
-            throw new BuildException("gamepatchkit.yml이 올바르지 않습니다. groups가 필요합니다.");
+            throw new BuildException($"설정 파일 '{configurationName}'이 올바르지 않습니다. groups가 필요합니다.");
         }
 
         var groupIds = new HashSet<string>(StringComparer.Ordinal);
@@ -44,22 +53,22 @@ internal static class BuildConfigurationLoader
 
             if (rawGroup is null)
             {
-                throw InvalidGroup(groupIndex, "그룹 값이 필요합니다.");
+                throw InvalidGroup(configurationName, groupIndex, "그룹 값이 필요합니다.");
             }
 
             if (!RelativePathValidator.IsNormalized(rawGroup.Id, allowRepositoryRoot: false))
             {
-                throw InvalidGroup(groupIndex, "id는 정규화된 상대 경로여야 합니다.", "id");
+                throw InvalidGroup(configurationName, groupIndex, "id는 정규화된 상대 경로여야 합니다.", "id");
             }
 
             if (!groupIds.Add(rawGroup.Id!))
             {
-                throw InvalidGroup(groupIndex, "id가 중복되었습니다.", "id");
+                throw InvalidGroup(configurationName, groupIndex, "id가 중복되었습니다.", "id");
             }
 
             if (rawGroup.Version < 0)
             {
-                throw InvalidGroup(groupIndex, "version은 0 이상이어야 합니다.", "version");
+                throw InvalidGroup(configurationName, groupIndex, "version은 0 이상이어야 합니다.", "version");
             }
 
             groups.Add(
@@ -67,8 +76,8 @@ internal static class BuildConfigurationLoader
                 {
                     Id = rawGroup.Id!,
                     Version = rawGroup.Version,
-                    Packing = ParsePacking(rawGroup.Packing, groupIndex),
-                    Compression = ParseCompression(rawGroup.Compression, groupIndex)
+                    Packing = ParsePacking(rawGroup.Packing, configurationName, groupIndex),
+                    Compression = ParseCompression(rawGroup.Compression, configurationName, groupIndex)
                 });
         }
 
@@ -78,30 +87,34 @@ internal static class BuildConfigurationLoader
         };
     }
 
-    private static PackingKind ParsePacking(string? value, int groupIndex)
+    private static PackingKind ParsePacking(string? value, string configurationName, int groupIndex)
     {
         return value switch
         {
             GroupValue => PackingKind.Group,
             FileValue => PackingKind.File,
-            _ => throw InvalidGroup(groupIndex, "packing은 group 또는 file이어야 합니다.", "packing")
+            _ => throw InvalidGroup(configurationName, groupIndex, "packing은 group 또는 file이어야 합니다.", "packing")
         };
     }
 
-    private static CompressionKind ParseCompression(string? value, int groupIndex)
+    private static CompressionKind ParseCompression(string? value, string configurationName, int groupIndex)
     {
         return value switch
         {
             ZstdValue => CompressionKind.Zstd,
             NoneValue => CompressionKind.None,
-            _ => throw InvalidGroup(groupIndex, "compression은 zstd 또는 none이어야 합니다.", "compression")
+            _ => throw InvalidGroup(configurationName, groupIndex, "compression은 zstd 또는 none이어야 합니다.", "compression")
         };
     }
 
-    private static BuildException InvalidGroup(int groupIndex, string reason, string? property = null)
+    private static BuildException InvalidGroup(
+        string configurationName,
+        int groupIndex,
+        string reason,
+        string? property = null)
     {
         string path = property is null ? $"groups[{groupIndex}]" : $"groups[{groupIndex}].{property}";
-        return new BuildException($"gamepatchkit.yml이 올바르지 않습니다. {path}: {reason}");
+        return new BuildException($"설정 파일 '{configurationName}'이 올바르지 않습니다. {path}: {reason}");
     }
 
     private sealed class RawBuildConfiguration

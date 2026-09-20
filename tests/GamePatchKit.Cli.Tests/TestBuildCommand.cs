@@ -104,6 +104,36 @@ public sealed class TestBuildCommand
         Assert.False(Directory.Exists(outputPath));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Execute_ConfigurationIsSymbolicLink_ThrowsBeforeReadingYamlWithoutCreatingOutput(bool useExplicitConfiguration)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var testRepository = new GitTestRepository();
+        testRepository.WriteFile("data/group/file.txt", "data");
+        testRepository.WriteFile("config/actual.yml", "groups: []");
+        string configurationRelativePath = useExplicitConfiguration ? "config/shared.yml" : "data/gamepatchkit.yml";
+        string configurationPath = testRepository.GetRepositoryPath(configurationRelativePath);
+        File.CreateSymbolicLink(configurationPath, testRepository.GetRepositoryPath("config/actual.yml"));
+        testRepository.CommitAll("initial");
+        string outputPath = testRepository.GetExternalPath("patches");
+
+        BuildException exception = Assert.Throws<BuildException>(
+            () => _sut.Execute(
+                new BuildArguments(
+                    testRepository.GetRepositoryPath("data"),
+                    outputPath,
+                    useExplicitConfiguration ? configurationPath : null)));
+
+        Assert.Contains("심볼릭 링크", exception.Message, StringComparison.Ordinal);
+        Assert.False(Directory.Exists(outputPath));
+    }
+
     [Fact]
     public void Execute_TrackedSourceIsDirty_ThrowsWithoutCreatingOutput()
     {
@@ -1293,26 +1323,93 @@ public sealed class TestBuildCommand
     }
 
     [Fact]
-    public void Execute_OnlySourceCommitChanges_IncrementsReleaseVersionWithIdenticalGroupContent()
+    public void Execute_OnlySourceCommitChanges_PreservesReleaseVersionSourceCommitAndManifestBytes()
     {
         using var testRepository = CreateGroupRepository(currentVersion: 1, ("file.txt", "data"));
         string sourcePath = testRepository.GetRepositoryPath("data");
         string outputPath = testRepository.GetExternalPath("patches");
         _sut.Execute(new BuildArguments(sourcePath, outputPath));
         PatchManifest manifestBefore = Assert.IsType<PatchManifest>(ManifestStore.ReadPrevious(outputPath));
+        byte[] bytesBefore = File.ReadAllBytes(Path.Combine(outputPath, "manifest.json"));
         testRepository.WriteFile("outside.txt", "outside change");
         testRepository.CommitAll("commit outside source");
 
         _sut.Execute(new BuildArguments(sourcePath, outputPath));
 
         PatchManifest manifestAfter = Assert.IsType<PatchManifest>(ManifestStore.ReadPrevious(outputPath));
-        Assert.Equal(manifestBefore.ReleaseVersion + 1, manifestAfter.ReleaseVersion);
-        Assert.NotEqual(manifestBefore.SourceCommit, manifestAfter.SourceCommit);
+        Assert.Equal(manifestBefore.ReleaseVersion, manifestAfter.ReleaseVersion);
+        Assert.Equal(manifestBefore.SourceCommit, manifestAfter.SourceCommit);
+        Assert.Equal(bytesBefore, File.ReadAllBytes(Path.Combine(outputPath, "manifest.json")));
         Assert.Collection(
             manifestAfter.Groups,
             group => AssertManifestEntryEqual(
                 Assert.Single(manifestBefore.Groups).Entries[0],
                 Assert.Single(group.Entries)));
+    }
+
+    [Fact]
+    public void Execute_AfterMultipleNoOpBuilds_SourceChangeIncrementsOneReleaseFromPreservedCommit()
+    {
+        using var testRepository = CreateGroupRepository(currentVersion: 1, ("file.txt", "before"));
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+        PatchManifest initialManifest = Assert.IsType<PatchManifest>(ManifestStore.ReadPrevious(outputPath));
+
+        for (int commitIndex = 0; commitIndex < 2; commitIndex++)
+        {
+            testRepository.WriteFile($"outside-{commitIndex}.txt", "outside");
+            testRepository.CommitAll($"outside {commitIndex}");
+            _sut.Execute(new BuildArguments(sourcePath, outputPath));
+        }
+
+        testRepository.WriteFile("data/group/file.txt", "after");
+        string changedCommit = testRepository.CommitAll("change source");
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+
+        PatchManifest changedManifest = Assert.IsType<PatchManifest>(ManifestStore.ReadPrevious(outputPath));
+        Assert.Equal(initialManifest.ReleaseVersion + 1, changedManifest.ReleaseVersion);
+        Assert.Equal(changedCommit, changedManifest.SourceCommit);
+        Assert.Equal("1.1", Assert.Single(Assert.Single(changedManifest.Groups).Entries).Version);
+    }
+
+    [Fact]
+    public void Execute_ConfigurationOutsideSources_BuildsEachSourceWithSharedConfiguration()
+    {
+        using var testRepository = new GitTestRepository();
+        testRepository.WriteFile(
+            "tools/patch/develop.gamepatchkit.yml",
+            """
+            groups:
+              - id: table
+                version: 1
+                packing: file
+                compression: none
+            """);
+        testRepository.WriteFile("tools/patch/data/alpha/table/value.json", "alpha");
+        testRepository.WriteFile("tools/patch/data/beta/table/value.json", "beta");
+        testRepository.CommitAll("initial");
+        string configurationPath = testRepository.GetRepositoryPath("tools/patch/develop.gamepatchkit.yml");
+        string alphaOutputPath = testRepository.GetExternalPath("patches-alpha");
+        string betaOutputPath = testRepository.GetExternalPath("patches-beta");
+
+        _sut.Execute(
+            new BuildArguments(
+                testRepository.GetRepositoryPath("tools/patch/data/alpha"),
+                alphaOutputPath,
+                configurationPath));
+        _sut.Execute(
+            new BuildArguments(
+                testRepository.GetRepositoryPath("tools/patch/data/beta"),
+                betaOutputPath,
+                configurationPath));
+
+        PatchManifest alphaManifest = Assert.IsType<PatchManifest>(ManifestStore.ReadPrevious(alphaOutputPath));
+        PatchManifest betaManifest = Assert.IsType<PatchManifest>(ManifestStore.ReadPrevious(betaOutputPath));
+        Assert.Equal("table", Assert.Single(alphaManifest.Groups).Id);
+        Assert.Equal("value.json", Assert.Single(Assert.Single(alphaManifest.Groups).Entries).Path);
+        Assert.Equal("table", Assert.Single(betaManifest.Groups).Id);
+        Assert.Equal("value.json", Assert.Single(Assert.Single(betaManifest.Groups).Entries).Path);
     }
 
     [Fact]
@@ -1329,6 +1426,51 @@ public sealed class TestBuildCommand
 
         Assert.Equal(releaseVersionBefore, ManifestStore.ReadPrevious(outputPath)!.ReleaseVersion);
         Assert.Equal(manifestBefore, File.ReadAllBytes(Path.Combine(outputPath, "manifest.json")));
+    }
+
+    [Fact]
+    public void Execute_NoOpRebuild_PreservesNonCanonicalManifestBytes()
+    {
+        using var testRepository = CreateGroupRepository(currentVersion: 1, ("file.txt", "data"));
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+        string manifestPath = Path.Combine(outputPath, "manifest.json");
+        byte[] nonCanonicalBytes = System.Text.Encoding.UTF8.GetBytes(
+            $"{Environment.NewLine}  {File.ReadAllText(manifestPath)}{Environment.NewLine}");
+        File.WriteAllBytes(manifestPath, nonCanonicalBytes);
+
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+
+        Assert.Equal(nonCanonicalBytes, File.ReadAllBytes(manifestPath));
+    }
+
+    [Fact]
+    public void Execute_ReleaseVersionAtMaxAndContentIsUnchanged_SucceedsAndPreservesManifest()
+    {
+        using var testRepository = CreateGroupRepository(currentVersion: 1, ("file.txt", "data"));
+        string sourcePath = testRepository.GetRepositoryPath("data");
+        string outputPath = testRepository.GetExternalPath("patches");
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+        PatchManifest builtManifest = Assert.IsType<PatchManifest>(ManifestStore.ReadPrevious(outputPath));
+        ManifestStore.WriteAtomically(
+            outputPath,
+            new PatchManifest
+            {
+                SchemaVersion = builtManifest.SchemaVersion,
+                ReleaseVersion = long.MaxValue,
+                SourcePath = builtManifest.SourcePath,
+                SourceCommit = builtManifest.SourceCommit,
+                Groups = builtManifest.Groups
+            });
+        string manifestPath = Path.Combine(outputPath, "manifest.json");
+        byte[] manifestBefore = File.ReadAllBytes(manifestPath);
+        testRepository.WriteFile("outside.txt", "outside change");
+        testRepository.CommitAll("commit outside source");
+
+        _sut.Execute(new BuildArguments(sourcePath, outputPath));
+
+        Assert.Equal(manifestBefore, File.ReadAllBytes(manifestPath));
     }
 
     [Fact]

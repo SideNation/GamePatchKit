@@ -217,6 +217,15 @@ public sealed class TestManifestStore
     }
 
     [Fact]
+    public void HasSameReleaseContent_OnlySourceCommitDiffers_ReturnsTrue()
+    {
+        PatchManifest left = CreateValidManifest(reverseOrder: false, sourceCommit: "abc123");
+        PatchManifest right = CreateValidManifest(reverseOrder: false, sourceCommit: "def456");
+
+        Assert.True(ManifestStore.HasSameReleaseContent(left, right));
+    }
+
+    [Fact]
     public void HasSameReleaseContent_GroupOrEntryOrderDiffers_ReturnsTrue()
     {
         PatchManifest left = CreateValidManifest(reverseOrder: false);
@@ -227,7 +236,6 @@ public sealed class TestManifestStore
 
     [Theory]
     [InlineData("sourcePath")]
-    [InlineData("sourceCommit")]
     [InlineData("groupSetting")]
     [InlineData("archive")]
     [InlineData("entry")]
@@ -237,7 +245,6 @@ public sealed class TestManifestStore
         PatchManifest right = field switch
         {
             "sourcePath" => CreateValidManifest(reverseOrder: false, sourcePath: "other-data"),
-            "sourceCommit" => CreateValidManifest(reverseOrder: false, sourceCommit: "def456"),
             "groupSetting" => CreateValidManifest(reverseOrder: false, groupACompression: CompressionKind.None),
             "archive" => CreateValidManifest(reverseOrder: false, archiveChecksum: new string('c', 64)),
             "entry" => CreateValidManifest(reverseOrder: false, fileEntryChecksum: new string('d', 64)),

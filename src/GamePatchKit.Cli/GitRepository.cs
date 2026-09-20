@@ -15,14 +15,73 @@ internal sealed class GitRepository
         _sourcePath = sourcePath;
     }
 
-    public void EnsureConfigurationTracked()
+    public void EnsureConfigurationIsTrackedAndClean(string configurationPath)
     {
-        string configurationPath = $"{SourcePrefix}{BuildConfigurationLoader.FILE_NAME}";
-        (int exitCode, _, _) = RunGit(RepositoryRoot, "ls-files", "--error-unmatch", "--", configurationPath);
+        var configurationFile = new FileInfo(configurationPath);
+
+        if (configurationFile.LinkTarget is not null)
+        {
+            throw new BuildException($"설정 파일은 심볼릭 링크일 수 없습니다: {configurationPath}");
+        }
+
+        if (!configurationFile.Exists)
+        {
+            throw new BuildException($"설정 파일이 없습니다: {configurationPath}");
+        }
+
+        string configurationDirectory = Path.GetDirectoryName(configurationPath)!;
+        string configurationRepositoryRoot = RunRequired(
+            configurationDirectory,
+            "설정 파일은 --source와 같은 Git 저장소에 있어야 합니다.",
+            "rev-parse",
+            "--show-toplevel").TrimEnd('\r', '\n');
+
+        StringComparison pathComparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+        if (!string.Equals(
+                Path.GetFullPath(configurationRepositoryRoot),
+                Path.GetFullPath(RepositoryRoot),
+                pathComparison))
+        {
+            throw new BuildException("설정 파일은 --source와 같은 Git 저장소에 있어야 합니다.");
+        }
+
+        string configurationPrefix = RunRequired(
+            configurationDirectory,
+            "설정 파일의 저장소 경로를 확인하지 못했습니다.",
+            "rev-parse",
+            "--show-prefix").TrimEnd('\r', '\n');
+        string repositoryRelativePath = $"{configurationPrefix}{Path.GetFileName(configurationPath)}";
+        (int exitCode, _, _) = RunGit(
+            RepositoryRoot,
+            "--literal-pathspecs",
+            "ls-files",
+            "--error-unmatch",
+            "--",
+            repositoryRelativePath);
 
         if (exitCode != 0)
         {
-            throw new BuildException("gamepatchkit.yml은 Git 추적 대상이어야 합니다.");
+            throw new BuildException($"설정 파일은 Git 추적 대상이어야 합니다: {configurationPath}");
+        }
+
+        string status = RunRequired(
+            RepositoryRoot,
+            "설정 파일의 Git 상태를 확인하지 못했습니다.",
+            "--literal-pathspecs",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=no",
+            "--no-renames",
+            "--",
+            repositoryRelativePath);
+
+        if (status.Length > 0)
+        {
+            throw new BuildException($"설정 파일에 커밋되지 않은 변경이 있습니다: {configurationPath}");
         }
     }
 

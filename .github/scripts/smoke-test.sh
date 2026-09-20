@@ -17,6 +17,7 @@ repository_path="$work_path/repository"
 source_path="$repository_path/data"
 group_path="$source_path/content"
 output_path="$work_path/output"
+explicit_output_path="$work_path/explicit-output"
 
 git init --initial-branch=main --object-format=sha1 "$repository_path"
 git -C "$repository_path" config core.autocrlf false
@@ -39,6 +40,8 @@ GIT_AUTHOR_DATE='2000-01-01T00:00:00Z' \
 
 "$tool_path" build --source "$source_path" --output "$output_path"
 "$tool_path" verify --output "$output_path"
+"$tool_path" build --source "$source_path" --config "$source_path/gamepatchkit.yml" --output "$explicit_output_path"
+"$tool_path" verify --output "$explicit_output_path"
 
 manifest_path="$output_path/manifest.json"
 archive_path="$output_path/archives/content/1.gpka"
@@ -57,4 +60,6 @@ grep -Fq '"schemaVersion":1' "$manifest_path"
 grep -Fq '"id":"content"' "$manifest_path"
 grep -Fq '"compression":"zstd"' "$manifest_path"
 grep -Fq '"name":"archives/content/1.gpka"' "$manifest_path"
+cmp "$manifest_path" "$explicit_output_path/manifest.json"
+cmp "$archive_path" "$explicit_output_path/archives/content/1.gpka"
 printf 'Smoke output: %s\n' "$output_path"

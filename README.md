@@ -16,7 +16,7 @@ dotnet tool install --global GamePatchKit.Cli
 
 ## 빌드
 
-Git 저장소의 데이터 루트에 `gamepatchkit.yml`을 만든다.
+Git 저장소의 데이터 루트에 `gamepatchkit.yml`을 만들거나, 같은 저장소의 공용 설정 파일을 `gpk build --config <경로>`로 지정한다. 설정 파일은 Git이 추적하는 일반 파일이어야 하며 심볼릭 링크는 사용할 수 없다.
 
 ```yaml
 groups:
@@ -29,7 +29,7 @@ groups:
 패치 출력 폴더는 source가 속한 Git 저장소 바깥에 지정한다.
 
 ```shell
-gpk build --source ./data --output ../patches
+gpk build --source ./data --config ./config/gamepatchkit.yml --output ../patches
 gpk verify --output ../patches
 ```
 

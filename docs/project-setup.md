@@ -53,9 +53,9 @@ create policy gamepatch_pointer_read on public.gamepatch_pointer
 
 테이블은 프로젝트당 하나이고 버킷마다 행이 하나씩 생긴다. 버킷을 추가할 때 테이블을 다시 만들지 않는다.
 
-## 2. `gamepatchkit.yml` 작성
+## 2. 빌드 설정 작성
 
-데이터 저장소 루트에 두고 **Git에 커밋한다.** `gpk build`는 추적 중인 이 파일만 읽는다.
+기본 설정은 데이터 저장소 루트의 `gamepatchkit.yml`이다. 여러 데이터 source가 설정을 공유하면 같은 Git 저장소의 데이터 그룹 밖에 설정 파일을 두고 `gpk build --config <설정 파일>`로 선택한다. 설정은 커밋된 일반 파일이어야 하며 심볼릭 링크는 사용할 수 없다.
 
 ```yaml
 groups:
@@ -91,7 +91,7 @@ git commit -m "chore: 상태 저장소 초기화"
 git push -u origin main
 ```
 
-산출물은 `.gitignore`가 제외한다. 자세한 내용은 [상태 저장소 설정](cli/upload.md#상태-저장소-설정)에 있다.
+기본 예시는 산출물을 `.gitignore`로 제외한다. 완전한 로컬 복원이 필요하면 전체 output을 추적할 수 있다. 자세한 내용은 [상태 저장소 설정](cli/upload.md#상태-저장소-설정)에 있다.
 
 ## 4. env 파일 만들기
 
@@ -175,7 +175,7 @@ gpk deploy-function --project-id <project-ref> --access-token <Supabase Access T
 
 - [ ] 버킷이 공개이고 파일 크기 제한이 가장 큰 산출물보다 크다
 - [ ] `select * from public.gamepatch_pointer`가 첫 게시 후 행 하나를 반환한다
-- [ ] `gamepatchkit.yml`이 데이터 저장소에 커밋돼 있다
+- [ ] 기본 `gamepatchkit.yml` 또는 `--config`로 지정할 설정 파일이 데이터 저장소에 커밋돼 있다
 - [ ] 상태 저장소에 `manifest.json`과 `.gpk-upload-state.json`이 push돼 있다
 - [ ] env 파일 2종에 각각 세 값이 모두 있고 저장소에 커밋되지 않았다
 - [ ] 소비 측에서 `gpk sync` 또는 Unity 클라이언트가 첫 세대를 받아 원본 트리를 복원한다

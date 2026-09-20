@@ -118,7 +118,7 @@ public sealed class TestGitRepository
     }
 
     [Fact]
-    public void EnsureConfigurationTracked_ConfigurationIsUntracked_ThrowsBuildException()
+    public void EnsureConfigurationIsTrackedAndClean_ConfigurationIsUntracked_ThrowsBuildException()
     {
         using var testRepository = new GitTestRepository();
         testRepository.WriteFile("data/tracked.txt", "tracked");
@@ -127,10 +127,109 @@ public sealed class TestGitRepository
         var repository = new GitRepository(testRepository.GetRepositoryPath("data"));
         repository.EnsureSourceIsInRepository();
 
-        BuildException exception = Assert.Throws<BuildException>(repository.EnsureConfigurationTracked);
+        string configurationPath = testRepository.GetRepositoryPath("data/gamepatchkit.yml");
+        BuildException exception = Assert.Throws<BuildException>(
+            () => repository.EnsureConfigurationIsTrackedAndClean(configurationPath));
 
         Assert.Contains("gamepatchkit.yml", exception.Message, StringComparison.Ordinal);
         Assert.Contains("Git 추적", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("staged")]
+    [InlineData("unstaged")]
+    public void EnsureConfigurationIsTrackedAndClean_ConfigurationIsDirty_ThrowsBuildException(string state)
+    {
+        using var testRepository = new GitTestRepository();
+        testRepository.WriteFile("data/file.txt", "data");
+        testRepository.WriteFile("config/shared.yml", "groups: []");
+        testRepository.CommitAll("initial");
+        testRepository.WriteFile("config/shared.yml", "groups:\n  - id: data");
+
+        if (state == "staged")
+        {
+            testRepository.RunGit("add", "config/shared.yml");
+        }
+
+        var repository = new GitRepository(testRepository.GetRepositoryPath("data"));
+        repository.EnsureSourceIsInRepository();
+
+        BuildException exception = Assert.Throws<BuildException>(
+            () => repository.EnsureConfigurationIsTrackedAndClean(testRepository.GetRepositoryPath("config/shared.yml")));
+
+        Assert.Contains("커밋되지 않은 변경", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnsureConfigurationIsTrackedAndClean_OtherDirtyPathWithPathspecCharacters_IsIgnored()
+    {
+        using var testRepository = new GitTestRepository();
+        testRepository.WriteFile("data/file.txt", "data");
+        testRepository.WriteFile("config/shared[1].yml", "groups: []");
+        testRepository.WriteFile("config/shared1.yml", "before");
+        testRepository.CommitAll("initial");
+        testRepository.WriteFile("config/shared1.yml", "after");
+        var repository = new GitRepository(testRepository.GetRepositoryPath("data"));
+        repository.EnsureSourceIsInRepository();
+
+        repository.EnsureConfigurationIsTrackedAndClean(testRepository.GetRepositoryPath("config/shared[1].yml"));
+    }
+
+    [Fact]
+    public void EnsureConfigurationIsTrackedAndClean_ConfigurationIsInOtherRepository_ThrowsBuildException()
+    {
+        using var sourceRepository = new GitTestRepository();
+        sourceRepository.WriteFile("data/file.txt", "data");
+        sourceRepository.CommitAll("initial");
+        using var configurationRepository = new GitTestRepository();
+        configurationRepository.WriteFile("shared.yml", "groups: []");
+        configurationRepository.CommitAll("initial");
+        var repository = new GitRepository(sourceRepository.GetRepositoryPath("data"));
+        repository.EnsureSourceIsInRepository();
+
+        BuildException exception = Assert.Throws<BuildException>(
+            () => repository.EnsureConfigurationIsTrackedAndClean(configurationRepository.GetRepositoryPath("shared.yml")));
+
+        Assert.Contains("같은 Git 저장소", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("tracked")]
+    [InlineData("outside")]
+    [InlineData("missing")]
+    public void EnsureConfigurationIsTrackedAndClean_ConfigurationIsSymbolicLink_ThrowsBuildException(string targetKind)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var testRepository = new GitTestRepository();
+        testRepository.WriteFile("data/file.txt", "data");
+        testRepository.WriteFile("config/tracked.yml", "groups: []");
+        string targetPath = targetKind switch
+        {
+            "tracked" => testRepository.GetRepositoryPath("config/tracked.yml"),
+            "outside" => testRepository.GetExternalPath("outside.yml"),
+            "missing" => testRepository.GetExternalPath("missing.yml"),
+            _ => throw new InvalidOperationException()
+        };
+
+        if (targetKind == "outside")
+        {
+            File.WriteAllText(targetPath, "groups: []");
+        }
+
+        string linkPath = testRepository.GetRepositoryPath("config/shared.yml");
+        File.CreateSymbolicLink(linkPath, targetPath);
+        testRepository.CommitAll("initial");
+        var repository = new GitRepository(testRepository.GetRepositoryPath("data"));
+        repository.EnsureSourceIsInRepository();
+
+        BuildException exception = Assert.Throws<BuildException>(
+            () => repository.EnsureConfigurationIsTrackedAndClean(linkPath));
+
+        Assert.Contains("심볼릭 링크", exception.Message, StringComparison.Ordinal);
     }
 
     private static IReadOnlyList<string> Sort(params string[] paths)

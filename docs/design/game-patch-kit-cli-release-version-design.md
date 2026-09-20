@@ -16,14 +16,14 @@
 
 ### 가정
 
-- `releaseVersion`은 기존 그룹 버전과 같은 C# `int`로 표현한다. JSON에서는 정수로 기록한다.
+- `releaseVersion`은 C# `long`으로 표현한다. JSON에서는 정수로 기록한다.
 - 변경 여부는 원본 `manifest.json`의 공백이나 필드 순서가 아니라, 기존 정렬·직렬화 규칙을 적용한 두 `PatchManifest`에서 `releaseVersion`만 같은 값으로 정규화한 결과로 판정한다.
-- 따라서 `groups`가 같더라도 `sourcePath` 또는 `sourceCommit`이 달라지면 새 릴리스다. 특히 source 밖의 커밋으로 `sourceCommit`만 바뀐 경우에도 `releaseVersion`은 증가한다.
+- `sourcePath` 또는 릴리스 내용이 달라지면 새 릴리스다. source 밖의 커밋처럼 `sourceCommit`만 달라지면 새 릴리스를 만들지 않고 이전 매니페스트 바이트를 유지한다.
 - 현재 기능은 첫 공개 매니페스트 계약에 포함되는 것으로 본다. `schemaVersion: 1`이지만 `releaseVersion`이 없는 과거 개발 산출물은 승계하지 않고 기존 매니페스트 검증에서 거부한다.
-- 소스 저장소와 분리된 private 상태 Git 저장소가 마지막 게시 성공 시점의 `manifest.json`과 `.gpk-upload-state.json` 두 파일만 보존한다. 지정된 수동 배포 스크립트는 빌드 전에 이 상태를 `--output`에 복원한다.
+- 소스 저장소와 분리된 private 상태 Git 저장소가 마지막 게시 성공 시점의 `manifest.json`과 `.gpk-upload-state.json`을 최소 상태로 보존한다. 호출 프로젝트는 완전한 로컬 복원을 위해 전체 output을 함께 추적할 수 있다. 지정된 수동 배포 스크립트는 빌드 전에 선택한 추적 범위를 `--output`에 복원한다.
 - 이전 `manifest.json`이 없는 상태는 실제 첫 배포에만 허용한다. 기존 Supabase 버킷이 있는 프로젝트에서 상태 저장소를 잃은 경우 0부터 다시 시작하지 않는다.
 - 같은 패치 데이터 프로젝트의 `build`·`verify`·`upload`·상태 저장소 갱신은 지정된 수동 배포 환경 한 곳에서 동시에 실행하지 않는다.
-- 첫 Storage 호출 뒤 배포가 실패하면 `manifest.json.sourceCommit`의 정확한 SHA를 checkout해 같은 CLI·압축 구현 버전으로 다시 빌드한다. 그 배포가 끝나기 전에는 더 새로운 source commit을 게시하지 않는다.
+- 첫 Storage 호출 뒤 배포가 실패하면 `manifest.json.sourceCommit`의 정확한 SHA를 checkout해 같은 CLI·압축 구현 버전과 원래의 `--config` 인자로 다시 빌드한다. 그 배포가 끝나기 전에는 더 새로운 source commit을 게시하지 않는다.
 
 ### 확인 필요
 
@@ -77,7 +77,7 @@
 | 책임 단위 | 종류 | 설명 |
 | --- | --- | --- |
 | `PatchManifest.ReleaseVersion` | JSON DTO 필드 | 매니페스트 전체의 세대 번호 |
-| `ManifestStore.HasSameReleaseContent` | 정적 비교 절차 | 두 매니페스트를 기존 규칙으로 정규화하고 `releaseVersion`을 제외한 내용이 같은지 판정 |
+| `ManifestStore.HasSameReleaseContent` | 정적 비교 절차 | 두 매니페스트를 기존 규칙으로 정규화하고 `releaseVersion`과 `sourceCommit`을 제외한 내용이 같은지 판정 |
 | `BuildCommand` | Application service | 첫 값, 유지, 증가, 최대값 중단을 결정하고 최종 매니페스트 기록 |
 
 별도 Entity, Value Object, Domain Event는 만들지 않는다. 이 기능은 기존 매니페스트의 단일 정수 필드 계산이다.
@@ -100,7 +100,7 @@ Strategy, Factory, Mediator를 도입할 정책 분기나 대체 구현이 없�
 internal sealed class PatchManifest
 {
     [JsonProperty("releaseVersion", Required = Required.Always, Order = 1)]
-    public int ReleaseVersion { get; init; }
+    public long ReleaseVersion { get; init; }
 }
 
 internal static class ManifestStore
@@ -116,12 +116,12 @@ internal sealed class BuildCommand
 
 `SchemaVersion` 뒤에 `ReleaseVersion`을 두고 기존 `SourcePath`·`SourceCommit`·`Groups`의 `Order`는 각각 한 칸 뒤로 옮긴다.
 
-`HasSameReleaseContent`는 두 입력을 직접 바꾸지 않는다. 각각을 기존 `Sort`와 동일한 규칙으로 복사하면서 `ReleaseVersion`을 0으로 맞추고, `Formatting.None`, UTF-8 BOM 없음, 끝 개행 없음이라는 기존 직렬화 계약으로 얻은 바이트를 비교한다. 비교 전용 JSON 설정을 새로 만들지 않는다.
+`HasSameReleaseContent`는 두 입력을 직접 바꾸지 않는다. 각각을 기존 `Sort`와 동일한 규칙으로 복사하면서 `ReleaseVersion`을 0, `SourceCommit`을 빈 문자열로 맞추고, `Formatting.None`, UTF-8 BOM 없음, 끝 개행 없음이라는 기존 직렬화 계약으로 얻은 바이트를 비교한다. 비교 전용 JSON 설정을 새로 만들지 않는다.
 
 `BuildCommand.Execute`의 외부 시그니처는 바꾸지 않는다. 현재 그룹 빌드가 끝난 뒤 매니페스트 후보를 만들고 다음 순서로 값을 확정한다.
 
 1. 이전 매니페스트가 없으면 0을 쓴다.
-2. 이전 매니페스트가 있고 릴리스 내용이 같으면 이전 값을 쓴다.
+2. 이전 매니페스트가 있고 릴리스 내용이 같으면 파일을 다시 쓰지 않아 이전 값·`sourceCommit`·파일 바이트를 유지한다.
 3. 내용이 다르면 이전 값보다 1 큰 값을 쓴다.
 4. 3번에서 이전 값이 `long.MaxValue`이면 사용자 메시지가 있는 `BuildException`으로 중단한다.
 
@@ -146,9 +146,9 @@ docs/cli/
 ## 12. 도입하지 않은 구조
 
 - `ReleaseVersionService` 또는 `IReleaseVersionPolicy`: 계산 규칙 하나에 호출자도 `BuildCommand` 하나뿐이다.
-- `releaseVersion` 전용 상태 파일: 계산 기준은 기존 `manifest.json` 하나면 충분하다. 업로드 계획의 `.gpk-upload-state.json`은 업로드 델타용이며 두 파일은 외부 상태 Git 저장소가 함께 보존한다.
+- `releaseVersion` 전용 상태 파일: 계산 기준은 기존 `manifest.json` 하나면 충분하다. 업로드 계획의 `.gpk-upload-state.json`은 업로드 델타용이며 두 파일은 외부 상태 Git 저장소가 최소한 함께 보존한다.
 - CLI 락과 원격 버전 조회: 같은 패치 데이터 프로젝트의 수동 배포를 외부에서 직렬화하고 상태를 먼저 복원한다.
-- CLI `--commit`·`--rebuild` 옵션: 실패한 대상은 `manifest.json.sourceCommit`으로 식별하고 Git checkout 뒤 기존 build 명령을 재실행한다.
+- CLI `--commit`·`--rebuild` 옵션: 실패한 대상은 `manifest.json.sourceCommit`으로 식별하고 Git checkout 뒤 원래의 `--config` 인자로 기존 build 명령을 재실행한다.
 - yaml 설정과 CLI 옵션: 그룹 버전과 달리 사용자가 결정할 정책이 없다.
 - 해시 기반 릴리스 ID: PRD가 단조 증가 정수를 요구한다.
 - 이전 매니페스트 자동 마이그레이션: 호환 정책이 확정되지 않았고 현재 요구사항은 필수 필드 검증이다.
@@ -196,23 +196,24 @@ docs/cli/
 - 검증:
   - `ReleaseVersion`만 다르면 같은 내용으로 판정한다.
   - 그룹이나 엔트리 입력 순서만 다르면 같은 내용으로 판정한다.
-  - `sourcePath`, `sourceCommit`, 그룹 설정, 아카이브, 엔트리 중 하나가 다르면 다른 내용으로 판정한다.
+  - `sourceCommit`만 다르면 같은 내용으로 판정한다.
+  - `sourcePath`, 그룹 설정, 아카이브, 엔트리 중 하나가 다르면 다른 내용으로 판정한다.
 
 ### R3. 빌드 계산과 회귀 검증
 
 - 수행:
   - `BuildCommand`가 완성한 후보에 첫 값·유지·증가 규칙을 적용한다.
-  - 값 확정 뒤 기존 원자적 쓰기 경로를 그대로 사용한다.
+  - 내용이 같으면 기존 파일을 다시 쓰지 않고, 다르면 값 확정 뒤 기존 원자적 쓰기 경로를 사용한다.
   - `docs/cli/build.md`를 갱신한다.
 - 검증:
   - 첫 빌드가 0이다.
   - 추적 파일 변경, 파일 추가·삭제, 그룹 버전 증가 중 대표 변경이 이전 값보다 1 큰 값을 만든다.
   - 같은 `HEAD`에서 다시 빌드하면 값과 매니페스트 바이트가 그대로다.
-  - source 밖의 새 커밋으로 `sourceCommit`만 바뀌어도 값이 증가한다.
+  - source 밖의 새 커밋으로 `sourceCommit`만 바뀌면 값·SHA·매니페스트 바이트가 유지된다.
   - 실패한 빌드는 이전 매니페스트와 그 `releaseVersion`을 유지하고, 다음 성공 빌드는 마지막 성공 값에서 한 번만 증가한다.
   - 변경이 필요한 상태에서 이전 값이 `long.MaxValue`이면 기존 매니페스트를 바꾸지 않고 중단한다.
   - 실제 첫 배포가 아닌 실행은 상태 Git 저장소의 이전 `manifest.json`을 복원한 뒤 빌드해 마지막 성공 값에서 이어진다.
-  - 첫 Storage 호출 뒤 실패한 배포는 기록된 `sourceCommit` SHA를 checkout하고 같은 CLI·압축 구현 버전으로 다시 빌드했을 때 같은 `releaseVersion`과 매니페스트 바이트를 만든다.
+  - 첫 Storage 호출 뒤 실패한 배포는 기록된 `sourceCommit` SHA를 checkout하고 같은 CLI·압축 구현 버전과 원래의 `--config` 인자로 다시 빌드했을 때 같은 `releaseVersion`과 매니페스트 바이트를 만든다.
   - `dotnet test`와 `dotnet pack`이 통과한다.
 
 ## 16. 완료 정의와 추적성

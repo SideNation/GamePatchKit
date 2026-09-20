@@ -19,7 +19,7 @@
 - `--source`는 Git 저장소 최상위 경로이거나 그 하위 디렉터리다. Git이 반환한 저장소 기준 경로는 source-relative 경로로 바꾼 뒤 그룹 탐색과 변경 판정에 사용한다.
 - `--output`은 `--source`가 속한 Git 저장소 바깥에 둔다. 산출물이 입력 파일 탐색이나 워킹 트리 상태에 섞이는 경우를 막기 위한 확정 제약이다.
 - `schemaVersion`은 정수 `1`로 시작한다.
-- `<source>/gamepatchkit.yml`과 빌드 데이터는 Git이 추적해야 한다. source 아래의 untracked 파일은 입력과 dirty 판정에서 제외하고, source 바깥의 변경도 dirty 판정에서 제외한다.
+- 기본 `<source>/gamepatchkit.yml` 또는 `--config`로 선택한 설정과 빌드 데이터는 Git이 추적해야 한다. 선택 설정은 source와 같은 저장소의 clean 일반 파일이어야 하며 파일 자체의 심볼릭 링크는 거부한다. source 아래의 untracked 파일은 입력과 dirty 판정에서 제외하고, 선택 설정 외 source 바깥 변경도 dirty 판정에서 제외한다.
 - 그룹 버전과 파일 리비전은 0 이상의 `int`, 파일 크기·offset·length·저장 크기는 `long`으로 표현한다. 이전 매니페스트에 같은 `id`의 그룹이 있으면 yaml 그룹 버전은 이전 성공 버전과 같거나 더 커야 한다.
 - 매니페스트의 `name`은 `--output` 기준 상대 경로이며 구분자는 `/`로 고정한다.
 - 매니페스트의 `sourcePath`는 저장소 루트면 `.`, 하위 source면 `/` 구분자를 쓰는 저장소 기준 상대 경로다. 이전 매니페스트의 값과 현재 canonical source가 다르면 중단한다.
@@ -31,8 +31,8 @@
 
 ### 입력
 
-- 명령: `gpk build --source <데이터 루트> --output <패치 데이터 폴더>`, `gpk verify --output <패치 데이터 폴더>`
-- 설정: `<source>/gamepatchkit.yml` (`build`만 사용)
+- 명령: `gpk build --source <데이터 루트> [--config <설정 파일>] --output <패치 데이터 폴더>`, `gpk verify --output <패치 데이터 폴더>`
+- 설정: 기본 `<source>/gamepatchkit.yml` 또는 같은 Git 저장소의 `--config` 파일 (`build`만 사용)
 - 데이터: 설정의 각 `groups[].id`가 가리키는 폴더 아래에서 Git이 추적하는 파일. 설정 파일도 Git 추적 대상이어야 한다.
 - 증분 기준: 기존 `<output>/manifest.json`의 `sourceCommit`
 - 현재 기준: source 아래의 추적 파일에 커밋되지 않은 변경이 없는 `HEAD`
@@ -472,7 +472,7 @@ TrackableData의 배포 방식에서 공통 패키지 메타데이터, `artifact
 인자 파싱
   → source/output 경로와 source가 속한 Git 저장소 루트·source prefix 확인
   → source 범위의 tracked clean 상태·HEAD 확인
-  → gamepatchkit.yml의 Git 추적 여부 확인
+  → 기본 또는 명시 설정 선택, 같은 저장소의 tracked·clean 일반 파일이며 파일 링크가 아닌지 확인
   → YAML 로드 및 그룹 검증
   → 이전 manifest 로드 및 관계 검증
   → 이전 manifest의 sourcePath와 현재 source 일치 확인
@@ -484,7 +484,7 @@ TrackableData의 배포 방식에서 공통 패키지 메타데이터, `artifact
   → 새 매니페스트가 승계할 산출물 확정 및 무결성 검증
   → 판정한 방식으로 그룹별 빌드
   → 그룹/엔트리 ordinal 정렬
-  → manifest.json을 같은 디렉터리의 임시 파일에서 완성한 뒤 마지막에 원자적으로 교체
+  → 이전 릴리스 내용과 같으면 기존 manifest 유지, 다르면 임시 파일에서 완성한 뒤 마지막에 원자적으로 교체
   → 그룹별·전체 요약 출력
   → 파일 리비전 자동 증가가 있으면 마지막에 경고 한 묶음 출력
 ```
@@ -543,7 +543,7 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 빌드가 중간에 실패했을 때 어느 커밋부터 다시 계산하는지는 `manifest.json`의 기록 시점 하나로 결정된다.
 
 1. `ManifestStore.WriteAtomically`는 모든 산출물 처리가 끝난 성공 경로에서만 호출한다. 같은 디렉터리의 정식 이름과 겹치지 않는 임시 파일에 직렬화를 끝낸 뒤 `manifest.json`으로 원자적으로 교체하고, 후보 작성이나 교체에 실패하면 기존 매니페스트를 유지한다.
-2. 따라서 `sourceCommit`은 **마지막으로 성공한 빌드의 커밋**으로 남는다. 다음 빌드는 그 커밋과 현재 `HEAD`를 diff하므로 실패한 빌드 구간의 변경을 다시 계산한다.
+2. 따라서 `sourceCommit`은 **현재 릴리스 내용을 확정한 커밋**으로 남는다. 실패하거나 HEAD만 달라진 무변경 빌드는 기존 값을 유지하고, 다음 빌드는 그 커밋과 현재 `HEAD`의 source 범위를 diff한다.
 3. 실패한 빌드가 이미 쓴 산출물과 재실행 후보가 같으면 공통 쓰기 규칙으로 재사용한다. 파일 객체가 다르면 마지막 리비전 + 1로 게시한다.
 4. 같은 그룹 버전의 기존 아카이브와 재실행 후보가 다르면 그룹 버전 충돌로 중단한다. 사용자가 yaml의 그룹 버전을 올려 재실행하면 해당 그룹은 현재 `HEAD`로 전체 빌드되고, 다른 증분 그룹은 마지막 성공 `sourceCommit` 이후의 실패 구간까지 반영한다.
 5. 진행 상황이나 미완료 작업을 기록하는 별도 상태 파일과 복구 코드는 만들지 않는다. 실패 중 게시된 미참조 객체는 보존하며 정리는 제외 범위다.
@@ -608,7 +608,7 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
 - 수행:
   - source가 Git 저장소 루트 또는 하위 경로인지 확인하고 저장소 루트와 source prefix를 구한다.
   - source prefix로 제한한 tracked clean 상태, HEAD, tracked path, changed path 조회를 구현한다. untracked 파일과 source 바깥 변경은 dirty 판정과 결과에서 제외한다.
-  - `gamepatchkit.yml`이 Git 추적 대상인지 확인하고, 아니면 YAML을 읽기 전에 중단한다.
+  - 기본 또는 `--config`로 선택한 설정이 source와 같은 Git 저장소의 tracked·clean 일반 파일인지 확인하고, 파일 자체가 심볼릭 링크이거나 다른 조건을 만족하지 않으면 YAML을 읽기 전에 중단한다.
   - `-z` 형식과 rename 비활성화를 사용해 저장소 기준 경로를 안전하게 읽고 source-relative로 변환하며 rename을 삭제+추가로 취급한다.
   - tracked 파일만 가장 깊은 그룹에 할당한다.
   - 그룹에 할당된 tracked 엔트리가 0개면 산출물을 쓰기 전에 중단하고 yaml에서 그룹을 제거하도록 안내한다. 그룹 폴더의 존재 여부는 검사하지 않는다.
@@ -620,7 +620,7 @@ PRD "증분 빌드의 전제"를 구현하는 사전 검사다. 증분 빌드는
   - 저장소 루트와 하위 폴더를 각각 source로 사용할 수 있고, 하위 source의 tracked·changed 경로가 source-relative로 변환된다.
   - 저장소 루트는 `sourcePath: "."`, 하위 폴더는 정규화된 저장소 기준 상대 경로로 매니페스트에 기록되며, 다른 source에서 같은 output을 재사용하면 `데이터 루트가 이전 빌드와 다릅니다.`를 출력하고 중단된다.
   - source 아래의 untracked 파일과 source 바깥 변경은 빌드와 dirty 판정에서 제외되며, source 아래 tracked 파일의 미커밋 변경은 중단된다.
-  - `gamepatchkit.yml`이 untracked이면 산출물 없이 중단된다.
+  - 선택한 설정이 저장소 밖·다른 저장소·untracked·dirty·심볼릭 링크이면 산출물 없이 중단된다.
   - 중첩 그룹에서 파일이 가장 깊은 그룹에 한 번만 들어간다.
   - 그룹의 tracked 파일을 모두 지워 폴더까지 사라진 경우와 `id`에 없는 폴더를 적은 경우가 모두 중단되고, yaml에서 그룹을 제거하라는 같은 안내가 나오며 `--output`이 변하지 않는다.
   - 그룹 폴더가 untracked 파일 때문에 남아 있어도 tracked 엔트리가 0개면 같은 결과가 나온다.

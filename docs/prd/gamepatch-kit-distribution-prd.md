@@ -159,4 +159,4 @@ https://<project>.supabase.co/storage/v1/object/public/<bucket>/<매니페스트
 - 서명 URL, 접근 제어, 버킷 비공개 전환 — 게임 데이터가 공개돼도 되므로 공개 버킷을 쓴다
 - 채널, A/B, 점진 배포
 - 서버 구현 프레임워크와 Unity 통합 방식
-- 실제 산출물의 별도 object storage 백업 — 상태 Git 저장소는 두 상태 파일만 보존하며 산출물 백업은 별도 범위다
+- 실제 산출물의 별도 object storage 백업 자동화 — 상태 Git 저장소의 산출물 추적 여부와 별개로 범위 밖이다

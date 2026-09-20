@@ -9,6 +9,8 @@ internal sealed class BuildCommand
         var repository = new GitRepository(sourcePath);
         repository.EnsureSourceIsInRepository();
         string repositoryRoot = ResolvePath(repository.RepositoryRoot);
+        string configurationPath = ResolvePath(
+            arguments.ConfigurationPath ?? Path.Combine(sourcePath, BuildConfigurationLoader.FILE_NAME));
 
         if (IsInsideOrEqual(repositoryRoot, outputPath))
         {
@@ -16,9 +18,9 @@ internal sealed class BuildCommand
         }
 
         repository.EnsureTrackedSourceClean();
+        repository.EnsureConfigurationIsTrackedAndClean(configurationPath);
         string currentCommit = repository.GetHeadCommit();
-        repository.EnsureConfigurationTracked();
-        BuildConfiguration configuration = BuildConfigurationLoader.Load(Path.Combine(sourcePath, BuildConfigurationLoader.FILE_NAME));
+        BuildConfiguration configuration = BuildConfigurationLoader.Load(configurationPath);
         PatchManifest? previousManifest = ManifestStore.ReadPrevious(outputPath);
 
         if (previousManifest is not null
@@ -98,7 +100,12 @@ internal sealed class BuildCommand
             SourceCommit = currentCommit,
             Groups = manifestGroups
         };
-        long releaseVersion = ResolveReleaseVersion(previousManifest, candidateManifest);
+        if (previousManifest is not null && ManifestStore.HasSameReleaseContent(previousManifest, candidateManifest))
+        {
+            return new BuildSummary(groupSummaries, fileRevisionAdjustments);
+        }
+
+        long releaseVersion = ResolveReleaseVersion(previousManifest);
         ManifestStore.WriteAtomically(
             outputPath,
             new PatchManifest
@@ -112,16 +119,11 @@ internal sealed class BuildCommand
         return new BuildSummary(groupSummaries, fileRevisionAdjustments);
     }
 
-    private static long ResolveReleaseVersion(PatchManifest? previousManifest, PatchManifest candidateManifest)
+    private static long ResolveReleaseVersion(PatchManifest? previousManifest)
     {
         if (previousManifest is null)
         {
             return 0;
-        }
-
-        if (ManifestStore.HasSameReleaseContent(previousManifest, candidateManifest))
-        {
-            return previousManifest.ReleaseVersion;
         }
 
         if (previousManifest.ReleaseVersion == long.MaxValue)
