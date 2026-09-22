@@ -20,6 +20,32 @@ namespace GamePatchKit.Unity.Tests
     // 에디터 PlayMode와 IL2CPP Player에서 같은 테스트가 실행된다.
     public sealed class TestPatchClient : IPrebuildSetup, IPostBuildCleanup
     {
+        // Progress<T>는 캡처된 컨텍스트로 비동기 post해서 보고가 도착하는 시점이 흔들린다. 순서를 검증하려면
+        // 동기적으로 모아야 한다. Extracting 단계는 백그라운드 스레드에서 오므로 잠근다.
+        private sealed class ProgressRecorder : IProgress<PatchSyncProgress>
+        {
+            private readonly List<PatchSyncProgress> _reports = new List<PatchSyncProgress>();
+
+            public IReadOnlyList<PatchSyncProgress> Reports
+            {
+                get
+                {
+                    lock (_reports)
+                    {
+                        return _reports.ToArray();
+                    }
+                }
+            }
+
+            public void Report(PatchSyncProgress value)
+            {
+                lock (_reports)
+                {
+                    _reports.Add(value);
+                }
+            }
+        }
+
         private const string PackageName = "com.sidenation.gamepatchkit";
         private const string StreamingAssetsDirectoryName = "GamePatchKitFixtures";
         private const string ManifestFileName = "manifest.json";
@@ -450,6 +476,150 @@ namespace GamePatchKit.Unity.Tests
             AssertMirrorDeleted();
         }
 
+        [Test]
+        public async Task SyncAsync_WithProgress_ReportsPhasesInOrderAndReachesTotals()
+        {
+            var recorder = new ProgressRecorder();
+
+            PatchSyncResult result = await _client.SyncAsync(0, recorder);
+
+            IReadOnlyList<PatchSyncProgress> reports = recorder.Reports;
+            Assert.That(reports, Is.Not.Empty);
+
+            // 단계는 앞으로만 간다. 되돌아오면 값이 커지지 않으므로 Is.Ordered가 잡는다.
+            Assert.That(reports.Select(report => (int)report.Phase).ToArray(), Is.Ordered);
+            Assert.That(
+                reports.Select(report => report.Phase).Distinct().ToArray(),
+                Is.EqualTo(new[] { PatchPhase.FetchingManifest, PatchPhase.Downloading, PatchPhase.Extracting }));
+
+            foreach (PatchSyncProgress report in reports)
+            {
+                Assert.That(report.Ratio, Is.InRange(0d, 1d));
+            }
+
+            PatchSyncProgress[] fetching = OfPhase(reports, PatchPhase.FetchingManifest);
+            Assert.That(fetching.Length, Is.EqualTo(1));
+            Assert.That(fetching[0].TotalBytes, Is.Zero);
+            Assert.That(fetching[0].TotalCount, Is.Zero);
+
+            PatchSyncProgress[] downloading = OfPhase(reports, PatchPhase.Downloading);
+            Assert.That(downloading[0].TotalCount, Is.EqualTo(result.DownloadedCount));
+            Assert.That(
+                downloading[0].TotalBytes,
+                Is.EqualTo(ObjectSize(ArchiveObjectPath) + ObjectSize(ConfigObjectPath)));
+            Assert.That(downloading[downloading.Length - 1].CompletedCount, Is.EqualTo(result.DownloadedCount));
+            Assert.That(downloading[downloading.Length - 1].CompletedBytes, Is.EqualTo(result.DownloadedBytes));
+            Assert.That(
+                downloading[downloading.Length - 1].CompletedBytes,
+                Is.EqualTo(downloading[downloading.Length - 1].TotalBytes));
+            AssertMonotonic(downloading);
+
+            PatchSyncProgress[] extracting = OfPhase(reports, PatchPhase.Extracting);
+            Assert.That(extracting[0].TotalCount, Is.EqualTo(result.ExtractedCount));
+            Assert.That(extracting[extracting.Length - 1].CompletedCount, Is.EqualTo(result.ExtractedCount));
+            Assert.That(
+                extracting[extracting.Length - 1].CompletedBytes,
+                Is.EqualTo(extracting[extracting.Length - 1].TotalBytes));
+            AssertMonotonic(extracting);
+        }
+
+        // 재사용할 산출물을 총량에서 빼지 않으면 받지도 않을 2개가 분모에 남아 진행률이 끝까지 차지 않는다.
+        [Test]
+        public async Task SyncAsync_ResumesInterruptedGeneration_ReportsOnlyRemainingArtifact()
+        {
+            await _client.SyncAsync(0);
+            _server.HeldObjectPathPrefix = RawObjectPathPrefix;
+
+            using (var cancellation = new CancellationTokenSource())
+            {
+                _server.OnRequest = objectPath =>
+                {
+                    if (objectPath.StartsWith(RawObjectPathPrefix, StringComparison.Ordinal))
+                    {
+                        cancellation.Cancel();
+                    }
+                };
+
+                try
+                {
+                    await AssertThrowsAsync<OperationCanceledException>(() => _client.SyncAsync(1, cancellation.Token));
+                }
+                finally
+                {
+                    _server.ReleaseHeldResponses();
+                }
+            }
+
+            _server.OnRequest = null;
+            var recorder = new ProgressRecorder();
+
+            PatchSyncResult result = await _client.SyncAsync(1, recorder);
+
+            Assert.That(result.DownloadedCount, Is.EqualTo(1));
+            Assert.That(result.ReusedCount, Is.EqualTo(2));
+
+            // 재사용분이 총량에 섞이면 TotalCount가 3이 되고 분모가 실제 수신량보다 커진다.
+            PatchSyncProgress[] downloading = OfPhase(recorder.Reports, PatchPhase.Downloading);
+            Assert.That(downloading[0].TotalCount, Is.EqualTo(1));
+            Assert.That(downloading[0].TotalBytes, Is.EqualTo(result.DownloadedBytes));
+            Assert.That(downloading[downloading.Length - 1].CompletedCount, Is.EqualTo(1));
+            Assert.That(downloading[downloading.Length - 1].CompletedBytes, Is.EqualTo(result.DownloadedBytes));
+        }
+
+        // 진행률을 받을 때는 수신 바이트를 주기적으로 읽느라 대기 구조가 달라진다. 그 경로에서도 취소가
+        // 같은 예외로 끝나고 임시 파일을 남기지 않아야 한다.
+        [Test]
+        public async Task SyncAsync_CancelledWithProgress_AbortsRequestAndLeavesNoFiles()
+        {
+            var recorder = new ProgressRecorder();
+            _server.HeldObjectPathPrefix = "archives/";
+
+            using (var cancellation = new CancellationTokenSource())
+            {
+                _server.OnRequest = objectPath =>
+                {
+                    if (objectPath == ArchiveObjectPath)
+                    {
+                        cancellation.Cancel();
+                    }
+                };
+
+                try
+                {
+                    Task<PatchSyncResult> sync = _client.SyncAsync(0, recorder, cancellation.Token);
+                    Task finished = await Task.WhenAny(sync, Task.Delay(AbortTimeoutMilliseconds));
+
+                    Assert.That(finished, Is.SameAs(sync), "폴링 중에도 취소로 끝나야 합니다.");
+                    await AssertThrowsAsync<OperationCanceledException>(() => sync);
+                }
+                finally
+                {
+                    _server.ReleaseHeldResponses();
+                }
+            }
+
+            Assert.That(File.Exists(Path.Combine(_rootPath, ToLocalPath(ArchiveObjectPath))), Is.False);
+            AssertNoTemporaryFiles();
+
+            // 취소돼도 이미 나간 보고는 계약을 지킨다.
+            PatchSyncProgress[] downloading = OfPhase(recorder.Reports, PatchPhase.Downloading);
+            Assert.That(downloading[0].TotalCount, Is.EqualTo(2));
+            AssertMonotonic(downloading);
+        }
+
+        // 원격을 한 번도 호출하지 않는 지름길이다. 0바이트를 받은 것과 받을 것이 없는 것은 다른 상태다.
+        [Test]
+        public async Task SyncAsync_SameGeneration_DoesNotReportProgress()
+        {
+            await _client.SyncAsync(0);
+            var recorder = new ProgressRecorder();
+
+            PatchSyncResult result = await _client.SyncAsync(0, recorder);
+
+            Assert.That(result.IsAlreadyUpToDate, Is.True);
+            Assert.That(recorder.Reports, Is.Empty);
+        }
+
 #if UNITY_EDITOR
         private static string GetPackageFixturesPath()
         {
@@ -473,6 +643,26 @@ namespace GamePatchKit.Unity.Tests
             }
         }
 #endif
+
+        private static PatchSyncProgress[] OfPhase(IReadOnlyList<PatchSyncProgress> reports, PatchPhase phase)
+        {
+            PatchSyncProgress[] selected = reports.Where(report => report.Phase == phase).ToArray();
+            Assert.That(selected, Is.Not.Empty, $"{phase} 단계의 보고가 있어야 합니다.");
+            return selected;
+        }
+
+        private static void AssertMonotonic(PatchSyncProgress[] reports)
+        {
+            for (int index = 1; index < reports.Length; index++)
+            {
+                Assert.That(
+                    reports[index].CompletedCount,
+                    Is.GreaterThanOrEqualTo(reports[index - 1].CompletedCount));
+                Assert.That(
+                    reports[index].CompletedBytes,
+                    Is.GreaterThanOrEqualTo(reports[index - 1].CompletedBytes));
+            }
+        }
 
         private static async Task<TException> AssertThrowsAsync<TException>(Func<Task> action)
             where TException : Exception

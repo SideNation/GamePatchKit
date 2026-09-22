@@ -245,7 +245,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 651f9c17f125c4d27a5eac901a331fd9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PatchClientSample
-  _baseUrl: http://127.0.0.1:8765/
+  _baseUrl: https://stdasklxykpkgibkkicn.supabase.co/storage/v1/object/public/data-develop
 --- !u!4 &1316874177
 Transform:
   m_ObjectHideFlags: 0

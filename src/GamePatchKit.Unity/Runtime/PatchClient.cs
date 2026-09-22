@@ -22,6 +22,7 @@ namespace GamePatchKit.Unity
         private const string ArchivesDirectoryName = "archives";
         private const string FilesDirectoryName = "files";
         private const long NotFoundStatusCode = 404;
+        private const int ProgressPollIntervalMilliseconds = 100;
 
         private readonly string _baseUrl;
         private readonly string _rootPath;
@@ -45,7 +46,25 @@ namespace GamePatchKit.Unity
         public string DataPath { get; }
 
         // Unity 메인 스레드에서 호출한다. 같은 폴더에 대한 SyncAsync를 동시에 실행하지 않는다.
-        public async Task<PatchSyncResult> SyncAsync(long releaseVersion, CancellationToken cancellationToken = default)
+        public Task<PatchSyncResult> SyncAsync(long releaseVersion, CancellationToken cancellationToken = default)
+        {
+            return SyncCoreAsync(releaseVersion, progress: null, cancellationToken);
+        }
+
+        // 진행 상황을 보고하는 오버로드다. Extracting 단계의 Report는 백그라운드 스레드에서 호출될 수 있으므로
+        // Unity 객체를 만지려면 Progress<T>를 넘겨 메인 스레드로 받는다.
+        public Task<PatchSyncResult> SyncAsync(
+            long releaseVersion,
+            IProgress<PatchSyncProgress> progress,
+            CancellationToken cancellationToken = default)
+        {
+            return SyncCoreAsync(releaseVersion, progress, cancellationToken);
+        }
+
+        private async Task<PatchSyncResult> SyncCoreAsync(
+            long releaseVersion,
+            IProgress<PatchSyncProgress>? progress,
+            CancellationToken cancellationToken)
         {
             if (releaseVersion < 0)
             {
@@ -59,7 +78,7 @@ namespace GamePatchKit.Unity
 
             try
             {
-                return await SynchronizeAsync(context, releaseVersion, cancellationToken);
+                return await SynchronizeAsync(context, releaseVersion, progress, cancellationToken);
             }
             catch (IOException exception)
             {
@@ -74,6 +93,7 @@ namespace GamePatchKit.Unity
         private async Task<PatchSyncResult> SynchronizeAsync(
             SynchronizationContext context,
             long releaseVersion,
+            IProgress<PatchSyncProgress>? progress,
             CancellationToken cancellationToken)
         {
             Directory.CreateDirectory(_rootPath);
@@ -107,6 +127,9 @@ namespace GamePatchKit.Unity
                 }
                 else
                 {
+                    // 매니페스트 크기는 받기 전에 알 수 없다. 이 단계의 수치는 모두 0으로 두고 호출자가
+                    // 퍼센트 대신 불확정 표시를 쓰게 한다.
+                    Report(progress, PatchPhase.FetchingManifest, 0, 0, 0, 0);
                     byte[] manifestBytes = await DownloadBytesAsync(
                         context,
                         ManifestStore.GetManifestObjectPath(releaseVersion),
@@ -146,35 +169,83 @@ namespace GamePatchKit.Unity
                 .OrderBy(artifact => artifact.Name, StringComparer.Ordinal)
                 .ToArray();
             ValidateRemotePaths(artifacts);
-            IReadOnlyCollection<string> requiredNames = await Task.Run(
-                () => DataExtractor.CollectRequiredArtifacts(_rootPath, targetManifest, known),
-                cancellationToken);
+            (IReadOnlyCollection<string> requiredNames, int extractTotalCount, long extractTotalBytes) =
+                await Task.Run(
+                    () => DataExtractor.CollectRequiredArtifacts(_rootPath, targetManifest, known),
+                    cancellationToken);
 
-            int downloadedCount = 0;
+            // 다시 풀 엔트리가 없는 산출물은 받지 않는다. 미러를 지우므로 이것이 유일한 다운로드 기준이다.
+            // 받을 목록을 루프 앞에서 확정해야 총량이 정확해진다. IsAlreadyStored는 로컬 stat만 하고 산출물
+            // 이름은 매니페스트 검증이 유일함을 보장하므로, 루프 안에서 하던 판정을 앞으로 옮겨도 받는 대상과
+            // 순서가 달라지지 않는다.
+            ManifestArtifact[] required = artifacts
+                .Where(artifact => requiredNames.Contains(artifact.Name))
+                .ToArray();
+            ManifestArtifact[] toDownload = required
+                .Where(artifact => !IsAlreadyStored(artifact))
+                .ToArray();
+            int reusedCount = required.Length - toDownload.Length;
+            long downloadTotalBytes = toDownload.Sum(artifact => artifact.StoredSize);
             long downloadedBytes = 0;
-            int reusedCount = 0;
 
-            foreach (ManifestArtifact artifact in artifacts)
+            Report(progress, PatchPhase.Downloading, 0, toDownload.Length, 0, downloadTotalBytes);
+
+            for (int index = 0; index < toDownload.Length; index++)
             {
-                // 다시 풀 엔트리가 없는 산출물은 받지 않는다. 미러를 지우므로 이것이 유일한 다운로드 기준이다.
-                if (!requiredNames.Contains(artifact.Name))
+                ManifestArtifact artifact = toDownload[index];
+                // for의 index는 반복마다 같은 변수라 클로저가 마지막 값을 보게 된다. 복사해서 넘긴다.
+                long completedBytes = downloadedBytes;
+                int completedCount = index;
+                Action<long>? onBytesReceived = null;
+
+                if (progress is not null)
                 {
-                    continue;
+                    // 전송 인코딩에 따라 수신 바이트가 storedSize를 넘을 수 있어 비율이 1을 넘지 않도록 자른다.
+                    onBytesReceived = received => Report(
+                        progress,
+                        PatchPhase.Downloading,
+                        completedCount,
+                        toDownload.Length,
+                        completedBytes + Math.Min(received, artifact.StoredSize),
+                        downloadTotalBytes);
                 }
 
-                if (IsAlreadyStored(artifact))
-                {
-                    reusedCount++;
-                    continue;
-                }
-
-                downloadedBytes = checked(downloadedBytes + await DownloadArtifactAsync(context, artifact, cancellationToken));
-                downloadedCount++;
+                downloadedBytes = checked(downloadedBytes
+                    + await DownloadArtifactAsync(context, artifact, onBytesReceived, cancellationToken));
+                Report(
+                    progress,
+                    PatchPhase.Downloading,
+                    index + 1,
+                    toDownload.Length,
+                    downloadedBytes,
+                    downloadTotalBytes);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            Report(progress, PatchPhase.Extracting, 0, extractTotalCount, 0, extractTotalBytes);
+            int extractedCount = 0;
+            long extractedBytes = 0;
+            Action<long>? onEntryExtracted = null;
+
+            if (progress is not null)
+            {
+                // Execute는 단일 스레드로 순회하므로 이 두 값에 경쟁이 없다.
+                onEntryExtracted = size =>
+                {
+                    extractedCount++;
+                    extractedBytes = checked(extractedBytes + size);
+                    Report(
+                        progress,
+                        PatchPhase.Extracting,
+                        extractedCount,
+                        extractTotalCount,
+                        extractedBytes,
+                        extractTotalBytes);
+                };
+            }
+
             ExtractSummary extracted = await Task.Run(
-                () => DataExtractor.Execute(_rootPath, targetManifest, known, cancellationToken),
+                () => DataExtractor.Execute(_rootPath, targetManifest, known, cancellationToken, onEntryExtracted),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -189,7 +260,7 @@ namespace GamePatchKit.Unity
                 releaseVersion,
                 localManifest?.ReleaseVersion,
                 false,
-                downloadedCount,
+                toDownload.Length,
                 downloadedBytes,
                 reusedCount,
                 extracted.ExtractedCount,
@@ -217,6 +288,17 @@ namespace GamePatchKit.Unity
         {
             Delete(() => Directory.Delete(Path.Combine(_rootPath, ArchivesDirectoryName), recursive: true));
             Delete(() => Directory.Delete(Path.Combine(_rootPath, FilesDirectoryName), recursive: true));
+        }
+
+        private static void Report(
+            IProgress<PatchSyncProgress>? progress,
+            PatchPhase phase,
+            int completedCount,
+            int totalCount,
+            long completedBytes,
+            long totalBytes)
+        {
+            progress?.Report(new PatchSyncProgress(phase, completedCount, totalCount, completedBytes, totalBytes));
         }
 
         private static void Delete(Action delete)
@@ -256,6 +338,7 @@ namespace GamePatchKit.Unity
             SynchronizationContext context,
             UnityWebRequest request,
             string objectPath,
+            Action<long>? onBytesReceived,
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -279,7 +362,22 @@ namespace GamePatchKit.Unity
             // request가 이미 dispose됐을 수 있어 건드리지 않는다.
             using (cancellationToken.Register(() => context.Post(_ => AbortIfPending(request, ref isFinished), null)))
             {
-                await completion.Task;
+                if (onBytesReceived is null)
+                {
+                    await completion.Task;
+                }
+                else
+                {
+                    // 받는 동안 수신 바이트를 주기적으로 읽는다. UnityWebRequest는 메인 스레드에서만 읽을 수 있고
+                    // 캡처된 컨텍스트가 메인 스레드라 Task.Delay 뒤의 재개도 메인 스레드다.
+                    // Task.Delay에 토큰을 넘기지 않는다. 취소는 위 Register가 Abort로 처리하며, 여기서 함께
+                    // 던지면 밖으로 나가는 예외 종류가 두 경로 사이에서 흔들린다.
+                    while (!completion.Task.IsCompleted)
+                    {
+                        await Task.WhenAny(completion.Task, Task.Delay(ProgressPollIntervalMilliseconds));
+                        onBytesReceived((long)request.downloadedBytes);
+                    }
+                }
             }
 
             isFinished = true;
@@ -348,7 +446,7 @@ namespace GamePatchKit.Unity
         {
             using (UnityWebRequest request = UnityWebRequest.Get(_baseUrl + objectPath))
             {
-                await SendAsync(context, request, objectPath, cancellationToken);
+                await SendAsync(context, request, objectPath, onBytesReceived: null, cancellationToken);
                 return request.downloadHandler.data;
             }
         }
@@ -357,6 +455,7 @@ namespace GamePatchKit.Unity
             SynchronizationContext context,
             string objectPath,
             string filePath,
+            Action<long>? onBytesReceived,
             CancellationToken cancellationToken)
         {
             // DownloadHandlerFile은 받은 바이트를 메모리에 올리지 않고 파일에 바로 쓴다. 파일 핸들은 request를
@@ -364,13 +463,14 @@ namespace GamePatchKit.Unity
             using (var request = new UnityWebRequest(_baseUrl + objectPath, UnityWebRequest.kHttpVerbGET))
             {
                 request.downloadHandler = new DownloadHandlerFile(filePath) { removeFileOnAbort = true };
-                await SendAsync(context, request, objectPath, cancellationToken);
+                await SendAsync(context, request, objectPath, onBytesReceived, cancellationToken);
             }
         }
 
         private async Task<long> DownloadArtifactAsync(
             SynchronizationContext context,
             ManifestArtifact artifact,
+            Action<long>? onBytesReceived,
             CancellationToken cancellationToken)
         {
             string targetPath = GetLocalPath(artifact.Name);
@@ -382,7 +482,7 @@ namespace GamePatchKit.Unity
 
             try
             {
-                await DownloadToFileAsync(context, artifact.Name, temporaryPath, cancellationToken);
+                await DownloadToFileAsync(context, artifact.Name, temporaryPath, onBytesReceived, cancellationToken);
                 (long storedSize, string checksum) = await Task.Run(() => ReadStored(temporaryPath), cancellationToken);
 
                 if (storedSize != artifact.StoredSize)

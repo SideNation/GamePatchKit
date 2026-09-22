@@ -135,11 +135,44 @@ public sealed class PatchBootstrap : MonoBehaviour
 
 재시도·백오프는 넣지 않는다. 호출자가 다시 `SyncAsync`를 부르면 된다.
 
+## 진행률
+
+`IProgress<PatchSyncProgress>`를 받는 오버로드로 진행 상황을 읽는다.
+
+```csharp
+var progress = new Progress<PatchSyncProgress>(report =>
+{
+    // Progress<T>는 생성한 스레드의 컨텍스트로 넘겨주므로 여기서 UI를 만져도 된다.
+    bar.fillAmount = (float)report.Ratio;
+    label.text = report.Phase switch
+    {
+        PatchPhase.FetchingManifest => "확인 중",
+        PatchPhase.Downloading => $"내려받는 중 {report.CompletedCount}/{report.TotalCount}",
+        _ => "압축 푸는 중",
+    };
+});
+
+PatchSyncResult result = await client.SyncAsync(releaseVersion, progress, _lifetime.Token);
+```
+
+| 단계 | 구간 | 총량의 의미 |
+| --- | --- | --- |
+| `FetchingManifest` | 세대 매니페스트를 받는 중 | 받기 전에는 크기를 알 수 없어 모두 0이다. 퍼센트 대신 불확정 표시를 쓴다 |
+| `Downloading` | 산출물을 받는 중 | 전송 바이트. 이미 받아 둔 산출물은 빠진 정확한 값이다 |
+| `Extracting` | `data` 아래에 푸는 중 | 푼 원본 바이트 |
+
+- `Ratio`는 **현재 단계 안에서의** 0~1이다. 전송 바이트와 원본 바이트는 압축 때문에 단위가 달라 단계를 가로지르는
+  통합 비율은 제공하지 않는다.
+- 해시 검증은 산출물마다의 내부 동작이라 단계로 나누지 않고 `Downloading`에 포함한다.
+- 로컬이 이미 요청한 세대여서 원격을 호출하지 않으면(`IsAlreadyUpToDate`) **보고가 한 번도 오지 않는다.**
+- **`Extracting` 단계의 보고는 백그라운드 스레드에서 호출된다.** 위 예시처럼 `Progress<T>`를 쓰면 메인 스레드로
+  넘어오지만, `IProgress<T>`를 직접 구현했다면 Unity 객체를 그 자리에서 만지면 안 된다.
+
 ## 지원 범위
 
 - Unity 6(6000.x), API Compatibility Level .NET Standard 2.1.
 - 검증한 환경: Unity 6000.4.4f1 에디터 PlayMode 테스트와 macOS IL2CPP Player. Android·iOS·WebGL은 기기 검증 전이다. WebGL은 파일시스템 가상화 때문에 지원 목표에서 제외한다.
-- 진행률 보고, 재시도, `Range` 재개, Supabase 포인터 조회는 제공하지 않는다.
+- 재시도, `Range` 재개, Supabase 포인터 조회는 제공하지 않는다.
 
 ## 직접 테스트
 

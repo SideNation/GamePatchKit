@@ -46,7 +46,7 @@
 | Q4 | 패키지 루트 `src/GamePatchKit.Unity/`, 검증용 호스트 프로젝트 `unity/GamePatchKit.Unity.Host/`가 `file:../../../src/GamePatchKit.Unity`로 참조 | Git URL의 `?path=`가 짧고 패키지가 호스트 프로젝트와 분리된다. 호스트 프로젝트는 테스트와 IL2CPP 빌드를 재현하기 위해 필요하다 |
 | Q5 | CLI는 건드리지 않고 패키지 안에 매니페스트 모델·검증·해제를 순수 C#으로 둔다. `Runtime/Core/`에 격리하고 `UnityEngine`을 참조하지 않는다 | 요청 범위가 Unity 다운로드 기능이다. 서버 구현이 생기면 이 폴더를 `<Compile Include>`로 링크하는 방식을 검토한다. CLI와의 중복은 의도된 것이며 필드 이름·검증 규칙을 동일하게 유지한다 |
 | Q6 | ~~`gpk sync`와 같은 배치이며 압축 미러를 남긴다~~ → **성공한 동기화 뒤 받은 압축 산출물을 지운다.** 저장 루트는 생성자 인자이고 기본값이 없다 | 사용자 요청으로 뒤집었다. 미러를 남기면 `compression: none` 그룹은 원본과 바이트가 같은 중복이고, 미참조 객체도 정리되지 않아 디스크가 계속 늘어난다. 아래 "미러 삭제" 항목이 대체 결정이다 |
-| Q7 | 일반 C# 클래스 `PatchClient(baseUrl, rootPath)` + `Task<PatchSyncResult> SyncAsync(long releaseVersion, CancellationToken)`. 포인터 조회·진행률 보고 없음. 반환은 `Task` | PRD대로 클라이언트는 서버가 알려준 버전을 쓴다. `Task`는 NUnit async 테스트와 다른 async 라이브러리에 호환되고 `Awaitable`의 재-await 불가 제약이 없다. 취소는 앱 종료 시 중단에 필요하다 |
+| Q7 | 일반 C# 클래스 `PatchClient(baseUrl, rootPath)` + `Task<PatchSyncResult> SyncAsync(long releaseVersion, CancellationToken)`. 포인터 조회 없음. ~~진행률 보고 없음~~ → **[game-patch-kit-unity-progress-design.md](game-patch-kit-unity-progress-design.md)로 `IProgress<PatchSyncProgress>` 오버로드를 추가했다.** 기존 시그니처는 그대로다. 반환은 `Task` | PRD대로 클라이언트는 서버가 알려준 버전을 쓴다. `Task`는 NUnit async 테스트와 다른 async 라이브러리에 호환되고 `Awaitable`의 재-await 불가 제약이 없다. 취소는 앱 종료 시 중단에 필요하다 |
 | Q8 | 호스트 프로젝트의 PlayMode 테스트(루프백 HTTP + 실제 `gpk build` 픽스처)를 batchmode로 실행하고, 같은 테스트를 macOS IL2CPP Player로 실행한다. Android·iOS 기기 검증은 미검증으로 명시 | 6000.4.4f1에 Mac IL2CPP 모듈이 설치돼 있다. ZstdSharp·Newtonsoft·파일 API의 IL2CPP 동작이 핵심 위험이라 Player 실행까지 넣는다 |
 | Q9 | 이 문서를 먼저 남기고 구현한다 | 저장소 관례 |
 | 후속 | 오류는 `PatchClientException` 하나로 보고하고 취소는 `OperationCanceledException`. 메시지는 CLI와 같은 한국어 | CLI의 `BuildException` 단일 예외 관례 |
@@ -73,7 +73,7 @@
   - 산출물은 임시 파일로 받아 크기와 SHA-256이 매니페스트와 같을 때만 최종 이름을 얻는다.
   - 세대 매니페스트는 CLI와 같은 관계 검증을 통과해야 하고 `releaseVersion`이 요청 값과 같아야 한다.
   - 해제까지 끝낸 뒤에만 목표 매니페스트를 `manifest.json`으로 올린다. `<세대>.json`이 없을 때 `manifest.json`이 가리키는 세대는 완전하다.
-  - 재시도·백오프·`Range` 재개·진행률·포인터 조회는 넣지 않는다(PRD 제외 범위).
+  - 재시도·백오프·`Range` 재개·포인터 조회는 넣지 않는다(PRD 제외 범위). 진행률은 뒤에 오버로드로 추가했다.
 - **성능 목표**: 다운로드 크기에 비례하는 managed 배열 할당 없음(`DownloadHandlerFile`), 메인 스레드에서 해시·해제를 수행하지 않음, `Update` 없음
 
 ## 5. 단순 설계 기준
@@ -101,7 +101,7 @@
 
 - 전송 인터페이스(`ITransport`) 미적용 — 구현이 UnityWebRequest 하나뿐이고 테스트는 실제 HTTP로 한다.
 - `Awaitable` 반환 미적용 — 재-await 불가 제약과 NUnit 호환성 때문에 `Task`를 쓴다. 내부에서도 `Task.Run`과 Unity `SynchronizationContext`만 쓰고 `Awaitable`에 의존하지 않는다.
-- 진행률(`IProgress<T>`) 미적용 — 요청에 없고 별도로 붙일 수 있다.
+- ~~진행률(`IProgress<T>`) 미적용 — 요청에 없고 별도로 붙일 수 있다.~~ → 예고한 대로 별도로 붙였다. [game-patch-kit-unity-progress-design.md](game-patch-kit-unity-progress-design.md) 참조.
 - 배타 파일 락 미적용 — 단일 프로세스.
 - 압축 산출물 유지 미적용 — 성공한 동기화 뒤 지운다. Q6의 뒤집힌 결정이다.
 - 재시도·백오프·`Range` 재개 미적용 — PRD 제외 범위.

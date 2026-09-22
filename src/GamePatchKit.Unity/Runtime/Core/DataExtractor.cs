@@ -32,11 +32,14 @@ namespace GamePatchKit.Unity
         // 각 파일은 그중 하나의 해제 결과이므로, 전부가 목표와 같은 엔트리만 건드리지 않고 나머지는 다시 푼다.
         // 산출물 이름과 checksum이 불변이라 엔트리 정보가 같으면 해제한 내용도 같다. 취소는 파일과 버퍼 단위
         // 경계에서 반영한다.
+        // onEntryExtracted는 파일 하나를 다 푼 직후에 그 파일의 원본 크기로 호출된다. Task.Run 안에서 실행되므로
+        // 백그라운드 스레드에서 호출된다.
         public static ExtractSummary Execute(
             string rootPath,
             PatchManifest target,
             IReadOnlyList<PatchManifest> known,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Action<long>? onEntryExtracted = null)
         {
             string dataPath = Path.Combine(rootPath, DATA_DIRECTORY_NAME);
             HashSet<string> expectedPaths = CollectExpectedPaths(target);
@@ -48,14 +51,17 @@ namespace GamePatchKit.Unity
 
             foreach (ManifestGroup group in target.Groups.OrderBy(group => group.Id, StringComparer.Ordinal))
             {
-                extractedCount += ExtractGroup(rootPath, dataPath, group, knownIdentities, cancellationToken);
+                extractedCount += ExtractGroup(
+                    rootPath, dataPath, group, knownIdentities, cancellationToken, onEntryExtracted);
             }
 
             return new ExtractSummary(extractedCount, removedCount);
         }
 
         // 다시 풀어야 하는 엔트리가 읽을 산출물만 고른다. 바뀌지 않은 엔트리만 담긴 아카이브는 받지 않는다.
-        public static IReadOnlyCollection<string> CollectRequiredArtifacts(
+        // 같은 순회에서 해제 대상 엔트리 수와 원본 바이트 합계도 돌려준다. Execute가 쓰는 판정과 같은 판정이고
+        // 판정이 트리만 보므로, 이 사이에 산출물을 받아도 결과가 달라지지 않는다.
+        public static (IReadOnlyCollection<string> Names, int EntryCount, long PayloadBytes) CollectRequiredArtifacts(
             string rootPath,
             PatchManifest target,
             IReadOnlyList<PatchManifest> known)
@@ -63,6 +69,8 @@ namespace GamePatchKit.Unity
             string dataPath = Path.Combine(rootPath, DATA_DIRECTORY_NAME);
             IReadOnlyList<Dictionary<string, string>> knownIdentities = CollectIdentities(known);
             var names = new HashSet<string>(StringComparer.Ordinal);
+            int entryCount = 0;
+            long payloadBytes = 0;
 
             foreach (ManifestGroup group in target.Groups)
             {
@@ -74,10 +82,12 @@ namespace GamePatchKit.Unity
                     }
 
                     names.Add(entry.Source == EntrySource.Archive ? group.Archive!.Name : entry.Name!);
+                    entryCount++;
+                    payloadBytes = checked(payloadBytes + entry.Size);
                 }
             }
 
-            return names;
+            return (names, entryCount, payloadBytes);
         }
 
         private static HashSet<string> CollectExpectedPaths(PatchManifest manifest)
@@ -181,7 +191,8 @@ namespace GamePatchKit.Unity
             string dataPath,
             ManifestGroup group,
             IReadOnlyList<Dictionary<string, string>> knownIdentities,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Action<long>? onEntryExtracted)
         {
             ManifestEntry[] pendingEntries = group.Entries
                 .Where(entry => NeedsExtraction(dataPath, group, entry, knownIdentities))
@@ -194,7 +205,8 @@ namespace GamePatchKit.Unity
 
             if (archiveEntries.Length > 0)
             {
-                ExtractArchiveEntries(rootPath, dataPath, group, archiveEntries, buffer, cancellationToken);
+                ExtractArchiveEntries(
+                    rootPath, dataPath, group, archiveEntries, buffer, cancellationToken, onEntryExtracted);
             }
 
             foreach (ManifestEntry entry in pendingEntries.Where(entry => entry.Source == EntrySource.File))
@@ -212,6 +224,9 @@ namespace GamePatchKit.Unity
                 {
                     throw Undecodable(entry.Name!, exception);
                 }
+
+                // 크기 검증까지 통과한 파일만 센다.
+                onEntryExtracted?.Invoke(entry.Size);
             }
 
             return pendingEntries.Length;
@@ -224,7 +239,8 @@ namespace GamePatchKit.Unity
             ManifestGroup group,
             IReadOnlyList<ManifestEntry> entries,
             byte[] buffer,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            Action<long>? onEntryExtracted)
         {
             try
             {
@@ -240,6 +256,9 @@ namespace GamePatchKit.Unity
                         Skip(stored, offset - position, buffer, cancellationToken);
                         Write(dataPath, group.Id, entry, destination => Copy(stored, destination, length, buffer, cancellationToken));
                         position = offset + length;
+
+                        // 크기 검증까지 통과한 파일만 센다.
+                        onEntryExtracted?.Invoke(entry.Size);
                     }
                 }
             }
