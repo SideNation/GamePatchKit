@@ -58,6 +58,9 @@ namespace GamePatchKit.Unity.Tests
         private const string FilesDirectoryName = "files";
         private const string RawObjectPathPrefix = "files/raw/";
         private const int AbortTimeoutMilliseconds = 10000;
+        private const int PartialProgressWaitMilliseconds = 150;
+        private const int PartialProgressAttempts = 20;
+        private const int InflatedPaddingLength = 1024;
 
         private string _rootPath = null!;
         private FixtureServer _server = null!;
@@ -564,6 +567,59 @@ namespace GamePatchKit.Unity.Tests
             Assert.That(downloading[0].TotalBytes, Is.EqualTo(result.DownloadedBytes));
             Assert.That(downloading[downloading.Length - 1].CompletedCount, Is.EqualTo(1));
             Assert.That(downloading[downloading.Length - 1].CompletedBytes, Is.EqualTo(result.DownloadedBytes));
+        }
+
+        // 아티팩트 단위로만 보고하면 파일을 받는 동안 값이 멈춘다. 응답을 절반에서 끊어 그 사이의 보고를 본다.
+        [Test]
+        public async Task SyncAsync_WithProgress_ReportsPartialBytesWhileDownloadingArtifact()
+        {
+            var recorder = new ProgressRecorder();
+            _server.ThrottledObjectPath = ArchiveObjectPath;
+
+            Task<PatchSyncResult> sync = _client.SyncAsync(0, recorder, CancellationToken.None);
+            PatchSyncProgress? partial = null;
+
+            // 메인 스레드를 막으면 폴링 재개가 돌아오지 못한다. 반드시 await로 양보하며 기다린다.
+            for (int attempt = 0; attempt < PartialProgressAttempts && partial is null; attempt++)
+            {
+                await Task.Delay(PartialProgressWaitMilliseconds);
+                partial = recorder.Reports.FirstOrDefault(
+                    report => report.Phase == PatchPhase.Downloading
+                        && report.CompletedBytes > 0
+                        && report.CompletedBytes < report.TotalBytes);
+            }
+
+            _server.ReleaseThrottledResponse();
+            PatchSyncResult result = await sync;
+
+            Assert.That(partial, Is.Not.Null, "파일을 받는 도중의 진행률 보고가 있어야 합니다.");
+            Assert.That(partial!.CompletedCount, Is.Zero, "아직 첫 산출물을 받는 중이다.");
+            Assert.That(result.DownloadedCount, Is.EqualTo(2));
+            AssertSynchronized(0);
+        }
+
+        // 전송 인코딩 때문에 수신 바이트가 매니페스트의 storedSize를 넘어도 비율이 1을 넘지 않아야 한다.
+        [Test]
+        public async Task SyncAsync_ReceivesMoreBytesThanManifest_ClampsReportedProgress()
+        {
+            var recorder = new ProgressRecorder();
+            byte[] inflated = _server.ReadObject(ArchiveObjectPath)
+                .Concat(new byte[InflatedPaddingLength])
+                .ToArray();
+            _server.Override = objectPath => objectPath == ArchiveObjectPath
+                ? inflated
+                : _server.ReadObjectOrNull(objectPath);
+
+            PatchClientException exception = await AssertThrowsAsync<PatchClientException>(
+                () => _client.SyncAsync(0, recorder, CancellationToken.None));
+
+            Assert.That(exception.Message, Does.Contain("크기가 다릅니다"));
+
+            foreach (PatchSyncProgress report in recorder.Reports)
+            {
+                Assert.That(report.CompletedBytes, Is.LessThanOrEqualTo(report.TotalBytes));
+                Assert.That(report.Ratio, Is.InRange(0d, 1d));
+            }
         }
 
         // 진행률을 받을 때는 수신 바이트를 주기적으로 읽느라 대기 구조가 달라진다. 그 경로에서도 취소가

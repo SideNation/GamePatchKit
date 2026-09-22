@@ -2,7 +2,7 @@
 
 > 기준 문서: [`game-patch-kit-unity-client-design.md`](game-patch-kit-unity-client-design.md)
 >
-> 상태: 구현 완료 (2026-09-23). 호스트 프로젝트 PlayMode 테스트 19개 통과.
+> 상태: 구현 완료 (2026-09-23). 호스트 프로젝트 PlayMode 테스트 21개 통과. adversarial 검토 2회 완료.
 
 ## 1. 기능 요약
 
@@ -283,6 +283,8 @@ append하는 작은 `IProgress<T>` recorder를 쓴다.
 | 단계 순서 | `FetchingManifest` → `Downloading` → `Extracting` 순, 각 단계 첫 등장 1회 |
 | 비율 경계 | `Ratio`가 0 미만이거나 1 초과가 되지 않음(전송 인코딩 clamp 검증) |
 | 취소 + 폴링 | 진행률을 받는 중 취소해도 `OperationCanceledException`으로 끝나고 임시 파일이 남지 않음 |
+| 파일 내 중간 진행 | 응답을 절반에서 끊어(`FixtureServer.ThrottledObjectPath`) `0 < CompletedBytes < TotalBytes`인 보고가 나오는지 |
+| 초과 수신 clamp | 매니페스트 `storedSize`보다 긴 본문을 보내도 모든 보고의 `Ratio`가 0~1 |
 | 기존 회귀 | 기존 15개 테스트 전부 통과. 특히 2인자 `SyncAsync` 호출부 무수정 |
 
 수동 검증은 `unity/GamePatchKit.Unity.Host`의 `PatchClientSample` 씬에서 수행한다.
@@ -314,13 +316,32 @@ append하는 작은 `IProgress<T>` recorder를 쓴다.
 | 단계 | 상태 |
 | --- | --- |
 | 구현 (6·7절) | 완료 |
-| 테스트 추가 (11절) | 완료. PlayMode 19개 통과 (기존 15 + 신규 4) |
+| 테스트 추가 (11절) | 완료. PlayMode 21개 통과 (기존 15 + 신규 6) |
 | 문서·버전 갱신 (12절) | 완료. `package.json` 0.1.11 |
 | `PatchClientSample` 수동 검증 | 미실행 |
-| **adversarial 검토** | 진행 중. `AGENTS.md`가 공개 API 변경을 고위험으로 분류해 의무화한다 |
+| **adversarial 검토** | 2/3회 완료. 1차 Apply 3건 반영, Reject 1건. 2차 Reject 1건. 아래 기록 참조 |
 | `worklog-workflow` 기록 | 대기 |
 | `agent-memory-workflow`(slug `gamepatchkit`) | 대기 |
 | `develop` 푸시 | 대기 (사용자 승인 필요) |
 
-알려진 한계: 픽스처가 수백 바이트라 루프백 다운로드가 폴링 간격보다 훨씬 빨리 끝난다. 폴링 경로는 실행되지만
-파일 내 중간 진행 보고가 여러 번 나오는 상황은 테스트로 재현되지 않는다.
+검토 반영 내역 (1차, Apply 3건):
+
+- `SendAsync`에서 `request.downloadedBytes`(`ulong`)를 `long`으로 좁히기 전에 자른다. 먼저 캐스팅하면 상한을 넘을 때
+  음수가 되어 진행률이 뒤로 간다.
+- 계획을 앞에서 확정하므로 실행 중 외부 프로세스가 산출물을 만들어 넣어도 재사용하지 않는다는 저장 폴더 독점 계약을
+  `PatchClient.SyncAsync` 주석과 `docs/unity/patch-client.md`에 명시했다. 실제 cross-process lock이 아니라
+  호출자 계약이다.
+- `FixtureServer`에 `ThrottledObjectPath`를 추가해 본문을 절반에서 끊는다. 이것이 없으면 픽스처가 수백 바이트라
+  다운로드가 폴링 간격보다 빨리 끝나 파일 내 중간 진행 보고가 테스트에서 한 번도 나오지 않는다.
+
+Reject 기록:
+
+- **총량 합계 `OverflowException`** (1차). 합계가 `long.MaxValue`(약 8 EiB)를 넘어야 발생한다. 물리적으로 도달할 수
+  없고, `minimal-implementation` 규칙이 불가능한 시나리오의 에러 처리를 금지한다. 다만 "기존과 완전히 같은 동작"은
+  아니다 — 새 `Sum`은 다운로드 **전에**, 기존 `checked` 누산은 다운로드·검증 **뒤에** overflow한다. 도달 불가 범위라
+  이번 변경에서 다루지 않는다.
+- **clamp 테스트가 진공으로 통과한다** (2차). 사실이 아니다. `SendAsync`의 폴링은
+  `await Task.WhenAny(completion.Task, Task.Delay(...))`이므로 요청이 폴링 간격보다 빨리 끝나도 그 시점에 콜백이
+  한 번 돈다. `Math.Min(received, artifact.StoredSize)`를 제거하고 전체 테스트를 돌려
+  `SyncAsync_ReceivesMoreBytesThanManifest_ClampsReportedProgress` **하나만** 실패하는 것을 확인했다(21개 중 20개 통과).
+  즉 이 테스트는 clamp 회귀를 실제로 잡는다.

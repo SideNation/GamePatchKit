@@ -165,6 +165,8 @@ PatchSyncResult result = await client.SyncAsync(releaseVersion, progress, _lifet
   통합 비율은 제공하지 않는다.
 - 해시 검증은 산출물마다의 내부 동작이라 단계로 나누지 않고 `Downloading`에 포함한다.
 - 로컬이 이미 요청한 세대여서 원격을 호출하지 않으면(`IsAlreadyUpToDate`) **보고가 한 번도 오지 않는다.**
+- 동기화 중에는 저장 폴더를 `PatchClient`가 독점한다. 받을 목록과 총량을 첫 바이트 전에 확정하므로, 실행 중
+  다른 프로세스가 산출물을 만들어 넣어도 재사용하지 않고 다시 받는다.
 - **`Extracting` 단계의 보고는 백그라운드 스레드에서 호출된다.** 위 예시처럼 `Progress<T>`를 쓰면 메인 스레드로
   넘어오지만, `IProgress<T>`를 직접 구현했다면 Unity 객체를 그 자리에서 만지면 안 된다.
 

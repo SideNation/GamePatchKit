@@ -46,6 +46,8 @@ namespace GamePatchKit.Unity
         public string DataPath { get; }
 
         // Unity 메인 스레드에서 호출한다. 같은 폴더에 대한 SyncAsync를 동시에 실행하지 않는다.
+        // 실행 중에는 rootPath를 이 클라이언트가 독점한다. 받을 목록과 총량을 다운로드 전에 확정하므로,
+        // 실행 중 다른 프로세스가 산출물을 만들어 넣어도 그 파일은 재사용되지 않고 다시 받는다.
         public Task<PatchSyncResult> SyncAsync(long releaseVersion, CancellationToken cancellationToken = default)
         {
             return SyncCoreAsync(releaseVersion, progress: null, cancellationToken);
@@ -375,7 +377,11 @@ namespace GamePatchKit.Unity
                     while (!completion.Task.IsCompleted)
                     {
                         await Task.WhenAny(completion.Task, Task.Delay(ProgressPollIntervalMilliseconds));
-                        onBytesReceived((long)request.downloadedBytes);
+
+                        // downloadedBytes는 ulong이다. long으로 먼저 캐스팅하면 상한을 넘을 때 음수가 되어
+                        // 진행률이 뒤로 간다. 좁히기 전에 ulong 상태로 자른다.
+                        ulong received = request.downloadedBytes;
+                        onBytesReceived(received > long.MaxValue ? long.MaxValue : (long)received);
                     }
                 }
             }

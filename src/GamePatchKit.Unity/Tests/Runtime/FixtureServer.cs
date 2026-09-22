@@ -19,6 +19,7 @@ namespace GamePatchKit.Unity.Tests
         private readonly HttpListener _listener;
         private readonly string _rootPath;
         private readonly ManualResetEventSlim _heldResponses = new ManualResetEventSlim(false);
+        private readonly ManualResetEventSlim _throttledResponse = new ManualResetEventSlim(false);
         private readonly List<Task> _responders = new List<Task>();
         private int _requestCount;
 
@@ -42,12 +43,21 @@ namespace GamePatchKit.Unity.Tests
         // objectPath가 이 접두사로 시작하는 요청은 ReleaseHeldResponses 또는 Dispose 전까지 응답하지 않는다.
         public string? HeldObjectPathPrefix { get; set; }
 
+        // objectPath가 이 값과 같으면 본문을 절반씩 두 번에 나눠 보내고 그 사이에서 멈춘다. 받는 도중의
+        // 진행률을 관측하려면 응답이 한 번에 끝나지 않아야 한다.
+        public string? ThrottledObjectPath { get; set; }
+
         // 요청을 받은 직후 서버 스레드에서 호출한다.
         public Action<string>? OnRequest { get; set; }
 
         public void ReleaseHeldResponses()
         {
             _heldResponses.Set();
+        }
+
+        public void ReleaseThrottledResponse()
+        {
+            _throttledResponse.Set();
         }
 
         public byte[] ReadObject(string objectPath)
@@ -64,6 +74,7 @@ namespace GamePatchKit.Unity.Tests
         public void Dispose()
         {
             _heldResponses.Set();
+            _throttledResponse.Set();
             _listener.Close();
             Task[] responders;
 
@@ -75,6 +86,7 @@ namespace GamePatchKit.Unity.Tests
             // 진행 중이던 응답 스레드가 다음 테스트로 넘어가지 않게 기다린다.
             Task.WaitAll(responders, ResponderShutdownTimeoutMilliseconds);
             _heldResponses.Dispose();
+            _throttledResponse.Dispose();
         }
 
         private static int FindFreePort()
@@ -140,7 +152,7 @@ namespace GamePatchKit.Unity.Tests
                 context.Response.StatusCode = OkStatusCode;
                 context.Response.ContentType = "application/octet-stream";
                 context.Response.ContentLength64 = body.Length;
-                context.Response.OutputStream.Write(body, 0, body.Length);
+                WriteBody(context, objectPath, body);
                 context.Response.Close();
             }
             catch (Exception)
@@ -154,6 +166,26 @@ namespace GamePatchKit.Unity.Tests
                 {
                 }
             }
+        }
+
+        // 절반을 보내고 멈춘 뒤 ReleaseThrottledResponse를 기다린다. 클라이언트는 그동안 부분 수신 상태로 남는다.
+        private void WriteBody(HttpListenerContext context, string objectPath, byte[] body)
+        {
+            bool isThrottled = ThrottledObjectPath is not null
+                && objectPath == ThrottledObjectPath
+                && body.Length > 1;
+
+            if (!isThrottled)
+            {
+                context.Response.OutputStream.Write(body, 0, body.Length);
+                return;
+            }
+
+            int firstLength = body.Length / 2;
+            context.Response.OutputStream.Write(body, 0, firstLength);
+            context.Response.OutputStream.Flush();
+            _throttledResponse.Wait(ResponderShutdownTimeoutMilliseconds);
+            context.Response.OutputStream.Write(body, firstLength, body.Length - firstLength);
         }
     }
 }
