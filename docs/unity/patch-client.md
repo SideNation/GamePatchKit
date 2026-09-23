@@ -10,18 +10,19 @@
 
 ## 설치
 
-Unity 6(6000.x) 프로젝트의 `Packages/manifest.json`에 Git URL로 추가한다. 태그는 저장소의 릴리스 태그(`v<버전>`)를 쓴다.
+Unity 6(6000.x) 프로젝트의 `Packages/manifest.json`에 Git URL로 추가한다. `develop` 브랜치를 가리킨다.
 
 ```json
 {
   "dependencies": {
-    "com.sidenation.gamepatchkit": "https://github.com/SideNation/GamePatchKit.git?path=/src/GamePatchKit.Unity#v0.1.10"
+    "com.sidenation.gamepatchkit": "https://github.com/SideNation/GamePatchKit.git?path=/src/GamePatchKit.Unity#develop"
   }
 }
 ```
 
-- 진행률 보고(`IProgress<PatchSyncProgress>`)는 `0.1.11`, 로컬 상태 조회(`ReadLocalState`)는 `0.1.12`에 추가됐다.
-- `v0.1.8` 이하 태그에는 이 패키지가 없다. `v0.1.9`에는 패키지가 있지만 이 문서가 설명하는 압축 미러 삭제·진행 중 표식 동작을 포함하지 않는다. `v0.1.10` 이상을 지정한다.
+- 브랜치를 가리키므로 해석 결과는 Unity Package Manager가 `packages-lock.json`의 commit hash로 고정한다. lock 파일을 직접 편집하지 않고, 갱신이 필요하면 패키지를 다시 해석한다.
+- `v<버전>` 릴리스 태그는 CLI의 NuGet 배포 버전이며 이 패키지의 버전과 별개다. 태그를 설치 대상으로 쓰지 않는다.
+- 이 문서가 설명하는 압축 미러 삭제·진행 중 표식 동작은 `v0.1.9` 시점 패키지에 없다. 진행률 보고(`IProgress<PatchSyncProgress>`)와 로컬 상태 조회(`ReadLocalState`)는 그보다 뒤에 추가됐다.
 - 의존성 `com.unity.nuget.newtonsoft-json`(3.2.2)은 Unity 레지스트리에서 자동으로 해석된다.
 - zstd 해제용 `ZstdSharp.dll`과 그 의존성 `System.Runtime.CompilerServices.Unsafe.dll`은 패키지 `Runtime/Plugins/`에 동봉돼 있다. 프로젝트에 같은 이름의 DLL이 이미 있으면 Unity가 중복 어셈블리 오류를 내므로 한쪽을 제거한다.
 - NuGet 패키지로는 배포하지 않는다. Unity Package Manager가 NuGet을 소비하지 못하고 `UnityEngine`에 의존하는 코드는 NuGet 대상이 아니기 때문이다.

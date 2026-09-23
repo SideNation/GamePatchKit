@@ -300,9 +300,9 @@ append하는 작은 `IProgress<T>` recorder를 쓴다.
   스레드에서 올 수 있다는 계약도 여기에 적는다.
 - `game-patch-kit-unity-client-design.md`의 L49(Q7)·L76·L104를 갱신하고 이 문서를 참조로 건다.
 - `src/GamePatchKit.Unity/package.json` 버전을 `0.1.10` → `0.1.11`로 올린다.
-- **릴리스 태그는 이번 작업에서 만들지 않는다.** 태그를 끊으면 `Directory.Build.props`의 `<Version>`(현재 `0.1.0`으로
-  package.json과 이미 어긋나 있음)이 CLI/NuGet 배포까지 함께 끌고 들어와, 진행률과 무관한 버전 정합성 정리가 이 변경에
-  붙는다. 그 정리는 별도 작업으로 분리한다. 브랜치를 직접 참조하는 소비자는 `develop` 푸시만으로 받을 수 있다.
+- ~~릴리스 태그는 이번 작업에서 만들지 않는다.~~ → 로컬 상태 조회와 함께 `v0.2.2`로 태그했다. 태그는
+  `Directory.Build.props`의 `<Version>`을 무시하고 CLI의 NuGet 배포 버전이 되므로, 기존 계보(`v0.2.1`)를 잇는
+  번호를 쓴다. UPM `package.json`과는 원래 별개의 축이다.
 - CHANGELOG 파일은 이 저장소에 없다. 릴리스 노트는 커밋 메시지와 `docs/worklog/`가 담당한다.
 
 ## 13. 위험
