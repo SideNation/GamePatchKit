@@ -20,6 +20,7 @@ Unity 6(6000.x) 프로젝트의 `Packages/manifest.json`에 Git URL로 추가한
 }
 ```
 
+- 진행률 보고(`IProgress<PatchSyncProgress>`)는 `0.1.11`, 로컬 상태 조회(`ReadLocalState`)는 `0.1.12`에 추가됐다.
 - `v0.1.8` 이하 태그에는 이 패키지가 없다. `v0.1.9`에는 패키지가 있지만 이 문서가 설명하는 압축 미러 삭제·진행 중 표식 동작을 포함하지 않는다. `v0.1.10` 이상을 지정한다.
 - 의존성 `com.unity.nuget.newtonsoft-json`(3.2.2)은 Unity 레지스트리에서 자동으로 해석된다.
 - zstd 해제용 `ZstdSharp.dll`과 그 의존성 `System.Runtime.CompilerServices.Unsafe.dll`은 패키지 `Runtime/Plugins/`에 동봉돼 있다. 프로젝트에 같은 이름의 DLL이 이미 있으면 Unity가 중복 어셈블리 오류를 내므로 한쪽을 제거한다.
@@ -85,6 +86,44 @@ public sealed class PatchBootstrap : MonoBehaviour
 | `ExtractedCount`, `RemovedCount` | `data`에 새로 푼 파일 수와 새 세대에 없어 지운 파일 수 |
 
 세대가 같지 않으면(크든 작든) 동기화하므로 이전 세대로 돌아가는 호출도 같은 결과 형태를 돌려준다.
+
+## 로컬 상태
+
+동기화하기 전에 저장 폴더가 무엇을 담고 있는지 묻는다. 네트워크를 쓰지 않고 루트를 만들지도 않는다.
+`baseUrl`을 알기 전에 부를 수 있도록 static이다.
+
+```csharp
+string rootPath = Path.Combine(Application.persistentDataPath, "GamePatchKit");
+PatchLocalState state = PatchClient.ReadLocalState(rootPath);
+
+if (state.HasPendingGeneration)
+{
+    // data에 두 세대가 섞여 있을 수 있다. 읽지 말고 동기화로 마저 끝낸다.
+}
+else if (state.CompletedReleaseVersion is long version)
+{
+    // 서버에 닿지 못해도 이 세대는 그대로 쓸 수 있다. 오프라인 진입 판정에 쓴다.
+}
+else if (state.IsManifestCorrupted)
+{
+    // 복구 흐름으로 보낸다.
+}
+```
+
+| 값 | 의미 |
+| --- | --- |
+| `CompletedReleaseVersion` | `manifest.json`이 가리키는 완료 세대. 파일이 없거나 읽을 수 없으면 `null` |
+| `HasPendingGeneration` | 루트에 `<세대>.json` 표식이 남아 있다. 해석할 수 없는 표식도 센다 |
+| `IsManifestCorrupted` | `manifest.json`이 있으나 스키마 검증을 통과하지 못했다 |
+
+- **`manifest.json`과 `<세대>.json`을 직접 읽지 않는다.** 두 파일의 형식은 이 패키지의 내부이며 `schemaVersion`은
+  예고 없이 바뀔 수 있다. 소비자가 직접 파싱하면 그때 완전한 캐시를 손상으로 오판한다.
+- **손상된 `manifest.json`은 예외가 아니다.** 복구 흐름으로 보낼 정상적인 결과이므로 `IsManifestCorrupted`로 돌려준다.
+  예외는 로컬 I/O 오류(`PatchClientException`)뿐이다.
+- "루트 폴더가 없음"과 "루트는 있으나 `manifest.json`이 없음"을 구분하지 않는다. 둘 다 `CompletedReleaseVersion`이
+  `null`이다. 그 둘을 다르게 다루려면 `Directory.Exists`를 소비자가 직접 확인한다.
+- 동기화 뒤 정리가 실패해 표식이 남았는지도 같은 호출로 확인한다. `SyncAsync`는 삭제 I/O 오류를 삼키고 성공을
+  돌려주기 때문이다.
 
 ## 폴더 배치
 

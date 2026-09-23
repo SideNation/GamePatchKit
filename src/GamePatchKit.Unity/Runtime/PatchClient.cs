@@ -63,6 +63,43 @@ namespace GamePatchKit.Unity
             return SyncCoreAsync(releaseVersion, progress, cancellationToken);
         }
 
+        // 저장 폴더의 상태를 네트워크 없이 읽는다. 조회는 부작용이 없어야 하므로 루트를 만들지 않는다.
+        // baseUrl을 알기 전에도 물어볼 수 있어야 해서 static이다. 손상된 manifest.json은 복구 흐름으로 보낼
+        // 정상 결과이므로 예외가 아니라 IsManifestCorrupted로 돌려주고, 로컬 I/O 오류만 던진다.
+        public static PatchLocalState ReadLocalState(string rootPath)
+        {
+            string fullPath = Path.GetFullPath(rootPath);
+
+            try
+            {
+                // ScanPending은 루트가 없으면 빈 결과를 돌려주고, 해석 못 하는 표식도 IsEmpty에 포함한다.
+                // 표식을 읽을 수 없어도 트리가 섞여 있다는 증거이므로 SyncAsync와 같은 기준으로 센다.
+                bool hasPendingGeneration = !ManifestStore.ScanPending(fullPath).IsEmpty;
+
+                try
+                {
+                    PatchManifest? localManifest = ManifestStore.ReadLocal(fullPath);
+                    return new PatchLocalState(
+                        localManifest?.ReleaseVersion,
+                        hasPendingGeneration,
+                        isManifestCorrupted: false);
+                }
+                catch (PatchClientException)
+                {
+                    // ReadLocal은 파싱·검증 실패만 이 예외로 던진다. 파일이 없으면 null을 돌려준다.
+                    return new PatchLocalState(null, hasPendingGeneration, isManifestCorrupted: true);
+                }
+            }
+            catch (IOException exception)
+            {
+                throw new PatchClientException($"로컬 파일 작업이 실패했습니다: {exception.Message}", exception);
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                throw new PatchClientException($"로컬 파일 작업이 실패했습니다: {exception.Message}", exception);
+            }
+        }
+
         private async Task<PatchSyncResult> SyncCoreAsync(
             long releaseVersion,
             IProgress<PatchSyncProgress>? progress,

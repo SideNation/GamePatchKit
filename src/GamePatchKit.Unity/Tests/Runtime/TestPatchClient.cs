@@ -62,6 +62,7 @@ namespace GamePatchKit.Unity.Tests
         private const int PartialProgressAttempts = 20;
         private const int InflatedPaddingLength = 1024;
         private const int UndecodableArtifactLength = 69;
+        private const string CorruptedManifestText = "{ not json";
 
         private string _rootPath = null!;
         private FixtureServer _server = null!;
@@ -662,6 +663,82 @@ namespace GamePatchKit.Unity.Tests
             PatchSyncProgress[] downloading = OfPhase(recorder.Reports, PatchPhase.Downloading);
             Assert.That(downloading[0].TotalCount, Is.EqualTo(2));
             AssertMonotonic(downloading);
+        }
+
+        // 조회는 부작용이 없어야 한다. SyncAsync와 달리 루트를 만들지 않는다.
+        [Test]
+        public void ReadLocalState_MissingRoot_IsEmptyAndDoesNotCreateRoot()
+        {
+            PatchLocalState state = PatchClient.ReadLocalState(_rootPath);
+
+            Assert.That(state.CompletedReleaseVersion, Is.Null);
+            Assert.That(state.HasPendingGeneration, Is.False);
+            Assert.That(state.IsManifestCorrupted, Is.False);
+            Assert.That(Directory.Exists(_rootPath), Is.False);
+        }
+
+        [Test]
+        public void ReadLocalState_EmptyRoot_IsEmpty()
+        {
+            Directory.CreateDirectory(_rootPath);
+
+            PatchLocalState state = PatchClient.ReadLocalState(_rootPath);
+
+            Assert.That(state.CompletedReleaseVersion, Is.Null);
+            Assert.That(state.HasPendingGeneration, Is.False);
+            Assert.That(state.IsManifestCorrupted, Is.False);
+        }
+
+        [Test]
+        public async Task ReadLocalState_AfterSync_ReportsCompletedGeneration()
+        {
+            await _client.SyncAsync(0);
+
+            PatchLocalState state = PatchClient.ReadLocalState(_rootPath);
+
+            Assert.That(state.CompletedReleaseVersion, Is.EqualTo(0));
+            Assert.That(state.HasPendingGeneration, Is.False);
+            Assert.That(state.IsManifestCorrupted, Is.False);
+        }
+
+        // 표식이 남아 있으면 완료 매니페스트가 있어도 data를 읽으면 안 된다. 두 사실을 함께 돌려준다.
+        [Test]
+        public async Task ReadLocalState_PendingMarker_ReportsPendingWithPreviousGeneration()
+        {
+            await _client.SyncAsync(0);
+            File.WriteAllBytes(GetPendingPath(1), _server.ReadObject("manifests/1.json"));
+
+            PatchLocalState state = PatchClient.ReadLocalState(_rootPath);
+
+            Assert.That(state.HasPendingGeneration, Is.True);
+            Assert.That(state.CompletedReleaseVersion, Is.EqualTo(0));
+            Assert.That(state.IsManifestCorrupted, Is.False);
+        }
+
+        // 읽을 수 없는 표식도 "트리가 섞여 있을 수 있다"는 증거라 SyncAsync와 같은 기준으로 센다.
+        [Test]
+        public void ReadLocalState_UnreadablePendingMarker_ReportsPending()
+        {
+            Directory.CreateDirectory(_rootPath);
+            File.WriteAllText(GetPendingPath(7), CorruptedManifestText);
+
+            PatchLocalState state = PatchClient.ReadLocalState(_rootPath);
+
+            Assert.That(state.HasPendingGeneration, Is.True);
+        }
+
+        // 손상은 복구 흐름으로 보낼 정상 결과다. 예외로 던지면 소비자마다 try/catch가 필요해진다.
+        [Test]
+        public void ReadLocalState_CorruptedManifest_IsStateNotException()
+        {
+            Directory.CreateDirectory(_rootPath);
+            File.WriteAllText(Path.Combine(_rootPath, ManifestFileName), CorruptedManifestText);
+
+            PatchLocalState state = PatchClient.ReadLocalState(_rootPath);
+
+            Assert.That(state.IsManifestCorrupted, Is.True);
+            Assert.That(state.CompletedReleaseVersion, Is.Null);
+            Assert.That(state.HasPendingGeneration, Is.False);
         }
 
         // 해제 단계에서 실패하면 받아 둔 산출물이 남는다. 같은 세대를 다시 요청하면 전부 재사용되어 받을 것이
