@@ -2,7 +2,7 @@
 
 > 기준 문서: [`game-patch-kit-unity-client-design.md`](game-patch-kit-unity-client-design.md)
 >
-> 상태: 구현 완료 (2026-09-23). 호스트 프로젝트 PlayMode 테스트 21개 통과. adversarial 검토 2회 완료.
+> 상태: 구현 완료 (2026-09-23). 호스트 프로젝트 PlayMode 테스트 22개 통과. adversarial 검토 2회 완료.
 
 ## 1. 기능 요약
 
@@ -52,6 +52,7 @@ L187     미러 삭제
 | Q7 | 다운로드는 **파일 내 바이트 단위 폴링**. 아티팩트 단위 보고로 그치지 않는다 | 사용자 결정. 아티팩트 단위는 새 기계장치가 없어 싸지만 `packing: group` 구성에서 아카이브 하나가 받는 동안 보고가 멈춘다 |
 | Q8 | `FetchingManifest`는 총량·완료량 0으로 보고한다 | 매니페스트 크기는 받기 전에 알 수 없고(`PatchClient.cs:110`) 작은 JSON 하나라 보통 수십 ms다. 크기를 알아내려 요청을 하나 더 쏘지 않는다 |
 | Q9 | 조기 종료 경로(`PatchClient.cs:84-88`)에서는 **아무것도 보고하지 않는다** | 네트워크를 한 번도 타지 않고 즉시 끝난다. 호출자는 `PatchSyncResult.IsAlreadyUpToDate`로 이미 구분할 수 있고, 기존 테스트 `SyncAsync_SameGeneration_IsAlreadyUpToDateWithoutRequests`가 "요청 0회"를 고정하고 있다 |
+| Q11 | **할 일이 없는 단계는 보고하지 않는다.** 받을 산출물이 0개면 `Downloading`을, 다시 풀 엔트리가 0개면 `Extracting`을 생략한다 | 사용자 결정. 해제 실패 후 같은 세대를 다시 요청하면 산출물이 전부 재사용되어 받을 것이 0개가 되는데, 이때 그 단계는 100%에 닿지 못하고 `TotalBytes == 0`이라 `Ratio`도 0이다. 보고하면 호출자가 가짜 0%를 그린다. 조기 종료를 보고하지 않는 Q9와 같은 원칙이고, 호출자가 `TotalCount == 0` 분기를 갖지 않아도 된다 |
 | Q10 | 해제 단계 보고는 백그라운드 스레드에서 발생할 수 있다. SDK가 마샬링하지 않고 이 사실을 공개 문서에 명시한다 | 해제는 `Task.Run` 내부에서 실행된다(`PatchClient.cs:176`). 호출자가 `Progress<T>`를 넘기면 캡처된 컨텍스트로 post되므로 선택은 호출자에게 있다. SDK가 강제하면 그 선택지를 뺏는다 |
 
 ## 4. 요구사항 정리
@@ -227,6 +228,8 @@ using (cancellationToken.Register(() => context.Post(_ => AbortIfPending(request
 | `PatchClient.cs:176` 직전 | `Extracting`, `TotalCount`/`TotalBytes` = 6.3의 값 |
 | 엔트리 해제마다 | `Extracting`, `CompletedCount`/`CompletedBytes` 증가 |
 | `PatchClient.cs:84-88` 조기 종료 | **보고 없음** |
+| 받을 산출물 0개 | `Downloading` **보고 없음** |
+| 다시 풀 엔트리 0개 | `Extracting` **보고 없음** |
 
 ## 8. 파일 · 폴더 배치
 
@@ -280,6 +283,7 @@ append하는 작은 `IProgress<T>` recorder를 쓴다.
 | 최종 일치 | `Downloading` 마지막 보고의 `CompletedBytes == result.DownloadedBytes`, `CompletedCount == result.DownloadedCount` |
 | 해제 총량 | `Extracting` 마지막 보고의 `CompletedCount == result.ExtractedCount` |
 | 조기 종료 | `SyncAsync_SameGeneration_IsAlreadyUpToDate` 경로에서 보고 **0회** |
+| 빈 단계 생략 | 받을 것이 0개인 재시도에서 `Downloading` 보고 **0회**, `Extracting`은 보고됨 |
 | 단계 순서 | `FetchingManifest` → `Downloading` → `Extracting` 순, 각 단계 첫 등장 1회 |
 | 비율 경계 | `Ratio`가 0 미만이거나 1 초과가 되지 않음(전송 인코딩 clamp 검증) |
 | 취소 + 폴링 | 진행률을 받는 중 취소해도 `OperationCanceledException`으로 끝나고 임시 파일이 남지 않음 |
@@ -316,7 +320,7 @@ append하는 작은 `IProgress<T>` recorder를 쓴다.
 | 단계 | 상태 |
 | --- | --- |
 | 구현 (6·7절) | 완료 |
-| 테스트 추가 (11절) | 완료. PlayMode 21개 통과 (기존 15 + 신규 6) |
+| 테스트 추가 (11절) | 완료. PlayMode 22개 통과 (기존 15 + 신규 7) |
 | 문서·버전 갱신 (12절) | 완료. `package.json` 0.1.11 |
 | `PatchClientSample` 수동 검증 | 미실행 |
 | **adversarial 검토** | 2/3회 완료. 1차 Apply 3건 반영, Reject 1건. 2차 Reject 1건. 아래 기록 참조 |

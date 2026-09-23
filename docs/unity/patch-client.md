@@ -165,6 +165,9 @@ PatchSyncResult result = await client.SyncAsync(releaseVersion, progress, _lifet
   통합 비율은 제공하지 않는다.
 - 해시 검증은 산출물마다의 내부 동작이라 단계로 나누지 않고 `Downloading`에 포함한다.
 - 로컬이 이미 요청한 세대여서 원격을 호출하지 않으면(`IsAlreadyUpToDate`) **보고가 한 번도 오지 않는다.**
+- **할 일이 없는 단계는 보고하지 않는다.** 받을 산출물이 0개면 `Downloading`이, 다시 풀 엔트리가 0개면
+  `Extracting`이 한 번도 오지 않는다. 그 단계는 100%에 닿을 수 없어 0%만 내보내게 되기 때문이다. 따라서
+  호출자는 `TotalCount == 0`을 따로 분기할 필요가 없고, 받은 스냅샷은 항상 실제로 진행 중인 단계다.
 - 동기화 중에는 저장 폴더를 `PatchClient`가 독점한다. 받을 목록과 총량을 첫 바이트 전에 확정하므로, 실행 중
   다른 프로세스가 산출물을 만들어 넣어도 재사용하지 않고 다시 받는다.
 - **`Extracting` 단계의 보고는 백그라운드 스레드에서 호출된다.** 위 예시처럼 `Progress<T>`를 쓰면 메인 스레드로

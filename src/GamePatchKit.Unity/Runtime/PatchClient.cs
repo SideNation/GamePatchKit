@@ -190,7 +190,12 @@ namespace GamePatchKit.Unity
             long downloadTotalBytes = toDownload.Sum(artifact => artifact.StoredSize);
             long downloadedBytes = 0;
 
-            Report(progress, PatchPhase.Downloading, 0, toDownload.Length, 0, downloadTotalBytes);
+            // 받을 것이 없으면 이 단계를 보고하지 않는다. 할 일이 없는 단계는 100%에 닿을 수 없어
+            // 0%만 한 번 내보내게 되고, 호출자는 그것을 가짜 진행률로 그리게 된다.
+            if (toDownload.Length > 0)
+            {
+                Report(progress, PatchPhase.Downloading, 0, toDownload.Length, 0, downloadTotalBytes);
+            }
 
             for (int index = 0; index < toDownload.Length; index++)
             {
@@ -224,7 +229,12 @@ namespace GamePatchKit.Unity
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            Report(progress, PatchPhase.Extracting, 0, extractTotalCount, 0, extractTotalBytes);
+            // 다운로드와 같은 이유로, 다시 풀 엔트리가 없으면 이 단계도 보고하지 않는다.
+            if (extractTotalCount > 0)
+            {
+                Report(progress, PatchPhase.Extracting, 0, extractTotalCount, 0, extractTotalBytes);
+            }
+
             int extractedCount = 0;
             long extractedBytes = 0;
             Action<long>? onEntryExtracted = null;

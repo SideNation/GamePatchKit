@@ -61,6 +61,7 @@ namespace GamePatchKit.Unity.Tests
         private const int PartialProgressWaitMilliseconds = 150;
         private const int PartialProgressAttempts = 20;
         private const int InflatedPaddingLength = 1024;
+        private const int UndecodableArtifactLength = 69;
 
         private string _rootPath = null!;
         private FixtureServer _server = null!;
@@ -661,6 +662,42 @@ namespace GamePatchKit.Unity.Tests
             PatchSyncProgress[] downloading = OfPhase(recorder.Reports, PatchPhase.Downloading);
             Assert.That(downloading[0].TotalCount, Is.EqualTo(2));
             AssertMonotonic(downloading);
+        }
+
+        // 해제 단계에서 실패하면 받아 둔 산출물이 남는다. 같은 세대를 다시 요청하면 전부 재사용되어 받을 것이
+        // 없고, 그때 Downloading 단계는 100%에 닿을 수 없으므로 아예 보고하지 않는다.
+        [Test]
+        public async Task SyncAsync_WithNothingToDownload_DoesNotReportDownloadingPhase()
+        {
+            await _client.SyncAsync(0);
+            byte[] garbage = Encoding.ASCII.GetBytes(new string('A', UndecodableArtifactLength));
+            byte[] manifest = ReplaceStoredObject(_server.ReadObject("manifests/1.json"), UnitsEntryPath, garbage);
+            _server.Override = objectPath =>
+            {
+                switch (objectPath)
+                {
+                    case "manifests/1.json":
+                        return manifest;
+                    case UnitsObjectPath:
+                        return garbage;
+                    default:
+                        return _server.ReadObjectOrNull(objectPath);
+                }
+            };
+
+            await AssertThrowsAsync<PatchClientException>(() => _client.SyncAsync(1));
+
+            var recorder = new ProgressRecorder();
+            await AssertThrowsAsync<PatchClientException>(() => _client.SyncAsync(1, recorder));
+
+            Assert.That(
+                recorder.Reports.Any(report => report.Phase == PatchPhase.Downloading),
+                Is.False,
+                "받을 산출물이 없으면 Downloading 단계를 보고하지 않는다.");
+            Assert.That(
+                recorder.Reports.Any(report => report.Phase == PatchPhase.Extracting),
+                Is.True,
+                "풀 엔트리는 남아 있으므로 Extracting은 보고한다.");
         }
 
         // 원격을 한 번도 호출하지 않는 지름길이다. 0바이트를 받은 것과 받을 것이 없는 것은 다른 상태다.
