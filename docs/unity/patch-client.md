@@ -119,9 +119,14 @@ else if (state.IsManifestCorrupted)
 - **`manifest.json`과 `<세대>.json`을 직접 읽지 않는다.** 두 파일의 형식은 이 패키지의 내부이며 `schemaVersion`은
   예고 없이 바뀔 수 있다. 소비자가 직접 파싱하면 그때 완전한 캐시를 손상으로 오판한다.
 - **손상된 `manifest.json`은 예외가 아니다.** 복구 흐름으로 보낼 정상적인 결과이므로 `IsManifestCorrupted`로 돌려준다.
-  예외는 로컬 I/O 오류(`PatchClientException`)뿐이다.
+  예외는 로컬 I/O 오류(`PatchClientException`)뿐이다. `rootPath`가 `null`이거나 형식이 잘못된 경우는 표준
+  `ArgumentNullException`·`ArgumentException`으로 그대로 나간다.
 - "루트 폴더가 없음"과 "루트는 있으나 `manifest.json`이 없음"을 구분하지 않는다. 둘 다 `CompletedReleaseVersion`이
   `null`이다. 그 둘을 다르게 다루려면 `Directory.Exists`를 소비자가 직접 확인한다.
+- **같은 루트에 대한 `SyncAsync`와 동시에 부르지 않는다.** 표식 스캔과 매니페스트 읽기는 두 번의 파일 접근이라
+  그 사이에 세대가 바뀌면 서로 맞지 않는 스냅샷이 나온다. 표식이 없을 때 스캔한 직후 다른 동기화가 표식을 쓰고
+  `data`를 갱신하기 시작하면, 이어진 읽기는 이전 완료 세대를 돌려주어 **섞이는 중인 트리를 완전한 것으로 보이게**
+  한다. 읽는 순서를 바꿔도 반대 방향의 어긋남이 생기므로 순서가 아니라 호출 계약으로 막는다.
 - 동기화 뒤 정리가 실패해 표식이 남았는지도 같은 호출로 확인한다. `SyncAsync`는 삭제 I/O 오류를 삼키고 성공을
   돌려주기 때문이다.
 

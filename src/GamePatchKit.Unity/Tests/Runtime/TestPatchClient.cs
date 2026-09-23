@@ -741,6 +741,23 @@ namespace GamePatchKit.Unity.Tests
             Assert.That(state.HasPendingGeneration, Is.False);
         }
 
+        // 손상과 달리 I/O 실패는 상태가 아니라 오류다. manifest.json을 배타로 열어 두고 읽기를 막는다.
+        [Test]
+        public async Task ReadLocalState_ManifestNotReadable_ThrowsPatchClientException()
+        {
+            await _client.SyncAsync(0);
+            string manifestPath = Path.Combine(_rootPath, ManifestFileName);
+
+            using (new FileStream(manifestPath, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                PatchClientException exception = Assert.Throws<PatchClientException>(
+                    () => PatchClient.ReadLocalState(_rootPath));
+
+                Assert.That(exception.Message, Does.Contain("로컬 파일 작업이 실패했습니다"));
+                Assert.That(exception.InnerException, Is.InstanceOf<IOException>());
+            }
+        }
+
         // 해제 단계에서 실패하면 받아 둔 산출물이 남는다. 같은 세대를 다시 요청하면 전부 재사용되어 받을 것이
         // 없고, 그때 Downloading 단계는 100%에 닿을 수 없으므로 아예 보고하지 않는다.
         [Test]

@@ -66,12 +66,20 @@ namespace GamePatchKit.Unity
         // 저장 폴더의 상태를 네트워크 없이 읽는다. 조회는 부작용이 없어야 하므로 루트를 만들지 않는다.
         // baseUrl을 알기 전에도 물어볼 수 있어야 해서 static이다. 손상된 manifest.json은 복구 흐름으로 보낼
         // 정상 결과이므로 예외가 아니라 IsManifestCorrupted로 돌려주고, 로컬 I/O 오류만 던진다.
+        //
+        // 같은 루트에 대한 SyncAsync와 동시에 호출하지 않는다. 표식 스캔과 매니페스트 읽기는 두 번의 파일
+        // 접근이라 그 사이에 세대가 바뀌면 서로 맞지 않는 스냅샷이 나온다. 예컨대 표식이 없을 때 스캔한 뒤
+        // 다른 동기화가 표식을 쓰고 data를 갱신하기 시작하면, 이어진 읽기는 이전 완료 세대를 돌려주어
+        // 섞이는 중인 트리를 완전한 것으로 보이게 한다. 읽는 순서를 바꿔도 반대 방향의 어긋남이 생기므로
+        // 이것은 순서가 아니라 호출 계약으로 막는다.
         public static PatchLocalState ReadLocalState(string rootPath)
         {
-            string fullPath = Path.GetFullPath(rootPath);
-
             try
             {
+                // GetFullPath도 래퍼 안에 둔다. PathTooLongException이 IOException 계열이라
+                // 밖에 두면 이 메서드의 I/O 오류만 PatchClientException이라는 계약이 깨진다.
+                string fullPath = Path.GetFullPath(rootPath);
+
                 // ScanPending은 루트가 없으면 빈 결과를 돌려주고, 해석 못 하는 표식도 IsEmpty에 포함한다.
                 // 표식을 읽을 수 없어도 트리가 섞여 있다는 증거이므로 SyncAsync와 같은 기준으로 센다.
                 bool hasPendingGeneration = !ManifestStore.ScanPending(fullPath).IsEmpty;

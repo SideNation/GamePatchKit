@@ -4,7 +4,7 @@
 >
 > 관련 문서: [`game-patch-kit-unity-progress-design.md`](game-patch-kit-unity-progress-design.md)
 >
-> 상태: 구현 완료 (2026-09-23). 호스트 프로젝트 PlayMode 테스트 28개 통과.
+> 상태: 구현 완료 (2026-09-23). 호스트 프로젝트 PlayMode 테스트 29개 통과. adversarial 검토 1회 완료.
 
 ## 1. 기능 요약
 
@@ -46,6 +46,7 @@ PendingScan pending = await Task.Run(() => ManifestStore.ScanPending(_rootPath),
 | Q6 | 루트 폴더를 **만들지 않는다** | 조회는 부작용이 없어야 한다. `SyncAsync`는 `Directory.CreateDirectory`를 하지만(`PatchClient.cs:79`) 그것은 쓰기 작업의 준비다 |
 | Q7 | "루트가 없음"과 "루트는 있는데 `manifest.json`이 없음"을 SDK가 구분하지 않는다 | 둘 다 `CompletedReleaseVersion == null`, 표식 없음, 손상 아님이다. 그 둘을 다르게 다룰지는 소비자 정책이고 `Directory.Exists` 한 줄이다 |
 | Q8 | 완료 세대의 **버전만** 돌려주고 매니페스트 내용은 노출하지 않는다 | `PatchManifest`를 공개하면 내부 스키마가 공개 API가 된다. 소비자가 필요한 것은 "완전한가, 몇 번인가"다 |
+| Q9 | 같은 루트에 대한 `SyncAsync`와 **동시 호출을 금지하는 계약**을 둔다. 잠금은 만들지 않는다 | adversarial 검토에서 나왔다. 표식 스캔과 매니페스트 읽기는 원자적이지 않아, 스캔 직후 다른 동기화가 시작되면 `(이전 완료 세대, 표식 없음)`이 나와 섞이는 중인 트리를 완전한 것으로 보이게 한다. 읽는 순서를 뒤집으면 커밋 직후 인터리빙에서 반대 방향으로 어긋나므로 순서로는 못 막는다. 이미 `SyncAsync` 자체에 같은 루트 독점 계약이 있으므로 조회까지 확장하는 것이 일관된다 |
 
 ## 4. 요구사항 정리
 
@@ -180,7 +181,7 @@ src/GamePatchKit.Unity/Runtime/
 | 중단 후 | 기존 `SyncAsync_ResumesInterruptedGeneration` 시나리오에서 `HasPendingGeneration == true`, 버전은 이전 세대 |
 | 손상 | `manifest.json`에 임의 바이트를 쓰면 `IsManifestCorrupted == true`, 버전 null, 예외 없음 |
 | 읽을 수 없는 표식 | `7.json`에 임의 바이트를 쓰면 `HasPendingGeneration == true` |
-| ~~권한 오류~~ | 미구현. 플랫폼마다 재현 방법이 달라 자동 테스트로 만들지 않았다 |
+| I/O 오류 | `manifest.json`을 `FileShare.None`으로 열어 둔 채 호출하면 `PatchClientException`, `InnerException`은 `IOException` |
 
 ## 11. 문서 · 버전 갱신
 
@@ -194,12 +195,26 @@ src/GamePatchKit.Unity/Runtime/
 | 단계 | 상태 |
 | --- | --- |
 | 구현 (6절) | 완료 |
-| 테스트 (10절) | 완료. PlayMode 28개 통과 (진행률 22 + 로컬 상태 6) |
+| 테스트 (10절) | 완료. PlayMode 29개 통과 (진행률 22 + 로컬 상태 7) |
 | 문서·버전 (11절) | 완료. `package.json` 0.1.12 |
-| adversarial 검토 | 진행 중 |
+| adversarial 검토 | 1회 완료. Apply 3건 반영 |
 | `worklog-workflow` 기록 | 대기 |
 | `develop` 푸시 | 대기 (사용자 승인 필요) |
 
-mutation 확인: `!ScanPending(...).IsEmpty`를 `Valid.Count > 0`으로 바꿔 해석 못 하는 표식을 세지 않게 하면
-`ReadLocalState_UnreadablePendingMarker_ReportsPending` **하나만** 실패한다(28개 중 27개 통과). Q5 결정이 테스트로
-실제 고정되어 있다.
+mutation 확인 2건. 각각 해당 테스트 **하나만** 실패한다.
+
+| 변이 | 실패하는 테스트 |
+| --- | --- |
+| `!ScanPending(...).IsEmpty` → `Valid.Count > 0` (해석 못 하는 표식을 세지 않음) | `ReadLocalState_UnreadablePendingMarker_ReportsPending` |
+| 바깥 `catch (IOException)` / `catch (UnauthorizedAccessException)` 제거 | `ReadLocalState_ManifestNotReadable_ThrowsPatchClientException` |
+
+### adversarial 검토 반영 (Apply 3건)
+
+- **동시성 스냅샷** — 동시 호출 금지 계약을 API 주석과 사용법 문서에 명시했다(Q9). 검토 전 작성자는 현재 읽기 순서가
+  보수적으로 안전하다고 판단했으나 이는 커밋 인터리빙만 본 것이었고, 동기화 **시작** 인터리빙에서는 위험한 쪽으로
+  어긋난다. 순서로는 막을 수 없다는 것이 결론이다.
+- **`Path.GetFullPath` 위치** — I/O 래퍼 `try` 안으로 옮겼다. `PathTooLongException`이 `IOException` 계열이라 밖에 두면
+  "이 메서드의 I/O 오류는 `PatchClientException`"이라는 Q4 계약이 깨진다.
+- **I/O 계약 테스트 부재** — `ReadLocalState_ManifestNotReadable_ThrowsPatchClientException`을 추가했다.
+  `manifest.json`을 `FileShare.None`으로 열어 두면 `File.ReadAllText`가 `IOException`을 던진다. 권한 변경보다
+  플랫폼 의존이 적고 결정적이다.
