@@ -101,6 +101,12 @@ public sealed class TestSupabaseUploadStorage
             Assert.Contains("errorMessage=The parent resource is not found", exception.Message, StringComparison.Ordinal);
             Assert.Contains("GPK_SUPABASE_STORAGE_URL", exception.Message, StringComparison.Ordinal);
             Assert.DoesNotContain("sb_secret_test", exception.Message, StringComparison.Ordinal);
+
+            // 실패한 뒤에도 파일을 열어 둔 곳이 없어야 한다. Windows는 열린 파일을 지울 수 없어 아래 File.Delete가
+            // 실패하지만 macOS·Linux는 지울 수 있어 누수가 드러나지 않는다. 배타로 열어 보면 모든 OS에서 드러난다.
+            using (new FileStream(localPath, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+            }
         }
         finally
         {

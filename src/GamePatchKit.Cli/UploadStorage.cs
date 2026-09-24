@@ -78,8 +78,12 @@ internal sealed class SupabaseUploadStorage : IUploadStorage
     {
         try
         {
+            // 경로를 넘기면 Supabase.Storage 2.7.0의 TUS 경로가 파일을 열고 실패했을 때 닫지 않는다. Windows에서는
+            // GC가 거둘 때까지 그 파일을 지우거나 옮길 수 없다. 우리가 읽고 닫은 뒤 바이트로 넘겨 핸들을 라이브러리에
+            // 맡기지 않는다. byte[] 오버로드도 중단된 업로드 재개를 지원한다.
+            byte[] data = await File.ReadAllBytesAsync(localPath);
             await GetBucket().UploadOrResume(
-                localPath,
+                data,
                 remotePath,
                 new FileOptions { Upsert = true, ContentType = ArtifactContentType });
         }
