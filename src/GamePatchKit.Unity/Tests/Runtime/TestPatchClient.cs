@@ -63,6 +63,7 @@ namespace GamePatchKit.Unity.Tests
         private const int InflatedPaddingLength = 1024;
         private const int UndecodableArtifactLength = 69;
         private const string CorruptedManifestText = "{ not json";
+        private const string ManifestObjectPathPrefix = "manifests/";
 
         private string _rootPath = null!;
         private FixtureServer _server = null!;
@@ -663,6 +664,197 @@ namespace GamePatchKit.Unity.Tests
             PatchSyncProgress[] downloading = OfPhase(recorder.Reports, PatchPhase.Downloading);
             Assert.That(downloading[0].TotalCount, Is.EqualTo(2));
             AssertMonotonic(downloading);
+        }
+
+        // 고지한 숫자와 실제로 받는 양이 다르면 이 기능은 의미가 없다. 이것이 핵심 검증이다.
+        [Test]
+        public async Task PlanAsync_FirstGeneration_MatchesWhatSyncDownloads()
+        {
+            PatchSyncPlan plan = await _client.PlanAsync(0);
+
+            Assert.That(plan.DownloadCount, Is.EqualTo(2));
+            Assert.That(
+                plan.DownloadBytes,
+                Is.EqualTo(ObjectSize(ArchiveObjectPath) + ObjectSize(ConfigObjectPath)));
+
+            PatchSyncResult result = await _client.SyncAsync(0);
+
+            Assert.That(plan.DownloadCount, Is.EqualTo(result.DownloadedCount));
+            Assert.That(plan.DownloadBytes, Is.EqualTo(result.DownloadedBytes));
+        }
+
+        [Test]
+        public async Task PlanAsync_NextGeneration_MatchesWhatSyncDownloads()
+        {
+            await _client.SyncAsync(0);
+
+            PatchSyncPlan plan = await _client.PlanAsync(1);
+            PatchSyncResult result = await _client.SyncAsync(1);
+
+            Assert.That(plan.DownloadCount, Is.EqualTo(result.DownloadedCount));
+            Assert.That(plan.DownloadBytes, Is.EqualTo(result.DownloadedBytes));
+        }
+
+        // 이미 최신이면 받을 것이 없다. 호출자는 이 값으로 고지를 건너뛴다.
+        [Test]
+        public async Task PlanAsync_SameGeneration_HasNothingToDownload()
+        {
+            await _client.SyncAsync(0);
+            int requestCount = _server.RequestCount;
+
+            PatchSyncPlan plan = await _client.PlanAsync(0);
+
+            Assert.That(plan.DownloadCount, Is.Zero);
+            Assert.That(plan.DownloadBytes, Is.Zero);
+            Assert.That(_server.RequestCount, Is.EqualTo(requestCount), "지름길에서는 원격을 호출하지 않는다.");
+        }
+
+        // 사용자가 고지를 거절해도 폴더가 호출 전과 같아야 한다. 표식이 남으면 오프라인 진입이 막힌다.
+        [Test]
+        public async Task PlanAsync_DoesNotTouchDisk()
+        {
+            PatchSyncPlan plan = await _client.PlanAsync(0);
+
+            Assert.That(plan.DownloadCount, Is.EqualTo(2));
+            Assert.That(Directory.Exists(_rootPath), Is.False, "조회는 루트를 만들지 않는다.");
+
+            PatchLocalState state = PatchClient.ReadLocalState(_rootPath);
+
+            Assert.That(state.HasPendingGeneration, Is.False, "조회는 진행 표식을 쓰지 않는다.");
+            Assert.That(state.CompletedReleaseVersion, Is.Null);
+        }
+
+        // 조기 종료 경로에서 미러를 지우지 않는다. 조회가 정리까지 하면 부작용이 된다.
+        [Test]
+        public async Task PlanAsync_SameGeneration_KeepsMirror()
+        {
+            await _client.SyncAsync(0);
+            string archivePath = Path.Combine(_rootPath, ToLocalPath(ArchiveObjectPath));
+            Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
+            File.WriteAllBytes(archivePath, _server.ReadObject(ArchiveObjectPath));
+
+            await _client.PlanAsync(0);
+
+            Assert.That(File.Exists(archivePath), Is.True);
+        }
+
+        // 중단된 세대를 다시 조회하면 남은 산출물만 세고 매니페스트를 다시 받지 않는다.
+        [Test]
+        public async Task PlanAsync_ResumesInterruptedGeneration_CountsOnlyRemaining()
+        {
+            await _client.SyncAsync(0);
+            _server.HeldObjectPathPrefix = RawObjectPathPrefix;
+
+            using (var cancellation = new CancellationTokenSource())
+            {
+                _server.OnRequest = objectPath =>
+                {
+                    if (objectPath.StartsWith(RawObjectPathPrefix, StringComparison.Ordinal))
+                    {
+                        cancellation.Cancel();
+                    }
+                };
+
+                try
+                {
+                    await AssertThrowsAsync<OperationCanceledException>(() => _client.SyncAsync(1, cancellation.Token));
+                }
+                finally
+                {
+                    _server.ReleaseHeldResponses();
+                }
+            }
+
+            var requestedPaths = new List<string>();
+            _server.OnRequest = objectPath =>
+            {
+                lock (requestedPaths)
+                {
+                    requestedPaths.Add(objectPath);
+                }
+            };
+
+            PatchSyncPlan plan = await _client.PlanAsync(1);
+
+            Assert.That(requestedPaths, Does.Not.Contain("manifests/1.json"));
+            Assert.That(plan.DownloadCount, Is.EqualTo(1));
+
+            PatchSyncResult result = await _client.SyncAsync(1);
+
+            Assert.That(plan.DownloadCount, Is.EqualTo(result.DownloadedCount));
+            Assert.That(plan.DownloadBytes, Is.EqualTo(result.DownloadedBytes));
+        }
+
+        // 루트가 이미 있고 새 세대를 원격에서 조회하는 일반 업데이트 경로다. 루트가 없는 첫 설치만 검증하면
+        // "루트가 있을 때만 표식을 쓰는" 변이나 미러를 지우는 변이를 놓친다. 미러를 심어 두고 파일 단위로 비교한다.
+        [Test]
+        public async Task PlanAsync_ExistingRootNewGeneration_ChangesNoFile()
+        {
+            await _client.SyncAsync(0);
+            string archivePath = Path.Combine(_rootPath, ToLocalPath(ArchiveObjectPath));
+            Directory.CreateDirectory(Path.GetDirectoryName(archivePath)!);
+            File.WriteAllBytes(archivePath, _server.ReadObject(ArchiveObjectPath));
+            Dictionary<string, byte[]> before = ReadTree(_rootPath);
+
+            PatchSyncPlan plan = await _client.PlanAsync(1);
+
+            Assert.That(plan.DownloadCount, Is.GreaterThan(0), "받을 것이 있어야 이 경로를 검증한다.");
+
+            Dictionary<string, byte[]> after = ReadTree(_rootPath);
+            Assert.That(after.Keys, Is.EquivalentTo(before.Keys));
+
+            foreach (KeyValuePair<string, byte[]> pair in before)
+            {
+                Assert.That(after[pair.Key], Is.EqualTo(pair.Value), pair.Key);
+            }
+        }
+
+        [Test]
+        public void PlanAsync_NegativeReleaseVersion_Throws()
+        {
+            Assert.ThrowsAsync<ArgumentOutOfRangeException>(async () => await _client.PlanAsync(-1));
+        }
+
+        [Test]
+        public async Task PlanAsync_CancelledDuringManifestRequest_Throws()
+        {
+            _server.HeldObjectPathPrefix = ManifestObjectPathPrefix;
+
+            using (var cancellation = new CancellationTokenSource())
+            {
+                _server.OnRequest = objectPath =>
+                {
+                    if (objectPath.StartsWith(ManifestObjectPathPrefix, StringComparison.Ordinal))
+                    {
+                        cancellation.Cancel();
+                    }
+                };
+
+                try
+                {
+                    Task<PatchSyncPlan> plan = _client.PlanAsync(0, cancellation.Token);
+                    Task finished = await Task.WhenAny(plan, Task.Delay(AbortTimeoutMilliseconds));
+
+                    Assert.That(finished, Is.SameAs(plan), "응답이 열리기 전에 취소로 끝나야 합니다.");
+                    await AssertThrowsAsync<OperationCanceledException>(() => plan);
+                }
+                finally
+                {
+                    _server.ReleaseHeldResponses();
+                }
+            }
+
+            Assert.That(Directory.Exists(_rootPath), Is.False, "취소돼도 루트를 만들지 않는다.");
+        }
+
+        [Test]
+        public async Task PlanAsync_MissingObject_Fails()
+        {
+            _server.Override = objectPath => null;
+
+            PatchClientException exception = await AssertThrowsAsync<PatchClientException>(() => _client.PlanAsync(0));
+
+            Assert.That(exception.Message, Does.Contain("게시된 객체가 없습니다"));
         }
 
         // 조회는 부작용이 없어야 한다. SyncAsync와 달리 루트를 만들지 않는다.

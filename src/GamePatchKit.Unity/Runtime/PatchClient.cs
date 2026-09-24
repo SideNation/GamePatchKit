@@ -63,6 +63,52 @@ namespace GamePatchKit.Unity
             return SyncCoreAsync(releaseVersion, progress, cancellationToken);
         }
 
+        // 산출물을 받기 전에 받을 개수와 전송 바이트를 알려준다. 받을 것이 0개면 호출자는 고지를 생략한다.
+        // 디스크를 바꾸지 않는다. 루트를 만들지 않고, 진행 표식을 쓰지 않고, 미러도 지우지 않는다.
+        // 그래야 사용자가 고지를 거절했을 때 폴더가 호출 전과 같은 상태로 남는다.
+        // 같은 루트에 대한 SyncAsync와 동시에 호출하지 않는다.
+        public async Task<PatchSyncPlan> PlanAsync(long releaseVersion, CancellationToken cancellationToken = default)
+        {
+            if (releaseVersion < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(releaseVersion), "0 이상이어야 합니다.");
+            }
+
+            SynchronizationContext context = SynchronizationContext.Current
+                ?? throw new InvalidOperationException("PlanAsync는 Unity 메인 스레드에서 호출해야 합니다.");
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                PatchManifest? localManifest = await Task.Run(
+                    () => ManifestStore.ReadLocal(_rootPath), cancellationToken);
+                PendingScan pending = await Task.Run(
+                    () => ManifestStore.ScanPending(_rootPath), cancellationToken);
+
+                // SyncAsync의 지름길과 같은 조건이다. 여기서는 미러를 지우지 않고 받을 것이 없다고만 답한다.
+                if (localManifest is not null && localManifest.ReleaseVersion == releaseVersion && pending.IsEmpty)
+                {
+                    return new PatchSyncPlan(0, 0);
+                }
+
+                (PatchManifest targetManifest, _, _) = await ResolveTargetManifestAsync(
+                    context, releaseVersion, localManifest, pending, progress: null, cancellationToken);
+                List<PatchManifest> known = BuildKnownManifests(localManifest, pending);
+                (ManifestArtifact[] toDownload, _, long downloadBytes, _, _) =
+                    await PlanSyncAsync(targetManifest, known, cancellationToken);
+
+                return new PatchSyncPlan(toDownload.Length, downloadBytes);
+            }
+            catch (IOException exception)
+            {
+                throw new PatchClientException($"로컬 파일 작업이 실패했습니다: {exception.Message}", exception);
+            }
+            catch (UnauthorizedAccessException exception)
+            {
+                throw new PatchClientException($"로컬 파일 작업이 실패했습니다: {exception.Message}", exception);
+            }
+        }
+
         // 저장 폴더의 상태를 네트워크 없이 읽는다. 조회는 부작용이 없어야 하므로 루트를 만들지 않는다.
         // baseUrl을 알기 전에도 물어볼 수 있어야 해서 static이다. 손상된 manifest.json은 복구 흐름으로 보낼
         // 정상 결과이므로 예외가 아니라 IsManifestCorrupted로 돌려주고, 로컬 I/O 오류만 던진다.
@@ -154,85 +200,22 @@ namespace GamePatchKit.Unity
                 return new PatchSyncResult(releaseVersion, releaseVersion, true, 0, 0, 0, 0, 0);
             }
 
-            string? pendingPath = null;
-            PatchManifest targetManifest;
+            (PatchManifest targetManifest, string? pendingPath, byte[]? fetchedManifestBytes) =
+                await ResolveTargetManifestAsync(
+                    context, releaseVersion, localManifest, pending, progress, cancellationToken);
 
-            if (localManifest is not null && localManifest.ReleaseVersion == releaseVersion)
+            if (fetchedManifestBytes is not null)
             {
-                targetManifest = localManifest;
-            }
-            else
-            {
-                PendingManifest? requested = pending.Valid.FirstOrDefault(
-                    candidate => candidate.ReleaseVersion == releaseVersion);
-
-                if (requested is not null)
-                {
-                    // 중단된 목표 세대를 다시 요청했다. 매니페스트가 이미 로컬에 있으므로 받지 않는다.
-                    targetManifest = requested.Manifest;
-                    pendingPath = requested.Path;
-                }
-                else
-                {
-                    // 매니페스트 크기는 받기 전에 알 수 없다. 이 단계의 수치는 모두 0으로 두고 호출자가
-                    // 퍼센트 대신 불확정 표시를 쓰게 한다.
-                    Report(progress, PatchPhase.FetchingManifest, 0, 0, 0, 0);
-                    byte[] manifestBytes = await DownloadBytesAsync(
-                        context,
-                        ManifestStore.GetManifestObjectPath(releaseVersion),
-                        cancellationToken);
-                    targetManifest = await Task.Run(
-                        () => ManifestStore.ReadFromBytes(manifestBytes, ManifestErrorPrefix),
-                        cancellationToken);
-
-                    if (targetManifest.ReleaseVersion != releaseVersion)
-                    {
-                        throw new PatchClientException(
-                            "세대 매니페스트의 releaseVersion이 요청한 값과 다릅니다. "
-                            + $"(요청: {releaseVersion}, 매니페스트: {targetManifest.ReleaseVersion})");
-                    }
-
-                    // 산출물보다 먼저 <세대>.json으로 저장한다. 중간에 멈춰도 다음 실행이 이것으로 이어받는다.
-                    pendingPath = ManifestStore.GetPendingPath(_rootPath, releaseVersion);
-                    ManifestStore.WriteBytesAtomically(pendingPath, manifestBytes);
-                }
+                // 산출물보다 먼저 <세대>.json으로 저장한다. 중간에 멈춰도 다음 실행이 이것으로 이어받는다.
+                // 조회만 하는 PlanAsync는 이 기록을 하지 않으므로 헬퍼가 아니라 여기서 쓴다.
+                pendingPath = ManifestStore.GetPendingPath(_rootPath, releaseVersion);
+                ManifestStore.WriteBytesAtomically(pendingPath, fetchedManifestBytes);
             }
 
-            // 트리의 파일이 어느 매니페스트의 해제 결과인지 말할 수 있어야 건너뛸 수 있다. 완료된 세대가 없거나
-            // 해석 못 하는 표식이 있으면 트리의 출처를 보증할 수 없으므로 아무것도 건너뛰지 않고 전부 다시 푼다.
-            var known = new List<PatchManifest>();
-
-            if (localManifest is not null && pending.UnreadablePaths.Count == 0)
-            {
-                known.Add(localManifest);
-
-                foreach (PendingManifest candidate in pending.Valid)
-                {
-                    known.Add(candidate.Manifest);
-                }
-            }
-
-            ManifestArtifact[] artifacts = targetManifest.EnumerateArtifacts()
-                .OrderBy(artifact => artifact.Name, StringComparer.Ordinal)
-                .ToArray();
-            ValidateRemotePaths(artifacts);
-            (IReadOnlyCollection<string> requiredNames, int extractTotalCount, long extractTotalBytes) =
-                await Task.Run(
-                    () => DataExtractor.CollectRequiredArtifacts(_rootPath, targetManifest, known),
-                    cancellationToken);
-
-            // 다시 풀 엔트리가 없는 산출물은 받지 않는다. 미러를 지우므로 이것이 유일한 다운로드 기준이다.
-            // 받을 목록을 루프 앞에서 확정해야 총량이 정확해진다. IsAlreadyStored는 로컬 stat만 하고 산출물
-            // 이름은 매니페스트 검증이 유일함을 보장하므로, 루프 안에서 하던 판정을 앞으로 옮겨도 받는 대상과
-            // 순서가 달라지지 않는다.
-            ManifestArtifact[] required = artifacts
-                .Where(artifact => requiredNames.Contains(artifact.Name))
-                .ToArray();
-            ManifestArtifact[] toDownload = required
-                .Where(artifact => !IsAlreadyStored(artifact))
-                .ToArray();
-            int reusedCount = required.Length - toDownload.Length;
-            long downloadTotalBytes = toDownload.Sum(artifact => artifact.StoredSize);
+            List<PatchManifest> known = BuildKnownManifests(localManifest, pending);
+            (ManifestArtifact[] toDownload, int reusedCount, long downloadTotalBytes,
+                int extractTotalCount, long extractTotalBytes) =
+                    await PlanSyncAsync(targetManifest, known, cancellationToken);
             long downloadedBytes = 0;
 
             // 받을 것이 없으면 이 단계를 보고하지 않는다. 할 일이 없는 단계는 100%에 닿을 수 없어
@@ -322,6 +305,101 @@ namespace GamePatchKit.Unity
                 reusedCount,
                 extracted.ExtractedCount,
                 extracted.RemovedCount);
+        }
+
+        // 목표 세대 매니페스트를 정한다. 로컬이나 남은 표식에서 재사용할 수 있으면 받지 않는다.
+        // 원격에서 받은 경우에만 FetchedBytes가 채워진다. 그 바이트를 진행 표식으로 쓸지는 호출자가 정한다.
+        private async Task<(PatchManifest Target, string? PendingPath, byte[]? FetchedBytes)> ResolveTargetManifestAsync(
+            SynchronizationContext context,
+            long releaseVersion,
+            PatchManifest? localManifest,
+            PendingScan pending,
+            IProgress<PatchSyncProgress>? progress,
+            CancellationToken cancellationToken)
+        {
+            if (localManifest is not null && localManifest.ReleaseVersion == releaseVersion)
+            {
+                return (localManifest, null, null);
+            }
+
+            PendingManifest? requested = pending.Valid.FirstOrDefault(
+                candidate => candidate.ReleaseVersion == releaseVersion);
+
+            if (requested is not null)
+            {
+                // 중단된 목표 세대를 다시 요청했다. 매니페스트가 이미 로컬에 있으므로 받지 않는다.
+                return (requested.Manifest, requested.Path, null);
+            }
+
+            // 매니페스트 크기는 받기 전에 알 수 없다. 이 단계의 수치는 모두 0으로 두고 호출자가
+            // 퍼센트 대신 불확정 표시를 쓰게 한다.
+            Report(progress, PatchPhase.FetchingManifest, 0, 0, 0, 0);
+            byte[] manifestBytes = await DownloadBytesAsync(
+                context,
+                ManifestStore.GetManifestObjectPath(releaseVersion),
+                cancellationToken);
+            PatchManifest fetched = await Task.Run(
+                () => ManifestStore.ReadFromBytes(manifestBytes, ManifestErrorPrefix),
+                cancellationToken);
+
+            if (fetched.ReleaseVersion != releaseVersion)
+            {
+                throw new PatchClientException(
+                    "세대 매니페스트의 releaseVersion이 요청한 값과 다릅니다. "
+                    + $"(요청: {releaseVersion}, 매니페스트: {fetched.ReleaseVersion})");
+            }
+
+            return (fetched, null, manifestBytes);
+        }
+
+        // 트리의 파일이 어느 매니페스트의 해제 결과인지 말할 수 있어야 건너뛸 수 있다. 완료된 세대가 없거나
+        // 해석 못 하는 표식이 있으면 트리의 출처를 보증할 수 없으므로 아무것도 건너뛰지 않고 전부 다시 푼다.
+        private static List<PatchManifest> BuildKnownManifests(PatchManifest? localManifest, PendingScan pending)
+        {
+            var known = new List<PatchManifest>();
+
+            if (localManifest is not null && pending.UnreadablePaths.Count == 0)
+            {
+                known.Add(localManifest);
+
+                foreach (PendingManifest candidate in pending.Valid)
+                {
+                    known.Add(candidate.Manifest);
+                }
+            }
+
+            return known;
+        }
+
+        // 받을 산출물과 해제 대상을 한 번에 산출한다. 로컬 판정만 하므로 네트워크를 쓰지 않고 디스크도 바꾸지 않는다.
+        // 다시 풀 엔트리가 없는 산출물은 받지 않는다. 미러를 지우므로 이것이 유일한 다운로드 기준이다.
+        // 받을 목록을 루프 앞에서 확정해야 총량이 정확해진다. IsAlreadyStored는 로컬 stat만 하고 산출물
+        // 이름은 매니페스트 검증이 유일함을 보장하므로, 루프 안에서 하던 판정을 앞으로 옮겨도 받는 대상과
+        // 순서가 달라지지 않는다.
+        private async Task<(ManifestArtifact[] ToDownload, int ReusedCount, long DownloadBytes,
+            int ExtractCount, long ExtractBytes)> PlanSyncAsync(
+            PatchManifest target,
+            IReadOnlyList<PatchManifest> known,
+            CancellationToken cancellationToken)
+        {
+            ManifestArtifact[] artifacts = target.EnumerateArtifacts()
+                .OrderBy(artifact => artifact.Name, StringComparer.Ordinal)
+                .ToArray();
+            ValidateRemotePaths(artifacts);
+            (IReadOnlyCollection<string> requiredNames, int extractCount, long extractBytes) =
+                await Task.Run(
+                    () => DataExtractor.CollectRequiredArtifacts(_rootPath, target, known),
+                    cancellationToken);
+
+            ManifestArtifact[] required = artifacts
+                .Where(artifact => requiredNames.Contains(artifact.Name))
+                .ToArray();
+            ManifestArtifact[] toDownload = required
+                .Where(artifact => !IsAlreadyStored(artifact))
+                .ToArray();
+
+            return (toDownload, required.Length - toDownload.Length,
+                toDownload.Sum(artifact => artifact.StoredSize), extractCount, extractBytes);
         }
 
         // 세대 전환이 끝난 뒤의 정리다. 실패해도 동기화를 실패로 만들지 않는다. 남은 파일은 다음 실행이 재사용하거나 지운다.

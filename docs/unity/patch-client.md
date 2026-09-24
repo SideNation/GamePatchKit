@@ -180,6 +180,44 @@ else if (state.IsManifestCorrupted)
 
 재시도·백오프는 넣지 않는다. 호출자가 다시 `SyncAsync`를 부르면 된다.
 
+## 다운로드 계획
+
+산출물을 받기 **전에** 받을 개수와 전송 바이트를 묻는다. 셀룰러 데이터를 쓰기 전에 사용자에게 알릴 때 쓴다.
+
+```csharp
+PatchSyncPlan plan = await client.PlanAsync(releaseVersion, _lifetime.Token);
+
+if (plan.DownloadCount > 0)
+{
+    // 예: "총 120MB / 340개를 받습니다. 계속할까요?"
+    if (!await ConfirmAsync(plan.DownloadCount, plan.DownloadBytes))
+    {
+        return;   // 거절했다. 저장 폴더는 호출 전과 같다
+    }
+}
+
+PatchSyncResult result = await client.SyncAsync(releaseVersion, progress, _lifetime.Token);
+```
+
+| 값 | 의미 |
+| --- | --- |
+| `DownloadCount` | 받아야 하는 산출물 수. **0이면 받을 것이 없으므로 고지를 건너뛴다** |
+| `DownloadBytes` | 받아야 하는 전송 바이트 합계. 이미 받아 둔 산출물은 빠진 정확한 값이다 |
+
+- **디스크를 바꾸지 않는다.** 루트를 만들지 않고, 진행 표식(`<세대>.json`)을 쓰지 않고, 미러도 지우지 않는다.
+  사용자가 고지를 거절해도 저장 폴더가 호출 전과 같은 상태로 남는다.
+- `SyncAsync`와 같은 재사용·이어받기 판정을 쓰므로 `DownloadCount`·`DownloadBytes`는 이어지는 `SyncAsync`의
+  `DownloadedCount`·`DownloadedBytes`와 일치한다. 단 이는 **같은 세대의 매니페스트가 불변**이고 두 호출 사이에
+  저장 폴더를 다른 곳에서 바꾸지 않는다는 전제 위에서 성립한다. 같은 `releaseVersion`으로 내용이 다른 매니페스트를
+  덮어 게시하면 고지한 양과 실제 받는 양이 달라진다. `SyncAsync`의 중단 재개도 로컬에 남은 `<세대>.json`을 다시
+  받지 않고 그대로 쓰므로 같은 전제에 의존한다.
+- `PlanAsync`가 매니페스트를 받고 `SyncAsync`가 다시 받는다. 두 호출 사이에 상태를 남기지 않기 위한 선택이며
+  매니페스트는 작은 JSON 하나다.
+- 로컬이 이미 요청한 세대면 원격을 호출하지 않고 `(0, 0)`을 돌려준다.
+- 같은 루트에 대한 `SyncAsync`와 동시에 호출하지 않는다. `PlanAsync`와 뒤이은 `SyncAsync` 사이의 구간에도
+  저장 폴더를 이 클라이언트가 독점한다.
+- 오류 계약은 `SyncAsync`와 같다. 실패는 `PatchClientException`, 취소는 `OperationCanceledException`이다.
+
 ## 진행률
 
 `IProgress<PatchSyncProgress>`를 받는 오버로드로 진행 상황을 읽는다.
